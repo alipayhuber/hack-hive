@@ -1,0 +1,24 @@
+From 76a49bf491a857c20e80d3fae3f701a93d20061a Mon Sep 17 00:00:00 2001
+From: Szehon Ho <szehon@cloudera.com>
+Date: Mon, 10 Mar 2014 17:28:38 -0700
+Subject: [PATCH 308/375] CDH-15530: JDBCStatsPublisher catches SQLException without logging them
+
+---
+ .../hive/ql/stats/jdbc/JDBCStatsPublisher.java     |    1 +
+ 1 files changed, 1 insertions(+), 0 deletions(-)
+
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/stats/jdbc/JDBCStatsPublisher.java b/src/ql/src/java/org/apache/hadoop/hive/ql/stats/jdbc/JDBCStatsPublisher.java
+index 8c23b87..606ccb3 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/stats/jdbc/JDBCStatsPublisher.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/stats/jdbc/JDBCStatsPublisher.java
+@@ -111,6 +111,7 @@ public Void run(PreparedStatement stmt) throws SQLException {
+       } catch (SQLException e) {
+         // for SQLTransientException (maxRetries already achieved at Utilities retry functions
+         // or SQLNonTransientException, declare a real failure
++        LOG.error("Error during JDBC connection to " + connectionString + ". ", e);
+         return false;
+       }
+     }
+-- 
+1.7.0.4
+

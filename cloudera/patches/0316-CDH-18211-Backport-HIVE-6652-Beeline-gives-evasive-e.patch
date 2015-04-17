@@ -1,0 +1,38 @@
+From 64b6a07ba101d06146ab0350090944aca6dba478 Mon Sep 17 00:00:00 2001
+From: xzhang <xzhang@xzdt.(none)>
+Date: Mon, 24 Mar 2014 12:24:29 -0700
+Subject: [PATCH 316/375] CDH-18211: Backport HIVE-6652: Beeline gives evasive error message for any unrecognized command line arguement
+
+---
+ .../src/java/org/apache/hive/beeline/BeeLine.java  |    2 +-
+ beeline/src/main/resources/BeeLine.properties      |    1 +
+ 2 files changed, 2 insertions(+), 1 deletions(-)
+
+diff --git a/src/beeline/src/java/org/apache/hive/beeline/BeeLine.java b/src/beeline/src/java/org/apache/hive/beeline/BeeLine.java
+index 33bea5b..054a948 100644
+--- a/src/beeline/src/java/org/apache/hive/beeline/BeeLine.java
++++ b/src/beeline/src/java/org/apache/hive/beeline/BeeLine.java
+@@ -565,7 +565,7 @@ boolean initArgs(String[] args) {
+       } else if (args[i].equals("-f")) {
+         getOpts().setScriptFile(args[i++ + 1]);
+       } else {
+-        files.add(args[i]);
++        return error(loc("unrecognized-argument", args[i]));
+       }
+     }
+ 
+diff --git a/src/beeline/src/main/resources/BeeLine.properties b/src/beeline/src/main/resources/BeeLine.properties
+index fe0d288..2396388 100644
+--- a/src/beeline/src/main/resources/BeeLine.properties
++++ b/src/beeline/src/main/resources/BeeLine.properties
+@@ -7,6 +7,7 @@ enter-for-more: [ Hit "enter" for more ("q" to exit) ]
+ no-manual: Could not find manual resource.
+ executing-command:	Executing command: {0}
+ unknown-command: Unknown command: {0}
++unrecognized-argument: Unrecognized argument: {0}
+ autocommit-needs-off: Operation requires that autocommit be turned off.
+ no-current-connection: No current connection
+ connection-is-closed: Connection is closed
+-- 
+1.7.0.4
+

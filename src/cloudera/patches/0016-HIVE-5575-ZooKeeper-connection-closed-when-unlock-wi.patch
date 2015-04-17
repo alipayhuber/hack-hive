@@ -1,0 +1,39 @@
+From 7e6042b94de9d4c8a93daa5b60ba4959f8effb7d Mon Sep 17 00:00:00 2001
+From: Brock Noland <brock@apache.org>
+Date: Fri, 18 Oct 2013 15:29:43 +0000
+Subject: [PATCH 016/375] HIVE-5575: ZooKeeper connection closed when unlock with retry (Chun Chen via Brock Noland)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1533511 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../zookeeper/ZooKeeperHiveLockManager.java        |    8 ++++----
+ 1 files changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/lockmgr/zookeeper/ZooKeeperHiveLockManager.java b/src/ql/src/java/org/apache/hadoop/hive/ql/lockmgr/zookeeper/ZooKeeperHiveLockManager.java
+index b7b48d4..735e745 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/lockmgr/zookeeper/ZooKeeperHiveLockManager.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/lockmgr/zookeeper/ZooKeeperHiveLockManager.java
+@@ -307,10 +307,6 @@ private ZooKeeperHiveLock lock (HiveLockObject key, HiveLockMode mode,
+       try {
+         if (tryNum > 1) {
+           Thread.sleep(sleepTime);
+-          if (zooKeeper.getState() == ZooKeeper.States.CLOSED) {
+-            // Reconnect if the connection is closed.
+-            zooKeeper = null;
+-          }
+           prepareRetry();
+         }
+         ret = lockPrimitive(key, mode, keepAlive, parentCreated);
+@@ -752,6 +748,10 @@ public void process(org.apache.zookeeper.WatchedEvent event)  {
+   @Override
+   public void prepareRetry() throws LockException {
+     try {
++      if (zooKeeper != null && zooKeeper.getState() == ZooKeeper.States.CLOSED) {
++        // Reconnect if the connection is closed.
++        zooKeeper = null;
++      }
+       renewZookeeperInstance(sessionTimeout, quorumServers);
+     } catch (Exception e) {
+       throw new LockException(e);
+-- 
+1.7.0.4
+

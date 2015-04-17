@@ -1,0 +1,50 @@
+From 45f3ee9709f01ee44b2374380bd2f3e4a8b8de14 Mon Sep 17 00:00:00 2001
+From: Brock Noland <brock@cloudera.com>
+Date: Wed, 4 Dec 2013 13:10:43 -0600
+Subject: [PATCH 178/375] CLOUDERA-BUILD: CDH-16001 - QTest module under hadoop-1 is missing hadoop-common
+
+---
+ itests/qtest/pom.xml |   13 +++++++++++++
+ pom.xml              |    2 +-
+ 2 files changed, 14 insertions(+), 1 deletions(-)
+
+diff --git a/src/itests/qtest/pom.xml b/src/itests/qtest/pom.xml
+index 2a726c5..df0fbdf 100644
+--- a/src/itests/qtest/pom.xml
++++ b/src/itests/qtest/pom.xml
+@@ -128,6 +128,19 @@
+       <dependencies>
+         <dependency>
+           <groupId>org.apache.hadoop</groupId>
++          <artifactId>hadoop-common</artifactId>
++          <version>${hadoop-23.version}</version>
++          <scope>test</scope>
++        </dependency>
++        <dependency>
++          <groupId>org.apache.hadoop</groupId>
++          <artifactId>hadoop-common</artifactId>
++          <version>${hadoop-23.version}</version>
++          <scope>test</scope>
++          <classifier>tests</classifier>
++        </dependency>
++        <dependency>
++          <groupId>org.apache.hadoop</groupId>
+           <artifactId>hadoop-core</artifactId>
+           <version>${hadoop-20S.version}</version>
+           <scope>test</scope>
+diff --git a/src/pom.xml b/src/pom.xml
+index a66c063..3476cd3 100644
+--- a/src/pom.xml
++++ b/src/pom.xml
+@@ -860,7 +860,7 @@
+     <profile>
+       <id>hadoop-1</id>
+       <activation>
+-        <activeByDefault>true</activeByDefault>
++        <activeByDefault>false</activeByDefault>
+       </activation>
+       <dependencyManagement>
+         <dependencies>
+-- 
+1.7.0.4
+

@@ -1,0 +1,30 @@
+From edb6f200e30f285324a67f0427886599115e4aea Mon Sep 17 00:00:00 2001
+From: Ashutosh Chauhan <hashutosh@apache.org>
+Date: Thu, 16 Jan 2014 21:56:50 +0000
+Subject: [PATCH 235/375] HIVE-6170 : Upgrade to the latest version of bonecp (Hari via Ashutosh Chauhan)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1558927 13f79535-47bb-0310-9956-ffa450edef68
+
+Conflicts:
+	pom.xml
+Falsely-marked conflict due to avro version diff on previous line, no real conflict.
+---
+ pom.xml |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+
+diff --git a/src/pom.xml b/src/pom.xml
+index 77dd50a..1c48158 100644
+--- a/src/pom.xml
++++ b/src/pom.xml
+@@ -86,7 +86,7 @@
+     <ant.version>1.9.1</ant.version>
+     <antlr.version>3.4</antlr.version>
+     <avro.version>${cdh.avro.version}</avro.version>
+-    <bonecp.version>0.7.1.RELEASE</bonecp.version>
++    <bonecp.version>0.8.0.RELEASE</bonecp.version>
+     <datanucleus-api-jdo.version>3.2.1</datanucleus-api-jdo.version>
+     <datanucleus-core.version>3.2.2</datanucleus-core.version>
+     <datanucleus-rdbms.version>3.2.1</datanucleus-rdbms.version>
+-- 
+1.7.0.4
+

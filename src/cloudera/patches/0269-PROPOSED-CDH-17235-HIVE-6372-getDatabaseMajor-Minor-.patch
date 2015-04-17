@@ -1,0 +1,46 @@
+From 76306c64db2247eda95258706b441cedd1fb596d Mon Sep 17 00:00:00 2001
+From: Szehon Ho <szehon@cloudera.com>
+Date: Wed, 5 Feb 2014 12:11:32 -0800
+Subject: [PATCH 269/375] PROPOSED CDH-17235: HIVE-6372: getDatabaseMajor/Minor version returns wrong values
+
+---
+ .../org/apache/hive/jdbc/HiveDatabaseMetaData.java |    4 ++--
+ jdbc/src/java/org/apache/hive/jdbc/Utils.java      |    4 ++--
+ 2 files changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/src/jdbc/src/java/org/apache/hive/jdbc/HiveDatabaseMetaData.java b/src/jdbc/src/java/org/apache/hive/jdbc/HiveDatabaseMetaData.java
+index fe39c0c..e918da2 100644
+--- a/src/jdbc/src/java/org/apache/hive/jdbc/HiveDatabaseMetaData.java
++++ b/src/jdbc/src/java/org/apache/hive/jdbc/HiveDatabaseMetaData.java
+@@ -258,11 +258,11 @@ public ResultSet getCrossReference(String primaryCatalog,
+   }
+ 
+   public int getDatabaseMajorVersion() throws SQLException {
+-    return Utils.getVersionPart(getDatabaseProductVersion(), 1);
++    return Utils.getVersionPart(getDatabaseProductVersion(), 0);
+   }
+ 
+   public int getDatabaseMinorVersion() throws SQLException {
+-    return Utils.getVersionPart(getDatabaseProductVersion(), 2);
++    return Utils.getVersionPart(getDatabaseProductVersion(), 1);
+   }
+ 
+   public String getDatabaseProductName() throws SQLException {
+diff --git a/src/jdbc/src/java/org/apache/hive/jdbc/Utils.java b/src/jdbc/src/java/org/apache/hive/jdbc/Utils.java
+index d2d09c6..e50a017 100644
+--- a/src/jdbc/src/java/org/apache/hive/jdbc/Utils.java
++++ b/src/jdbc/src/java/org/apache/hive/jdbc/Utils.java
+@@ -282,8 +282,8 @@ public static JdbcConnectionParams parseURL(String uri) throws IllegalArgumentEx
+    * @param fullVersion
+    *          version string.
+    * @param tokenPosition
+-   *          position of version string to get starting at 1. eg, for a X.x.xxx
+-   *          string, 1 will return the major version, 2 will return minor
++   *          position of version string to get starting at 0. eg, for a X.x.xxx
++   *          string, 0 will return the major version, 1 will return minor
+    *          version.
+    * @return version part, or -1 if version string was malformed.
+    */
+-- 
+1.7.0.4
+

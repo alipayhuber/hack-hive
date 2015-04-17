@@ -1,0 +1,26 @@
+From d27e82a80657a17e1452f1046d754a2e56f35814 Mon Sep 17 00:00:00 2001
+From: Brock Noland <brock@apache.org>
+Date: Mon, 21 Oct 2013 21:49:04 +0000
+Subject: [PATCH 099/375] HIVE-5132 - Can't access to hwi due to 'No Java compiler available' (Bing Li via Edward Capriolo)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1534392 13f79535-47bb-0310-9956-ffa450edef68
+---
+ hwi/ivy.xml |    2 ++
+ 1 files changed, 2 insertions(+), 0 deletions(-)
+
+diff --git a/src/hwi/ivy.xml b/src/hwi/ivy.xml
+index 81fa89b..ef9495c 100644
+--- a/src/hwi/ivy.xml
++++ b/src/hwi/ivy.xml
+@@ -29,6 +29,8 @@
+     <dependency org="org.apache.hive" name="hive-cli" rev="${version}"
+                 conf="compile->default" />
+     <dependency org="org.mortbay.jetty" name="jetty" rev="${jetty.version}" />
++    <dependency org="org.apache.ant" name="ant" rev="${apacheant.version}" />
++    <dependency org="org.apache.ant" name="ant-launcher" rev="${apacheant.version}" />
+ 
+     <!-- Test Dependencies -->
+     <dependency org="commons-httpclient" name="commons-httpclient" rev="${commons-httpclient.version}"
+-- 
+1.7.0.4
+

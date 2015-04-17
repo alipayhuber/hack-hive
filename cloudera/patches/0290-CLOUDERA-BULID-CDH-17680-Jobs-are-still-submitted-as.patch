@@ -1,0 +1,432 @@
+From 856d9125e75079829bcc7db57c811e58af02b14f Mon Sep 17 00:00:00 2001
+From: Prasad Mujumdar <prasadm@cloudera.com>
+Date: Wed, 26 Feb 2014 00:54:29 -0800
+Subject: [PATCH 290/375] CLOUDERA-BULID: CDH-17680: Jobs are still submitted as hive user - Fair scheduler doesnt seem to work
+
+---
+ .../org/apache/hive/jdbc/TestSchedulerQueue.java   |   45 +++++++++------
+ .../hive/jdbc/miniHS2/AbstarctHiveService.java     |   15 +++++
+ .../java/org/apache/hive/jdbc/miniHS2/MiniHS2.java |   62 ++++++++++++++++++-
+ .../hive/service/cli/session/HiveSessionImpl.java  |   15 ++++-
+ .../cli/session/HiveSessionImplwithUGI.java        |    4 +-
+ .../hive/service/cli/session/SessionManager.java   |   14 +----
+ .../apache/hadoop/hive/shims/Hadoop23Shims.java    |   12 +++-
+ 7 files changed, 124 insertions(+), 43 deletions(-)
+
+diff --git a/src/itests/hive-unit/src/test/java/org/apache/hive/jdbc/TestSchedulerQueue.java b/src/itests/hive-unit/src/test/java/org/apache/hive/jdbc/TestSchedulerQueue.java
+index ed59aed..ed57331 100644
+--- a/src/itests/hive-unit/src/test/java/org/apache/hive/jdbc/TestSchedulerQueue.java
++++ b/src/itests/hive-unit/src/test/java/org/apache/hive/jdbc/TestSchedulerQueue.java
+@@ -19,13 +19,16 @@
+ package org.apache.hive.jdbc;
+ import static org.junit.Assert.assertEquals;
+ import static org.junit.Assert.assertTrue;
++
+ import java.sql.Connection;
+ import java.sql.DriverManager;
+ import java.sql.ResultSet;
+ import java.sql.Statement;
++
+ import org.apache.hadoop.hive.conf.HiveConf;
++import org.apache.hadoop.yarn.conf.YarnConfiguration;
++import org.apache.hadoop.yarn.server.resourcemanager.scheduler.fair.FairScheduler;
+ import org.apache.hive.jdbc.miniHS2.MiniHS2;
+-
+ import org.junit.After;
+ import org.junit.Before;
+ import org.junit.BeforeClass;
+@@ -36,7 +39,6 @@
+   private MiniHS2 miniHS2 = null;
+   private static HiveConf conf = new HiveConf();
+   private Connection hs2Conn = null;
+-  private String dataFileDir = conf.get("test.data.files");
+ 
+   @BeforeClass
+   public static void beforeTest() throws Exception {
+@@ -46,13 +48,10 @@ public static void beforeTest() throws Exception {
+   @Before
+   public void setUp() throws Exception {
+     DriverManager.setLoginTimeout(0);
+-    if (!System.getProperty("test.data.files", "").isEmpty()) {
+-      dataFileDir = System.getProperty("test.data.files");
+-    }
+-    dataFileDir = dataFileDir.replace('\\', '/').replace("c:", "");
+-    conf.set("mapred.jobtracker.taskScheduler", "org.apache.hadoop.mapred.FairScheduler");
+-    conf.setBoolVar(HiveConf.ConfVars.HIVE_SERVER2_ENABLE_DOAS, false);
+     miniHS2 = new MiniHS2(conf, true);
++    miniHS2.setConfProperty(HiveConf.ConfVars.HIVE_SERVER2_ENABLE_DOAS.varname, "false");
++    miniHS2.setConfProperty(HiveConf.ConfVars.HIVE_SERVER2_MAP_FAIR_SCHEDULER_QUEUE.varname,
++        "true");
+     miniHS2.start();
+   }
+ 
+@@ -64,28 +63,37 @@ public void tearDown() throws Exception {
+     if (miniHS2 != null && miniHS2.isStarted()) {
+       miniHS2.stop();
+     }
++    System.clearProperty("mapreduce.job.queuename");
+   }
+ 
+   /***
+-   * Test SSL default queue mapping
++   * Verify that the test is running with MR2 and queue mapping defaults are set
++   * verify the queue mapping for the connected user
+    * @throws Exception
+    */
+   @Test
+   public void testFairSchedulerQueueMapping() throws Exception {
+     hs2Conn = DriverManager.getConnection(miniHS2.getJdbcURL(), "user1", "bar");
+     verifyProperty("mapreduce.framework.name", "yarn");
+-    verifyProperty("mapred.jobtracker.taskScheduler", "org.apache.hadoop.mapred.FairScheduler");
+-    verifyProperty("mapred.job.queue.name", "root.user1");
++    verifyProperty(HiveConf.ConfVars.HIVE_SERVER2_MAP_FAIR_SCHEDULER_QUEUE.varname,
++        "true");
++    verifyProperty(YarnConfiguration.RM_SCHEDULER,
++        "org.apache.hadoop.yarn.server.resourcemanager.scheduler.fair.FairScheduler");
++    verifyProperty("mapreduce.job.queuename", "root.user1");
+   }
+ 
++  /***
++   * Test that the queue refresh by Hive doesn't happen when configured to be turned off
++   * @throws Exception
++   */
+   @Test
+-  public void testFairSchedulerQueueMappingDisabled() throws Exception {
+-    miniHS2.setConfProperty(HiveConf.ConfVars.HIVE_SERVER2_MAP_FAIR_SCHEDULER_QUEUE.varname,
+-        "false");
++  public void testQueueMappingCheckDisabled() throws Exception {
++    miniHS2.setConfProperty(
++        HiveConf.ConfVars.HIVE_SERVER2_MAP_FAIR_SCHEDULER_QUEUE.varname, "false");
+     hs2Conn = DriverManager.getConnection(miniHS2.getJdbcURL(), "user1", "bar");
+-    verifyProperty("mapred.job.queue.name", "default");
+-    miniHS2.setConfProperty(HiveConf.ConfVars.HIVE_SERVER2_MAP_FAIR_SCHEDULER_QUEUE.varname,
+-        "true");
++    verifyProperty(HiveConf.ConfVars.HIVE_SERVER2_MAP_FAIR_SCHEDULER_QUEUE.varname,
++        "false");
++    verifyProperty("mapreduce.job.queuename", YarnConfiguration.DEFAULT_QUEUE_NAME);
+   }
+ 
+   /**
+@@ -99,7 +107,8 @@ private void verifyProperty(String propertyName, String expectedValue) throws Ex
+     ResultSet res = stmt.executeQuery("set " + propertyName);
+     assertTrue(res.next());
+     String results[] = res.getString(1).split("=");
+-    assertEquals(expectedValue, results[1]);
++    assertEquals("Property should be set", results.length, 2);
++    assertEquals("Property should be set", expectedValue, results[1]);
+   }
+ 
+ }
+diff --git a/src/itests/hive-unit/src/test/java/org/apache/hive/jdbc/miniHS2/AbstarctHiveService.java b/src/itests/hive-unit/src/test/java/org/apache/hive/jdbc/miniHS2/AbstarctHiveService.java
+index 5ecd156..95e45fb 100644
+--- a/src/itests/hive-unit/src/test/java/org/apache/hive/jdbc/miniHS2/AbstarctHiveService.java
++++ b/src/itests/hive-unit/src/test/java/org/apache/hive/jdbc/miniHS2/AbstarctHiveService.java
+@@ -18,6 +18,9 @@
+ 
+ package org.apache.hive.jdbc.miniHS2;
+ 
++import java.util.ArrayList;
++import java.util.List;
++
+ import org.apache.hadoop.fs.Path;
+ import org.apache.hadoop.hive.conf.HiveConf;
+ import org.apache.hadoop.hive.conf.HiveConf.ConfVars;
+@@ -32,6 +35,7 @@
+   private String hostname;
+   private int port;
+   private boolean startedHiveService = false;
++  private List<String> addedProperties = new ArrayList<String>();
+ 
+   public AbstarctHiveService(HiveConf hiveConf, String hostname, int port) {
+     this.hiveConf = hiveConf;
+@@ -64,6 +68,17 @@ public String getConfProperty(String propertyKey) {
+   public void setConfProperty(String propertyKey, String propertyValue) {
+     System.setProperty(propertyKey, propertyValue);
+     hiveConf.set(propertyKey, propertyValue);
++    addedProperties.add(propertyKey);
++  }
++
++  /**
++   * Create system properties set by this server instance. This ensures that
++   * the changes made by current test are not impacting subsequent tests.
++   */
++  public void clearProperties() {
++    for (String propKey : addedProperties ) {
++      System.clearProperty(propKey);
++    }
+   }
+ 
+   /**
+diff --git a/src/itests/hive-unit/src/test/java/org/apache/hive/jdbc/miniHS2/MiniHS2.java b/src/itests/hive-unit/src/test/java/org/apache/hive/jdbc/miniHS2/MiniHS2.java
+index 0a4a5d1..697a937 100644
+--- a/src/itests/hive-unit/src/test/java/org/apache/hive/jdbc/miniHS2/MiniHS2.java
++++ b/src/itests/hive-unit/src/test/java/org/apache/hive/jdbc/miniHS2/MiniHS2.java
+@@ -19,14 +19,20 @@
+ package org.apache.hive.jdbc.miniHS2;
+ 
+ import java.io.File;
++import java.io.FileOutputStream;
+ import java.io.IOException;
++import java.io.OutputStream;
++import java.lang.reflect.Field;
++import java.net.URL;
+ import java.util.Map;
++import java.util.Properties;
+ import java.util.concurrent.TimeoutException;
+ import java.util.concurrent.atomic.AtomicLong;
+ 
+ import org.apache.commons.io.FileUtils;
+ import org.apache.hadoop.fs.FileSystem;
+ import org.apache.hadoop.fs.Path;
++import org.apache.hadoop.conf.Configuration;
+ import org.apache.hadoop.hive.conf.HiveConf;
+ import org.apache.hadoop.hive.conf.HiveConf.ConfVars;
+ import org.apache.hadoop.hive.metastore.HiveMetaStore;
+@@ -36,7 +42,10 @@
+ import org.apache.hadoop.hive.shims.ShimLoader;
+ import org.apache.hive.service.Service;
+ import org.apache.hive.service.cli.CLIServiceClient;
++import org.apache.hive.service.cli.HiveSQLException;
+ import org.apache.hive.service.cli.SessionHandle;
++import org.apache.hive.service.cli.session.HiveSessionHook;
++import org.apache.hive.service.cli.session.HiveSessionHookContext;
+ import org.apache.hive.service.cli.thrift.ThriftBinaryCLIService;
+ import org.apache.hive.service.cli.thrift.ThriftCLIServiceClient;
+ import org.apache.hive.service.server.HiveServer2;
+@@ -46,8 +55,8 @@
+ public class MiniHS2 extends AbstarctHiveService {
+   private static final String driverName = "org.apache.hive.jdbc.HiveDriver";
+   private HiveServer2 hiveServer2 = null;
+-  private MiniMrShim mr;
+-  private MiniDFSShim dfs;
++  private static MiniMrShim mr;
++  private static MiniDFSShim dfs;
+   private final File baseDir;
+   private final Path baseDfsDir;
+   private static final AtomicLong hs2Counter = new AtomicLong();
+@@ -65,8 +74,7 @@ public MiniHS2(HiveConf hiveConf, boolean useMiniMR) throws IOException {
+       fs = dfs.getFileSystem();
+       mr = ShimLoader.getHadoopShims().getMiniMrCluster(hiveConf, 4,
+           fs.getUri().toString(), 1);
+-      // store the config in system properties
+-      mr.setupConfiguration(getHiveConf());
++      setupMiniMrConfig(hiveConf);
+       baseDfsDir =  new Path(new Path(fs.getUri()), "/base");
+     } else {
+       fs = FileSystem.getLocal(hiveConf);
+@@ -94,6 +102,47 @@ public MiniHS2(HiveConf hiveConf, boolean useMiniMR) throws IOException {
+         baseDir.getPath() + File.separator + "scratch");
+   }
+ 
++  /**
++   * HiveServer2 sessions don't inherit from the global config. As a workaroud,
++   * the  test framework is creating a new hive site and injecting that into
++   * HiveConf using reflection.
++   * @param hiveConf
++   * @throws IOException
++   */
++  private void setupMiniMrConfig(HiveConf hiveConf) throws IOException {
++    // store the MR config properties in hiveConf
++    mr.setupConfiguration(hiveConf);
++
++    // write out the updated hive configuration
++    File hiveSite = new File(baseDir, "hive-site.xml");
++    FileOutputStream out = new FileOutputStream(hiveSite );
++    hiveConf.writeXml(out);
++    out.close();
++
++    // reset the hive-site location to the new file in HiveConf
++    resetHiveConfFile(hiveSite.toURI().toURL());
++  }
++
++  // set the private static field hiveSiteURL in HiveConf
++  private void resetHiveConfFile(URL hiveSiteFile) throws IOException {
++    Field f;
++    try {
++      f = HiveConf.class.getDeclaredField("hiveSiteURL");
++    } catch (NoSuchFieldException e) {
++      throw new IOException("Failed to modify HiveConf", e);
++    } catch (SecurityException e) {
++      throw new IOException("Failed to modify HiveConf", e);
++    }
++    f.setAccessible(true);
++    try {
++      f.set(null, hiveSiteFile);
++    } catch (IllegalArgumentException e) {
++      throw new IOException("Failed to modify HiveConf", e);
++    } catch (IllegalAccessException e) {
++      throw new IOException("Failed to modify HiveConf", e);
++    }
++  }
++
+   public void start() throws Exception {
+     hiveServer2 = new HiveServer2();
+     hiveServer2.init(getHiveConf());
+@@ -109,12 +158,17 @@ public void stop() {
+     try {
+       if (mr != null) {
+         mr.shutdown();
++        mr = null;
++        resetHiveConfFile(HiveConf.class.getResource("hive-site.xml"));
+       }
+       if (dfs != null) {
+         dfs.shutdown();
++        dfs = null;
+       }
+     } catch (IOException e) {
+       // Ignore errors cleaning up miniMR
++    } finally {
++      clearProperties();
+     }
+     FileUtils.deleteQuietly(baseDir);
+   }
+diff --git a/src/service/src/java/org/apache/hive/service/cli/session/HiveSessionImpl.java b/src/service/src/java/org/apache/hive/service/cli/session/HiveSessionImpl.java
+index 34c20ad..df5cbc3 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/session/HiveSessionImpl.java
++++ b/src/service/src/java/org/apache/hive/service/cli/session/HiveSessionImpl.java
+@@ -67,7 +67,7 @@
+   private String username;
+   private final String password;
+   private final Map<String, String> sessionConf = new HashMap<String, String>();
+-  private final HiveConf hiveConf;
++  private final HiveConf hiveConf = new HiveConf();
+   private final SessionState sessionState;
+   private String ipAddress;
+ 
+@@ -82,12 +82,21 @@
+   private IMetaStoreClient metastoreClient = null;
+   private final Set<OperationHandle> opHandleSet = new HashSet<OperationHandle>();
+ 
+-  public HiveSessionImpl(HiveConf serverConf, String username, String password,
++  public HiveSessionImpl(String username, String password,
+       Map<String, String> sessionConf, String ipAddress) {
+     this.username = username;
+     this.password = password;
+     this.ipAddress = ipAddress;
+-    this.hiveConf = new HiveConf(serverConf, HiveConf.class);
++
++    try {
++      // reload the scheduler queue if possible
++      if (hiveConf.getBoolVar(ConfVars.HIVE_SERVER2_MAP_FAIR_SCHEDULER_QUEUE)) {
++        ShimLoader.getHadoopShims().
++          refreshDefaultQueue(hiveConf, username);
++      }
++    } catch (IOException e1) {
++      LOG.warn("Error setting scheduler queue ", e1);
++    }
+ 
+     if (sessionConf != null) {
+       for (Map.Entry<String, String> entry : sessionConf.entrySet()) {
+diff --git a/src/service/src/java/org/apache/hive/service/cli/session/HiveSessionImplwithUGI.java b/src/service/src/java/org/apache/hive/service/cli/session/HiveSessionImplwithUGI.java
+index 1f1e519..1eac3ab 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/session/HiveSessionImplwithUGI.java
++++ b/src/service/src/java/org/apache/hive/service/cli/session/HiveSessionImplwithUGI.java
+@@ -42,9 +42,9 @@
+   private Hive sessionHive = null;
+   private HiveSession proxySession = null;
+ 
+-  public HiveSessionImplwithUGI(HiveConf serverConf, String username, String password, Map<String, String> sessionConf,
++  public HiveSessionImplwithUGI(String username, String password, Map<String, String> sessionConf,
+       String ipAddress, String delegationToken) throws HiveSQLException {
+-    super(serverConf, username, password, sessionConf, ipAddress);
++    super(username, password, sessionConf, ipAddress);
+     setSessionUGI(username);
+     setDelegationToken(delegationToken);
+   }
+diff --git a/src/service/src/java/org/apache/hive/service/cli/session/SessionManager.java b/src/service/src/java/org/apache/hive/service/cli/session/SessionManager.java
+index 04c26f1..15e0fa4 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/session/SessionManager.java
++++ b/src/service/src/java/org/apache/hive/service/cli/session/SessionManager.java
+@@ -116,12 +116,12 @@ public SessionHandle openSession(String username, String password, Map<String, S
+       username = threadLocalUserName.get();
+     }
+     if (withImpersonation) {
+-      HiveSessionImplwithUGI hiveSessionUgi = new HiveSessionImplwithUGI(hiveConf, username, password, sessionConf,
++      HiveSessionImplwithUGI hiveSessionUgi = new HiveSessionImplwithUGI(username, password, sessionConf,
+           threadLocalIpAddress.get(), delegationToken);
+       session = HiveSessionProxy.getProxy(hiveSessionUgi, hiveSessionUgi.getSessionUgi());
+       hiveSessionUgi.setProxySession(session);
+     } else {
+-      session = new HiveSessionImpl(hiveConf, username, password, sessionConf, threadLocalIpAddress.get());
++      session = new HiveSessionImpl(username, password, sessionConf, threadLocalIpAddress.get());
+     }
+     session.setSessionManager(this);
+     session.setOperationManager(operationManager);
+@@ -130,16 +130,6 @@ public SessionHandle openSession(String username, String password, Map<String, S
+       handleToSession.put(session.getSessionHandle(), session);
+     }
+     try {
+-      // reload the scheduler queue if possible
+-      if (!withImpersonation &&
+-          session.getHiveConf().getBoolVar(ConfVars.HIVE_SERVER2_MAP_FAIR_SCHEDULER_QUEUE)) {
+-        ShimLoader.getHadoopShims().
+-          refreshDefaultQueue(session.getHiveConf(), session.getUserName());
+-      }
+-    } catch (IOException e1) {
+-      LOG.warn("Error setting scheduler queue ", e1);
+-    }
+-    try {
+       executeSessionHooks(session);
+     } catch (Exception e) {
+       throw new HiveSQLException("Failed to execute session hooks", e);
+diff --git a/src/shims/0.23/src/main/java/org/apache/hadoop/hive/shims/Hadoop23Shims.java b/src/shims/0.23/src/main/java/org/apache/hadoop/hive/shims/Hadoop23Shims.java
+index fe0f7b1..8a29a10 100644
+--- a/src/shims/0.23/src/main/java/org/apache/hadoop/hive/shims/Hadoop23Shims.java
++++ b/src/shims/0.23/src/main/java/org/apache/hadoop/hive/shims/Hadoop23Shims.java
+@@ -25,6 +25,7 @@
+ import java.net.MalformedURLException;
+ import java.net.URL;
+ import java.util.Map;
++import java.util.Properties;
+ import java.net.URI;
+ import java.io.FileNotFoundException;
+ 
+@@ -57,12 +58,14 @@
+ import org.apache.hadoop.security.authentication.util.KerberosName;
+ import org.apache.hadoop.yarn.conf.YarnConfiguration;
+ import org.apache.hadoop.yarn.server.resourcemanager.scheduler.fair.AllocationConfiguration;
++import org.apache.hadoop.yarn.server.resourcemanager.scheduler.fair.FairScheduler;
+ import org.apache.hadoop.yarn.server.resourcemanager.scheduler.fair.QueuePlacementPolicy;
+ 
+ /**
+  * Implemention of shims against Hadoop 0.23.0.
+  */
+ public class Hadoop23Shims extends HadoopShimsSecure {
++  private static final String MR2_JOB_QUEUE_PROPERTY = "mapreduce.job.queuename";
+ 
+   @Override
+   public String getTaskAttemptLogUrl(JobConf conf,
+@@ -241,9 +244,9 @@ public void refreshDefaultQueue(Configuration conf, String userName) throws IOEx
+       QueuePlacementPolicy queuePolicy = allocConf.getPlacementPolicy();
+       if (queuePolicy != null) {
+         requestedQueue = queuePolicy.assignAppToQueue(requestedQueue, userName);
+-        LOG.debug("Setting queue name to " + requestedQueue + " for user " + userName);
+         if (StringUtils.isNotBlank(requestedQueue)) {
+-          conf.set("mapred.job.queue.name", requestedQueue);
++          LOG.debug("Setting queue name to " + requestedQueue + " for user " + userName);
++          conf.set(MR2_JOB_QUEUE_PROPERTY, requestedQueue);
+         }
+       }
+     }
+@@ -251,8 +254,8 @@ public void refreshDefaultQueue(Configuration conf, String userName) throws IOEx
+ 
+   // verify if the configured scheduler is fair scheduler
+   private boolean isFairScheduler (Configuration conf) {
+-    return "org.apache.hadoop.mapred.FairScheduler".
+-          equalsIgnoreCase(conf.get("mapred.jobtracker.taskScheduler", ""));
++    return FairScheduler.class.getName().
++        equalsIgnoreCase(conf.get(YarnConfiguration.RM_SCHEDULER));
+   }
+ 
+   /**
+@@ -308,6 +311,7 @@ public void setupConfiguration(Configuration conf) {
+         conf.set(pair.getKey(), pair.getValue());
+       }
+     }
++
+   }
+ 
+   // Don't move this code to the parent class. There's a binary
+-- 
+1.7.0.4
+

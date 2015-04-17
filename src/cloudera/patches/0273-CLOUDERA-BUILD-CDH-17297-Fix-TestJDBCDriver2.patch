@@ -1,0 +1,45 @@
+From 371eaec151c3cab36812c1efed099fb7875cfe7c Mon Sep 17 00:00:00 2001
+From: Prasad Mujumdar <prasadm@cloudera.com>
+Date: Thu, 6 Feb 2014 21:23:57 -0800
+Subject: [PATCH 273/375] CLOUDERA-BUILD: CDH-17297: Fix TestJDBCDriver2
+
+---
+ .../java/org/apache/hadoop/hive/conf/HiveConf.java |    1 -
+ .../hive/service/cli/session/HiveSessionImpl.java  |    2 --
+ 2 files changed, 0 insertions(+), 3 deletions(-)
+
+diff --git a/src/common/src/java/org/apache/hadoop/hive/conf/HiveConf.java b/src/common/src/java/org/apache/hadoop/hive/conf/HiveConf.java
+index 00b98ec..ef20bc4 100644
+--- a/src/common/src/java/org/apache/hadoop/hive/conf/HiveConf.java
++++ b/src/common/src/java/org/apache/hadoop/hive/conf/HiveConf.java
+@@ -780,7 +780,6 @@
+     HIVE_SERVER2_SSL_KEYSTORE_PATH("hive.server2.keystore.path", ""),
+     HIVE_SERVER2_SSL_KEYSTORE_PASSWORD("hive.server2.keystore.password", ""),
+     HIVE_SERVER2_ALLOW_USER_SUBSTITUTION("hive.server2.allow.user.substitution", true),
+-    HIVE_SERVER2_SESSION_USER("hive.server2.session.user", ""),
+ 
+     HIVE_SERVER2_IN_MEM_LOGGING("hive.server2.in.mem.logging", true),
+     HIVE_SERVER2_IN_MEM_LOG_SIZE("hive.server2.in.mem.log.size", 128 * 1024),
+diff --git a/src/service/src/java/org/apache/hive/service/cli/session/HiveSessionImpl.java b/src/service/src/java/org/apache/hive/service/cli/session/HiveSessionImpl.java
+index c3be2a3..6d58f68 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/session/HiveSessionImpl.java
++++ b/src/service/src/java/org/apache/hive/service/cli/session/HiveSessionImpl.java
+@@ -95,7 +95,6 @@ public HiveSessionImpl(String username, String password, Map<String, String> ses
+     // set an explicit session name to control the download directory name
+     hiveConf.set(ConfVars.HIVESESSIONID.varname,
+         sessionHandle.getHandleIdentifier().toString());
+-    hiveConf.setVar(ConfVars.HIVE_SERVER2_SESSION_USER, username);
+     sessionState = new SessionState(hiveConf);
+     SessionState.start(sessionState);
+   }
+@@ -399,7 +398,6 @@ public String getUserName() {
+   }
+   public void setUserName(String userName) {
+     this.username = userName;
+-    getHiveConf().setVar(ConfVars.HIVE_SERVER2_SESSION_USER, username);
+   }
+ 
+   @Override
+-- 
+1.7.0.4
+

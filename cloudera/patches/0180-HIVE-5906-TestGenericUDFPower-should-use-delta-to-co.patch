@@ -1,0 +1,26 @@
+From 1fd64c4a930e4b7b893ec6d652e2b2c13b705c13 Mon Sep 17 00:00:00 2001
+From: Brock Noland <brock@apache.org>
+Date: Wed, 4 Dec 2013 15:00:52 +0000
+Subject: [PATCH 180/375] HIVE-5906 - TestGenericUDFPower should use delta to compare doubles (Szehon Ho via Brock Noland)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1547816 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../hive/ql/udf/generic/TestGenericUDFPower.java   |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+
+diff --git a/src/ql/src/test/org/apache/hadoop/hive/ql/udf/generic/TestGenericUDFPower.java b/src/ql/src/test/org/apache/hadoop/hive/ql/udf/generic/TestGenericUDFPower.java
+index fd081d7..da616b2 100644
+--- a/src/ql/src/test/org/apache/hadoop/hive/ql/udf/generic/TestGenericUDFPower.java
++++ b/src/ql/src/test/org/apache/hadoop/hive/ql/udf/generic/TestGenericUDFPower.java
+@@ -184,7 +184,7 @@ public void testDoulePowerDecimal() throws HiveException {
+     PrimitiveObjectInspector oi = (PrimitiveObjectInspector) udf.initialize(inputOIs);
+     Assert.assertEquals(TypeInfoFactory.doubleTypeInfo, oi.getTypeInfo());
+     DoubleWritable res = (DoubleWritable) udf.evaluate(args);
+-    Assert.assertEquals(new Double(-4.52 * 4.52 * 4.52), new Double(res.get()));
++    Assert.assertEquals("Unexpected result", new Double(-4.52 * 4.52 * 4.52), new Double(res.get()), 1e-6);
+   }
+ 
+   @Test
+-- 
+1.7.0.4
+

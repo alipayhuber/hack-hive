@@ -1,0 +1,45 @@
+From 7962a06fc759c40403024ffc2344588788c3704a Mon Sep 17 00:00:00 2001
+From: Navis Ryu <navis@apache.org>
+Date: Mon, 9 Sep 2013 07:38:36 +0000
+Subject: [PATCH 003/375] HIVE-5071 : Address thread safety issues with HiveHistoryUtil (Teddy Choi reviewed by Edward Capriolo committed by Navis)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1520979 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../hadoop/hive/ql/history/HiveHistoryUtil.java    |    8 ++------
+ 1 files changed, 2 insertions(+), 6 deletions(-)
+
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/history/HiveHistoryUtil.java b/src/ql/src/java/org/apache/hadoop/hive/ql/history/HiveHistoryUtil.java
+index a7ca165..c7cf2a3 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/history/HiveHistoryUtil.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/history/HiveHistoryUtil.java
+@@ -70,9 +70,6 @@ public static void parseHiveHistory(String path, Listener l) throws IOException 
+  private static final Pattern pattern = Pattern.compile(KEY + "=" + "\""
+      + VALUE + "\"");
+ 
+- // temp buffer for parsed dataa
+- private static Map<String, String> parseBuffer = new HashMap<String, String>();
+-
+  /**
+   * Parse a single line of history.
+   *
+@@ -81,6 +78,8 @@ public static void parseHiveHistory(String path, Listener l) throws IOException 
+   * @throws IOException
+   */
+  private static void parseLine(String line, Listener l) throws IOException {
++   Map<String, String> parseBuffer = new HashMap<String, String>();
++   
+    // extract the record type
+    int idx = line.indexOf(' ');
+    String recType = line.substring(0, idx);
+@@ -96,8 +95,5 @@ private static void parseLine(String line, Listener l) throws IOException {
+    }
+ 
+    l.handle(RecordTypes.valueOf(recType), parseBuffer);
+-
+-   parseBuffer.clear();
+  }
+-
+ }
+-- 
+1.7.0.4
+

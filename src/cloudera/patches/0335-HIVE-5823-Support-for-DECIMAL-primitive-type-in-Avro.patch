@@ -1,0 +1,1007 @@
+From 2275809f992cba1a69e655fcc4dff7a2aeed03ba Mon Sep 17 00:00:00 2001
+From: Brock Noland <brock@apache.org>
+Date: Thu, 8 May 2014 15:33:42 +0000
+Subject: [PATCH 335/375] HIVE-5823 - Support for DECIMAL primitive type in AvroSerDe (Xuefu Zhang via Brock Noland)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1593310 13f79535-47bb-0310-9956-ffa450edef68
+
+Conflicts:
+	serde/src/java/org/apache/hadoop/hive/serde2/avro/AvroSerdeUtils.java
+---
+ data/files/dec.avro                                |  Bin 0 -> 331 bytes
+ data/files/dec.txt                                 |   10 +
+ .../hive/ql/io/avro/AvroGenericRecordReader.java   |    3 +-
+ ql/src/test/queries/clientpositive/avro_decimal.q  |   55 ++++++
+ .../queries/clientpositive/avro_schema_literal.q   |    3 +-
+ .../test/results/clientpositive/avro_decimal.q.out |  191 ++++++++++++++++++++
+ .../clientpositive/avro_schema_literal.q.out       |    7 +-
+ .../hadoop/hive/serde2/avro/AvroDeserializer.java  |   77 +++++---
+ .../serde2/avro/AvroGenericRecordWritable.java     |   18 ++
+ .../apache/hadoop/hive/serde2/avro/AvroSerDe.java  |    6 +
+ .../hadoop/hive/serde2/avro/AvroSerdeUtils.java    |   34 ++++
+ .../hadoop/hive/serde2/avro/AvroSerializer.java    |   11 +-
+ .../hadoop/hive/serde2/avro/SchemaToTypeInfo.java  |   24 +++-
+ .../hive/serde2/avro/TestAvroSerializer.java       |   70 +++++++-
+ .../serde2/avro/TestGenericAvroRecordWritable.java |    2 +
+ .../org/apache/hadoop/hive/serde2/avro/Utils.java  |    2 +
+ 16 files changed, 468 insertions(+), 45 deletions(-)
+ create mode 100644 data/files/dec.avro
+ create mode 100644 data/files/dec.txt
+ create mode 100644 ql/src/test/queries/clientpositive/avro_decimal.q
+ create mode 100644 ql/src/test/results/clientpositive/avro_decimal.q.out
+
+diff --git a/src/data/files/dec.avro b/src/data/files/dec.avro
+new file mode 100644
+index 0000000000000000000000000000000000000000..bf87763027f135d09a346571c9c1e3b936b0d7ca
+GIT binary patch
+literal 331
+zcmeZI%3@>^ODrqO*DFrWNX<>`VXjsxsVqoUvQjEaP0lY$QPNS$OUwoFi}Q0+;~}b`
+zg2e@i$sn2J{9L_^{PL7apm<tlYEDYAl2vpyOdnXg4$RczlA_GKbfsDyxO`b+PH8Go
+zC&XH~^+}Z_sl`Cyoc#36<iwm1h@(<clQVM@bAaLnK=)-9XXfVt9bgLN7XuZ69Al(Z
+zTN_);P!YGSNyla5Uv>2xSEmWAdM`4Eku4-YmnC{Thf`{DHjA7YM{r(#Ig99F4&TJ0
+mN*2bAT+TVAKnbQ0usW8L5OH2sFqb_CqK(lSLd%<>TL1t7c5P4q
+
+literal 0
+HcmV?d00001
+
+diff --git a/src/data/files/dec.txt b/src/data/files/dec.txt
+new file mode 100644
+index 0000000..a8f7007
+--- /dev/null
++++ b/src/data/files/dec.txt
+@@ -0,0 +1,10 @@
++Tom234.79
++Beck77.341
++Snow55.71
++Mary4.329
++Cluck5.96
++Tom12.25
++Mary33.33
++Tom19.00
++Beck3.145
++Beck79.9
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/io/avro/AvroGenericRecordReader.java b/src/ql/src/java/org/apache/hadoop/hive/ql/io/avro/AvroGenericRecordReader.java
+index 52a22e5..60b4388 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/io/avro/AvroGenericRecordReader.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/io/avro/AvroGenericRecordReader.java
+@@ -31,7 +31,6 @@
+ import org.apache.avro.mapred.FsInput;
+ import org.apache.commons.logging.Log;
+ import org.apache.commons.logging.LogFactory;
+-import org.apache.hadoop.fs.FileSystem;
+ import org.apache.hadoop.fs.Path;
+ import org.apache.hadoop.hive.ql.exec.Utilities;
+ import org.apache.hadoop.hive.ql.plan.MapWork;
+@@ -94,7 +93,6 @@ public AvroGenericRecordReader(JobConf job, FileSplit split, Reporter reporter) 
+    * @throws AvroSerdeException
+    */
+   private Schema getSchema(JobConf job, FileSplit split) throws AvroSerdeException, IOException {
+-    FileSystem fs = split.getPath().getFileSystem(job);
+     // Inside of a MR job, we can pull out the actual properties
+     if(AvroSerdeUtils.insideMRJob(job)) {
+       MapWork mapWork = Utilities.getMapWork(job);
+@@ -155,6 +153,7 @@ public boolean next(NullWritable nullWritable, AvroGenericRecordWritable record)
+     GenericData.Record r = (GenericData.Record)reader.next();
+     record.setRecord(r);
+     record.setRecordReaderID(recordReaderID);
++    record.setFileSchema(reader.getSchema());
+ 
+     return true;
+   }
+diff --git a/src/ql/src/test/queries/clientpositive/avro_decimal.q b/src/ql/src/test/queries/clientpositive/avro_decimal.q
+new file mode 100644
+index 0000000..c4cf6d6
+--- /dev/null
++++ b/src/ql/src/test/queries/clientpositive/avro_decimal.q
+@@ -0,0 +1,55 @@
++DROP TABLE IF EXISTS dec;
++
++CREATE TABLE dec(name string, value decimal(8,4));
++
++LOAD DATA LOCAL INPATH '../../data/files/dec.txt' into TABLE dec;
++
++DROP TABLE IF EXISTS avro_dec;
++
++CREATE TABLE `avro_dec`(
++  `name` string COMMENT 'from deserializer',
++  `value` decimal(5,2) COMMENT 'from deserializer')
++COMMENT 'just drop the schema right into the HQL'
++ROW FORMAT SERDE
++  'org.apache.hadoop.hive.serde2.avro.AvroSerDe'
++STORED AS INPUTFORMAT
++  'org.apache.hadoop.hive.ql.io.avro.AvroContainerInputFormat'
++OUTPUTFORMAT
++  'org.apache.hadoop.hive.ql.io.avro.AvroContainerOutputFormat'
++TBLPROPERTIES (
++  'numFiles'='1',
++  'avro.schema.literal'='{\"namespace\":\"com.howdy\",\"name\":\"some_schema\",\"type\":\"record\",\"fields\":[{\"name\":\"name\",\"type\":\"string\"},{\"name\":\"value\",\"type\":{\"type\":\"bytes\",\"logicalType\":\"decimal\",\"precision\":5,\"scale\":2}}]}'
++);
++
++DESC avro_dec;
++
++INSERT OVERWRITE TABLE avro_dec select name, value from dec;
++
++SELECT * FROM avro_dec;
++
++DROP TABLE IF EXISTS avro_dec1;
++
++CREATE TABLE `avro_dec1`(
++  `name` string COMMENT 'from deserializer',
++  `value` decimal(4,1) COMMENT 'from deserializer')
++COMMENT 'just drop the schema right into the HQL'
++ROW FORMAT SERDE
++  'org.apache.hadoop.hive.serde2.avro.AvroSerDe'
++STORED AS INPUTFORMAT
++  'org.apache.hadoop.hive.ql.io.avro.AvroContainerInputFormat'
++OUTPUTFORMAT
++  'org.apache.hadoop.hive.ql.io.avro.AvroContainerOutputFormat'
++TBLPROPERTIES (
++  'numFiles'='1',
++  'avro.schema.literal'='{\"namespace\":\"com.howdy\",\"name\":\"some_schema\",\"type\":\"record\",\"fields\":[{\"name\":\"name\",\"type\":\"string\"},{\"name\":\"value\",\"type\":{\"type\":\"bytes\",\"logicalType\":\"decimal\",\"precision\":4,\"scale\":1}}]}'
++);
++
++DESC avro_dec1;
++
++LOAD DATA LOCAL INPATH '../../data/files/dec.avro' into TABLE avro_dec1;
++
++select value from avro_dec1;
++
++DROP TABLE dec;
++DROP TABLE avro_dec;
++DROP TABLE avro_dec1;
+diff --git a/src/ql/src/test/queries/clientpositive/avro_schema_literal.q b/src/ql/src/test/queries/clientpositive/avro_schema_literal.q
+index d77f310..b5e3ec1 100644
+--- a/src/ql/src/test/queries/clientpositive/avro_schema_literal.q
++++ b/src/ql/src/test/queries/clientpositive/avro_schema_literal.q
+@@ -25,7 +25,8 @@ TBLPROPERTIES ('avro.schema.literal'='{
+     { "name":"enum1", "type":{"type":"enum", "name":"enum1_values", "symbols":["BLUE","RED", "GREEN"]} },
+     { "name":"nullableint", "type":["int", "null"] },
+     { "name":"bytes1", "type":"bytes" },
+-    { "name":"fixed1", "type":{"type":"fixed", "name":"threebytes", "size":3} }
++    { "name":"fixed1", "type":{"type":"fixed", "name":"threebytes", "size":3} },
++    { "name":"dec1", "type":{"type":"bytes", "logicalType":"decimal", "precision":5, "scale":2} }
+   ] }');
+ 
+ DESCRIBE avro1;
+diff --git a/src/ql/src/test/results/clientpositive/avro_decimal.q.out b/src/ql/src/test/results/clientpositive/avro_decimal.q.out
+new file mode 100644
+index 0000000..b3144bd
+--- /dev/null
++++ b/src/ql/src/test/results/clientpositive/avro_decimal.q.out
+@@ -0,0 +1,191 @@
++PREHOOK: query: DROP TABLE IF EXISTS dec
++PREHOOK: type: DROPTABLE
++POSTHOOK: query: DROP TABLE IF EXISTS dec
++POSTHOOK: type: DROPTABLE
++PREHOOK: query: CREATE TABLE dec(name string, value decimal(8,4))
++PREHOOK: type: CREATETABLE
++POSTHOOK: query: CREATE TABLE dec(name string, value decimal(8,4))
++POSTHOOK: type: CREATETABLE
++POSTHOOK: Output: default@dec
++PREHOOK: query: LOAD DATA LOCAL INPATH '../../data/files/dec.txt' into TABLE dec
++PREHOOK: type: LOAD
++PREHOOK: Output: default@dec
++POSTHOOK: query: LOAD DATA LOCAL INPATH '../../data/files/dec.txt' into TABLE dec
++POSTHOOK: type: LOAD
++POSTHOOK: Output: default@dec
++PREHOOK: query: DROP TABLE IF EXISTS avro_dec
++PREHOOK: type: DROPTABLE
++POSTHOOK: query: DROP TABLE IF EXISTS avro_dec
++POSTHOOK: type: DROPTABLE
++PREHOOK: query: CREATE TABLE `avro_dec`(
++  `name` string COMMENT 'from deserializer',
++  `value` decimal(5,2) COMMENT 'from deserializer')
++COMMENT 'just drop the schema right into the HQL'
++ROW FORMAT SERDE
++  'org.apache.hadoop.hive.serde2.avro.AvroSerDe'
++STORED AS INPUTFORMAT
++  'org.apache.hadoop.hive.ql.io.avro.AvroContainerInputFormat'
++OUTPUTFORMAT
++  'org.apache.hadoop.hive.ql.io.avro.AvroContainerOutputFormat'
++TBLPROPERTIES (
++  'numFiles'='1',
++  'avro.schema.literal'='{\"namespace\":\"com.howdy\",\"name\":\"some_schema\",\"type\":\"record\",\"fields\":[{\"name\":\"name\",\"type\":\"string\"},{\"name\":\"value\",\"type\":{\"type\":\"bytes\",\"logicalType\":\"decimal\",\"precision\":5,\"scale\":2}}]}'
++)
++PREHOOK: type: CREATETABLE
++POSTHOOK: query: CREATE TABLE `avro_dec`(
++  `name` string COMMENT 'from deserializer',
++  `value` decimal(5,2) COMMENT 'from deserializer')
++COMMENT 'just drop the schema right into the HQL'
++ROW FORMAT SERDE
++  'org.apache.hadoop.hive.serde2.avro.AvroSerDe'
++STORED AS INPUTFORMAT
++  'org.apache.hadoop.hive.ql.io.avro.AvroContainerInputFormat'
++OUTPUTFORMAT
++  'org.apache.hadoop.hive.ql.io.avro.AvroContainerOutputFormat'
++TBLPROPERTIES (
++  'numFiles'='1',
++  'avro.schema.literal'='{\"namespace\":\"com.howdy\",\"name\":\"some_schema\",\"type\":\"record\",\"fields\":[{\"name\":\"name\",\"type\":\"string\"},{\"name\":\"value\",\"type\":{\"type\":\"bytes\",\"logicalType\":\"decimal\",\"precision\":5,\"scale\":2}}]}'
++)
++POSTHOOK: type: CREATETABLE
++POSTHOOK: Output: default@avro_dec
++PREHOOK: query: DESC avro_dec
++PREHOOK: type: DESCTABLE
++POSTHOOK: query: DESC avro_dec
++POSTHOOK: type: DESCTABLE
++name                	string              	from deserializer   
++value               	decimal(5,2)        	from deserializer   
++PREHOOK: query: INSERT OVERWRITE TABLE avro_dec select name, value from dec
++PREHOOK: type: QUERY
++PREHOOK: Input: default@dec
++PREHOOK: Output: default@avro_dec
++POSTHOOK: query: INSERT OVERWRITE TABLE avro_dec select name, value from dec
++POSTHOOK: type: QUERY
++POSTHOOK: Input: default@dec
++POSTHOOK: Output: default@avro_dec
++POSTHOOK: Lineage: avro_dec.name SIMPLE [(dec)dec.FieldSchema(name:name, type:string, comment:null), ]
++POSTHOOK: Lineage: avro_dec.value EXPRESSION [(dec)dec.FieldSchema(name:value, type:decimal(8,4), comment:null), ]
++PREHOOK: query: SELECT * FROM avro_dec
++PREHOOK: type: QUERY
++PREHOOK: Input: default@avro_dec
++#### A masked pattern was here ####
++POSTHOOK: query: SELECT * FROM avro_dec
++POSTHOOK: type: QUERY
++POSTHOOK: Input: default@avro_dec
++#### A masked pattern was here ####
++POSTHOOK: Lineage: avro_dec.name SIMPLE [(dec)dec.FieldSchema(name:name, type:string, comment:null), ]
++POSTHOOK: Lineage: avro_dec.value EXPRESSION [(dec)dec.FieldSchema(name:value, type:decimal(8,4), comment:null), ]
++Tom	234.79
++Beck	77.34
++Snow	55.71
++Mary	4.33
++Cluck	5.96
++Tom	12.25
++Mary	33.33
++Tom	19
++Beck	3.15
++Beck	79.9
++PREHOOK: query: DROP TABLE IF EXISTS avro_dec1
++PREHOOK: type: DROPTABLE
++POSTHOOK: query: DROP TABLE IF EXISTS avro_dec1
++POSTHOOK: type: DROPTABLE
++POSTHOOK: Lineage: avro_dec.name SIMPLE [(dec)dec.FieldSchema(name:name, type:string, comment:null), ]
++POSTHOOK: Lineage: avro_dec.value EXPRESSION [(dec)dec.FieldSchema(name:value, type:decimal(8,4), comment:null), ]
++PREHOOK: query: CREATE TABLE `avro_dec1`(
++  `name` string COMMENT 'from deserializer',
++  `value` decimal(4,1) COMMENT 'from deserializer')
++COMMENT 'just drop the schema right into the HQL'
++ROW FORMAT SERDE
++  'org.apache.hadoop.hive.serde2.avro.AvroSerDe'
++STORED AS INPUTFORMAT
++  'org.apache.hadoop.hive.ql.io.avro.AvroContainerInputFormat'
++OUTPUTFORMAT
++  'org.apache.hadoop.hive.ql.io.avro.AvroContainerOutputFormat'
++TBLPROPERTIES (
++  'numFiles'='1',
++  'avro.schema.literal'='{\"namespace\":\"com.howdy\",\"name\":\"some_schema\",\"type\":\"record\",\"fields\":[{\"name\":\"name\",\"type\":\"string\"},{\"name\":\"value\",\"type\":{\"type\":\"bytes\",\"logicalType\":\"decimal\",\"precision\":4,\"scale\":1}}]}'
++)
++PREHOOK: type: CREATETABLE
++POSTHOOK: query: CREATE TABLE `avro_dec1`(
++  `name` string COMMENT 'from deserializer',
++  `value` decimal(4,1) COMMENT 'from deserializer')
++COMMENT 'just drop the schema right into the HQL'
++ROW FORMAT SERDE
++  'org.apache.hadoop.hive.serde2.avro.AvroSerDe'
++STORED AS INPUTFORMAT
++  'org.apache.hadoop.hive.ql.io.avro.AvroContainerInputFormat'
++OUTPUTFORMAT
++  'org.apache.hadoop.hive.ql.io.avro.AvroContainerOutputFormat'
++TBLPROPERTIES (
++  'numFiles'='1',
++  'avro.schema.literal'='{\"namespace\":\"com.howdy\",\"name\":\"some_schema\",\"type\":\"record\",\"fields\":[{\"name\":\"name\",\"type\":\"string\"},{\"name\":\"value\",\"type\":{\"type\":\"bytes\",\"logicalType\":\"decimal\",\"precision\":4,\"scale\":1}}]}'
++)
++POSTHOOK: type: CREATETABLE
++POSTHOOK: Output: default@avro_dec1
++POSTHOOK: Lineage: avro_dec.name SIMPLE [(dec)dec.FieldSchema(name:name, type:string, comment:null), ]
++POSTHOOK: Lineage: avro_dec.value EXPRESSION [(dec)dec.FieldSchema(name:value, type:decimal(8,4), comment:null), ]
++PREHOOK: query: DESC avro_dec1
++PREHOOK: type: DESCTABLE
++POSTHOOK: query: DESC avro_dec1
++POSTHOOK: type: DESCTABLE
++POSTHOOK: Lineage: avro_dec.name SIMPLE [(dec)dec.FieldSchema(name:name, type:string, comment:null), ]
++POSTHOOK: Lineage: avro_dec.value EXPRESSION [(dec)dec.FieldSchema(name:value, type:decimal(8,4), comment:null), ]
++name                	string              	from deserializer   
++value               	decimal(4,1)        	from deserializer   
++PREHOOK: query: LOAD DATA LOCAL INPATH '../../data/files/dec.avro' into TABLE avro_dec1
++PREHOOK: type: LOAD
++PREHOOK: Output: default@avro_dec1
++POSTHOOK: query: LOAD DATA LOCAL INPATH '../../data/files/dec.avro' into TABLE avro_dec1
++POSTHOOK: type: LOAD
++POSTHOOK: Output: default@avro_dec1
++POSTHOOK: Lineage: avro_dec.name SIMPLE [(dec)dec.FieldSchema(name:name, type:string, comment:null), ]
++POSTHOOK: Lineage: avro_dec.value EXPRESSION [(dec)dec.FieldSchema(name:value, type:decimal(8,4), comment:null), ]
++PREHOOK: query: select value from avro_dec1
++PREHOOK: type: QUERY
++PREHOOK: Input: default@avro_dec1
++#### A masked pattern was here ####
++POSTHOOK: query: select value from avro_dec1
++POSTHOOK: type: QUERY
++POSTHOOK: Input: default@avro_dec1
++#### A masked pattern was here ####
++POSTHOOK: Lineage: avro_dec.name SIMPLE [(dec)dec.FieldSchema(name:name, type:string, comment:null), ]
++POSTHOOK: Lineage: avro_dec.value EXPRESSION [(dec)dec.FieldSchema(name:value, type:decimal(8,4), comment:null), ]
++234.8
++77.3
++55.7
++4.3
++6
++12.3
++33.3
++19
++3.2
++79.9
++PREHOOK: query: DROP TABLE dec
++PREHOOK: type: DROPTABLE
++PREHOOK: Input: default@dec
++PREHOOK: Output: default@dec
++POSTHOOK: query: DROP TABLE dec
++POSTHOOK: type: DROPTABLE
++POSTHOOK: Input: default@dec
++POSTHOOK: Output: default@dec
++POSTHOOK: Lineage: avro_dec.name SIMPLE [(dec)dec.FieldSchema(name:name, type:string, comment:null), ]
++POSTHOOK: Lineage: avro_dec.value EXPRESSION [(dec)dec.FieldSchema(name:value, type:decimal(8,4), comment:null), ]
++PREHOOK: query: DROP TABLE avro_dec
++PREHOOK: type: DROPTABLE
++PREHOOK: Input: default@avro_dec
++PREHOOK: Output: default@avro_dec
++POSTHOOK: query: DROP TABLE avro_dec
++POSTHOOK: type: DROPTABLE
++POSTHOOK: Input: default@avro_dec
++POSTHOOK: Output: default@avro_dec
++POSTHOOK: Lineage: avro_dec.name SIMPLE [(dec)dec.FieldSchema(name:name, type:string, comment:null), ]
++POSTHOOK: Lineage: avro_dec.value EXPRESSION [(dec)dec.FieldSchema(name:value, type:decimal(8,4), comment:null), ]
++PREHOOK: query: DROP TABLE avro_dec1
++PREHOOK: type: DROPTABLE
++PREHOOK: Input: default@avro_dec1
++PREHOOK: Output: default@avro_dec1
++POSTHOOK: query: DROP TABLE avro_dec1
++POSTHOOK: type: DROPTABLE
++POSTHOOK: Input: default@avro_dec1
++POSTHOOK: Output: default@avro_dec1
++POSTHOOK: Lineage: avro_dec.name SIMPLE [(dec)dec.FieldSchema(name:name, type:string, comment:null), ]
++POSTHOOK: Lineage: avro_dec.value EXPRESSION [(dec)dec.FieldSchema(name:value, type:decimal(8,4), comment:null), ]
+diff --git a/src/ql/src/test/results/clientpositive/avro_schema_literal.q.out b/src/ql/src/test/results/clientpositive/avro_schema_literal.q.out
+index d53c1de..9a604da 100644
+--- a/src/ql/src/test/results/clientpositive/avro_schema_literal.q.out
++++ b/src/ql/src/test/results/clientpositive/avro_schema_literal.q.out
+@@ -25,7 +25,8 @@ TBLPROPERTIES ('avro.schema.literal'='{
+     { "name":"enum1", "type":{"type":"enum", "name":"enum1_values", "symbols":["BLUE","RED", "GREEN"]} },
+     { "name":"nullableint", "type":["int", "null"] },
+     { "name":"bytes1", "type":"bytes" },
+-    { "name":"fixed1", "type":{"type":"fixed", "name":"threebytes", "size":3} }
++    { "name":"fixed1", "type":{"type":"fixed", "name":"threebytes", "size":3} },
++    { "name":"dec1", "type":{"type":"bytes", "logicalType":"decimal", "precision":5, "scale":2} }
+   ] }')
+ PREHOOK: type: CREATETABLE
+ POSTHOOK: query: CREATE TABLE avro1
+@@ -55,7 +56,8 @@ TBLPROPERTIES ('avro.schema.literal'='{
+     { "name":"enum1", "type":{"type":"enum", "name":"enum1_values", "symbols":["BLUE","RED", "GREEN"]} },
+     { "name":"nullableint", "type":["int", "null"] },
+     { "name":"bytes1", "type":"bytes" },
+-    { "name":"fixed1", "type":{"type":"fixed", "name":"threebytes", "size":3} }
++    { "name":"fixed1", "type":{"type":"fixed", "name":"threebytes", "size":3} },
++    { "name":"dec1", "type":{"type":"bytes", "logicalType":"decimal", "precision":5, "scale":2} }
+   ] }')
+ POSTHOOK: type: CREATETABLE
+ POSTHOOK: Output: default@avro1
+@@ -79,3 +81,4 @@ enum1               	string              	from deserializer
+ nullableint         	int                 	from deserializer   
+ bytes1              	binary              	from deserializer   
+ fixed1              	binary              	from deserializer   
++dec1                	decimal(5,2)        	from deserializer   
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/avro/AvroDeserializer.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/avro/AvroDeserializer.java
+index a28861f..ce933ff 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/avro/AvroDeserializer.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/avro/AvroDeserializer.java
+@@ -42,7 +42,11 @@
+ import org.apache.avro.util.Utf8;
+ import org.apache.commons.logging.Log;
+ import org.apache.commons.logging.LogFactory;
++import org.apache.hadoop.hive.common.type.HiveDecimal;
+ import org.apache.hadoop.hive.serde2.objectinspector.StandardUnionObjectInspector;
++import org.apache.hadoop.hive.serde2.objectinspector.primitive.JavaHiveDecimalObjectInspector;
++import org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorFactory;
++import org.apache.hadoop.hive.serde2.typeinfo.DecimalTypeInfo;
+ import org.apache.hadoop.hive.serde2.typeinfo.ListTypeInfo;
+ import org.apache.hadoop.hive.serde2.typeinfo.MapTypeInfo;
+ import org.apache.hadoop.hive.serde2.typeinfo.PrimitiveTypeInfo;
+@@ -138,6 +142,7 @@ public Object deserialize(List<String> columnNames, List<TypeInfo> columnTypes,
+ 
+     AvroGenericRecordWritable recordWritable = (AvroGenericRecordWritable) writable;
+     GenericRecord r = recordWritable.getRecord();
++    Schema fileSchema = recordWritable.getFileSchema();
+ 
+    UID recordReaderId = recordWritable.getRecordReaderID();
+    //If the record reader (from which the record is originated) is already seen and valid,
+@@ -166,12 +171,12 @@ public Object deserialize(List<String> columnNames, List<TypeInfo> columnTypes,
+       }
+     }
+ 
+-    workerBase(row, columnNames, columnTypes, r);
++    workerBase(row, fileSchema, columnNames, columnTypes, r);
+     return row;
+   }
+ 
+   // The actual deserialization may involve nested records, which require recursion.
+-  private List<Object> workerBase(List<Object> objectRow, List<String> columnNames,
++  private List<Object> workerBase(List<Object> objectRow, Schema fileSchema, List<String> columnNames,
+                                   List<TypeInfo> columnTypes, GenericRecord record)
+           throws AvroSerdeException {
+     for(int i = 0; i < columnNames.size(); i++) {
+@@ -179,40 +184,40 @@ public Object deserialize(List<String> columnNames, List<TypeInfo> columnTypes,
+       String columnName = columnNames.get(i);
+       Object datum = record.get(columnName);
+       Schema datumSchema = record.getSchema().getField(columnName).schema();
+-
+-      objectRow.add(worker(datum, datumSchema, columnType));
++      Schema.Field field = fileSchema.getField(columnName);
++      objectRow.add(worker(datum, field == null ? null : field.schema(), datumSchema, columnType));
+     }
+ 
+     return objectRow;
+   }
+ 
+-  private Object worker(Object datum, Schema recordSchema, TypeInfo columnType)
++  private Object worker(Object datum, Schema fileSchema, Schema recordSchema, TypeInfo columnType)
+           throws AvroSerdeException {
+     // Klaxon! Klaxon! Klaxon!
+     // Avro requires NULLable types to be defined as unions of some type T
+     // and NULL.  This is annoying and we're going to hide it from the user.
+     if(AvroSerdeUtils.isNullableType(recordSchema)) {
+-      return deserializeNullableUnion(datum, recordSchema, columnType);
++      return deserializeNullableUnion(datum, fileSchema, recordSchema, columnType);
+     }
+ 
+ 
+     switch(columnType.getCategory()) {
+     case STRUCT:
+-      return deserializeStruct((GenericData.Record) datum, (StructTypeInfo) columnType);
++      return deserializeStruct((GenericData.Record) datum, fileSchema, (StructTypeInfo) columnType);
+     case UNION:
+-      return deserializeUnion(datum, recordSchema, (UnionTypeInfo) columnType);
++      return deserializeUnion(datum, fileSchema, recordSchema, (UnionTypeInfo) columnType);
+     case LIST:
+-      return deserializeList(datum, recordSchema, (ListTypeInfo) columnType);
++      return deserializeList(datum, fileSchema, recordSchema, (ListTypeInfo) columnType);
+     case MAP:
+-      return deserializeMap(datum, recordSchema, (MapTypeInfo) columnType);
++      return deserializeMap(datum, fileSchema, recordSchema, (MapTypeInfo) columnType);
+     case PRIMITIVE:
+-      return deserializePrimitive(datum, recordSchema, (PrimitiveTypeInfo) columnType);
++      return deserializePrimitive(datum, fileSchema, recordSchema, (PrimitiveTypeInfo) columnType);
+     default:
+       throw new AvroSerdeException("Unknown TypeInfo: " + columnType.getCategory());
+     }
+   }
+ 
+-  private Object deserializePrimitive(Object datum, Schema recordSchema,
++  private Object deserializePrimitive(Object datum, Schema fileSchema, Schema recordSchema,
+       PrimitiveTypeInfo columnType) throws AvroSerdeException {
+     switch (columnType.getPrimitiveCategory()){
+     case STRING:
+@@ -224,14 +229,26 @@ private Object deserializePrimitive(Object datum, Schema recordSchema,
+         Fixed fixed = (Fixed) datum;
+         return fixed.bytes();
+       } else if (recordSchema.getType() == Type.BYTES){
+-        ByteBuffer bb = (ByteBuffer) datum;
+-        bb.rewind();
+-        byte[] result = new byte[bb.limit()];
+-        bb.get(result);
+-        return result;
++        return AvroSerdeUtils.getBytesFromByteBuffer((ByteBuffer) datum);
+       } else {
+         throw new AvroSerdeException("Unexpected Avro schema for Binary TypeInfo: " + recordSchema.getType());
+       }
++    case DECIMAL:
++      if (fileSchema == null) {
++        throw new AvroSerdeException("File schema is missing for decimal field. Reader schema is " + columnType);
++      }
++
++      int scale = 0;
++      try {
++        scale = fileSchema.getJsonProp(AvroSerDe.AVRO_PROP_SCALE).getValueAsInt(0);
++      } catch(Exception ex) {
++        throw new AvroSerdeException("Failed to obtain scale value from file schema: " + fileSchema, ex);
++      }
++
++      HiveDecimal dec = AvroSerdeUtils.getHiveDecimalFromByteBuffer((ByteBuffer) datum, scale);
++      JavaHiveDecimalObjectInspector oi = (JavaHiveDecimalObjectInspector)
++          PrimitiveObjectInspectorFactory.getPrimitiveJavaObjectInspector((DecimalTypeInfo)columnType);
++      return oi.set(null, dec);
+     default:
+       return datum;
+     }
+@@ -241,36 +258,38 @@ private Object deserializePrimitive(Object datum, Schema recordSchema,
+    * Extract either a null or the correct type from a Nullable type.  This is
+    * horrible in that we rebuild the TypeInfo every time.
+    */
+-  private Object deserializeNullableUnion(Object datum, Schema recordSchema,
++  private Object deserializeNullableUnion(Object datum, Schema fileSchema, Schema recordSchema,
+                                           TypeInfo columnType) throws AvroSerdeException {
+     int tag = GenericData.get().resolveUnion(recordSchema, datum); // Determine index of value
+     Schema schema = recordSchema.getTypes().get(tag);
+     if(schema.getType().equals(Schema.Type.NULL)) {
+       return null;
+     }
+-    return worker(datum, schema, SchemaToTypeInfo.generateTypeInfo(schema));
++
++    return worker(datum, fileSchema == null ? null : fileSchema.getTypes().get(tag), schema,
++        SchemaToTypeInfo.generateTypeInfo(schema));
+ 
+   }
+ 
+-  private Object deserializeStruct(GenericData.Record datum, StructTypeInfo columnType)
++  private Object deserializeStruct(GenericData.Record datum, Schema fileSchema, StructTypeInfo columnType)
+           throws AvroSerdeException {
+     // No equivalent Java type for the backing structure, need to recurse and build a list
+     ArrayList<TypeInfo> innerFieldTypes = columnType.getAllStructFieldTypeInfos();
+     ArrayList<String> innerFieldNames = columnType.getAllStructFieldNames();
+     List<Object> innerObjectRow = new ArrayList<Object>(innerFieldTypes.size());
+ 
+-    return workerBase(innerObjectRow, innerFieldNames, innerFieldTypes, datum);
++    return workerBase(innerObjectRow, fileSchema, innerFieldNames, innerFieldTypes, datum);
+   }
+ 
+-  private Object deserializeUnion(Object datum, Schema recordSchema,
++  private Object deserializeUnion(Object datum, Schema fileSchema, Schema recordSchema,
+                                   UnionTypeInfo columnType) throws AvroSerdeException {
+     int tag = GenericData.get().resolveUnion(recordSchema, datum); // Determine index of value
+-    Object desered = worker(datum, recordSchema.getTypes().get(tag),
+-            columnType.getAllUnionObjectTypeInfos().get(tag));
++    Object desered = worker(datum, fileSchema == null ? null : fileSchema.getTypes().get(tag),
++        recordSchema.getTypes().get(tag), columnType.getAllUnionObjectTypeInfos().get(tag));
+     return new StandardUnionObjectInspector.StandardUnion((byte)tag, desered);
+   }
+ 
+-  private Object deserializeList(Object datum, Schema recordSchema,
++  private Object deserializeList(Object datum, Schema fileSchema, Schema recordSchema,
+                                  ListTypeInfo columnType) throws AvroSerdeException {
+     // Need to check the original schema to see if this is actually a Fixed.
+     if(recordSchema.getType().equals(Schema.Type.FIXED)) {
+@@ -296,13 +315,14 @@ private Object deserializeList(Object datum, Schema recordSchema,
+       Schema listSchema = recordSchema.getElementType();
+       List<Object> listContents = new ArrayList<Object>(listData.size());
+       for(Object obj : listData) {
+-        listContents.add(worker(obj, listSchema, columnType.getListElementTypeInfo()));
++        listContents.add(worker(obj, fileSchema == null ? null : fileSchema.getElementType(), listSchema,
++            columnType.getListElementTypeInfo()));
+       }
+       return listContents;
+     }
+   }
+ 
+-  private Object deserializeMap(Object datum, Schema mapSchema, MapTypeInfo columnType)
++  private Object deserializeMap(Object datum, Schema fileSchema, Schema mapSchema, MapTypeInfo columnType)
+           throws AvroSerdeException {
+     // Avro only allows maps with Strings for keys, so we only have to worry
+     // about deserializing the values
+@@ -312,7 +332,8 @@ private Object deserializeMap(Object datum, Schema mapSchema, MapTypeInfo column
+     TypeInfo valueTypeInfo = columnType.getMapValueTypeInfo();
+     for (Utf8 key : mapDatum.keySet()) {
+       Object value = mapDatum.get(key);
+-      map.put(key.toString(), worker(value, valueSchema, valueTypeInfo));
++      map.put(key.toString(), worker(value, fileSchema == null ? null : fileSchema.getValueType(),
++          valueSchema, valueTypeInfo));
+     }
+ 
+     return map;
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/avro/AvroGenericRecordWritable.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/avro/AvroGenericRecordWritable.java
+index 8beffd7..b554743 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/avro/AvroGenericRecordWritable.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/avro/AvroGenericRecordWritable.java
+@@ -42,6 +42,10 @@
+ public class AvroGenericRecordWritable implements Writable{
+   GenericRecord record;
+   private BinaryDecoder binaryDecoder;
++
++  // Schema that exists in the Avro data file.
++  private Schema fileSchema;
++
+   /**
+    * Unique Id determine which record reader created this record
+    */
+@@ -73,6 +77,10 @@ public void write(DataOutput out) throws IOException {
+     // Write schema since we need it to pull the data out. (see point #1 above)
+     String schemaString = record.getSchema().toString(false);
+     out.writeUTF(schemaString);
++
++    schemaString = fileSchema.toString(false);
++    out.writeUTF(schemaString);
++
+     recordReaderID.write(out);
+ 
+     // Write record to byte buffer
+@@ -86,6 +94,7 @@ public void write(DataOutput out) throws IOException {
+   @Override
+   public void readFields(DataInput in) throws IOException {
+     Schema schema = Schema.parse(in.readUTF());
++    fileSchema = Schema.parse(in.readUTF());
+     recordReaderID = UID.read(in);
+     record = new GenericData.Record(schema);
+     binaryDecoder = DecoderFactory.defaultFactory().createBinaryDecoder((InputStream) in, binaryDecoder);
+@@ -100,4 +109,13 @@ public UID getRecordReaderID() {
+   public void setRecordReaderID(UID recordReaderID) {
+     this.recordReaderID = recordReaderID;
+   }
++
++  public Schema getFileSchema() {
++    return fileSchema;
++  }
++
++  public void setFileSchema(Schema originalSchema) {
++    this.fileSchema = originalSchema;
++  }
++
+ }
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/avro/AvroSerDe.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/avro/AvroSerDe.java
+index 55bfa2e..56c3164 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/avro/AvroSerDe.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/avro/AvroSerDe.java
+@@ -36,6 +36,12 @@
+  */
+ public class AvroSerDe extends AbstractSerDe {
+   private static final Log LOG = LogFactory.getLog(AvroSerDe.class);
++
++  public static final String DECIMAL_TYPE_NAME = "decimal";
++  public static final String AVRO_PROP_LOGICAL_TYPE = "logicalType";
++  public static final String AVRO_PROP_PRECISION = "precision";
++  public static final String AVRO_PROP_SCALE = "scale";
++
+   private ObjectInspector oi;
+   private List<String> columnNames;
+   private List<TypeInfo> columnTypes;
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/avro/AvroSerdeUtils.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/avro/AvroSerdeUtils.java
+index 13848b6..8edad71 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/avro/AvroSerdeUtils.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/avro/AvroSerdeUtils.java
+@@ -25,11 +25,17 @@
+ import org.apache.hadoop.fs.FSDataInputStream;
+ import org.apache.hadoop.fs.FileSystem;
+ import org.apache.hadoop.fs.Path;
++import org.apache.hadoop.hive.common.type.HiveDecimal;
+ import org.apache.hadoop.hive.conf.HiveConf;
+ import org.apache.hadoop.mapred.JobConf;
+ 
+ import java.io.IOException;
++import java.math.BigInteger;
++import java.net.URI;
++import java.net.URISyntaxException;
+ import java.net.URL;
++import java.nio.Buffer;
++import java.nio.ByteBuffer;
+ import java.util.List;
+ import java.util.Properties;
+ 
+@@ -146,4 +152,32 @@ public static boolean insideMRJob(JobConf job) {
+            && (HiveConf.getVar(job, HiveConf.ConfVars.PLAN) != null)
+            && (!HiveConf.getVar(job, HiveConf.ConfVars.PLAN).isEmpty());
+   }
++
++  public static Buffer getBufferFromBytes(byte[] input) {
++    ByteBuffer bb = ByteBuffer.wrap(input);
++    return bb.rewind();
++  }
++
++  public static Buffer getBufferFromDecimal(HiveDecimal dec, int scale) {
++    if (dec == null) {
++      return null;
++    }
++
++    dec = dec.setScale(scale);
++    return AvroSerdeUtils.getBufferFromBytes(dec.unscaledValue().toByteArray());
++  }
++
++  public static byte[] getBytesFromByteBuffer(ByteBuffer byteBuffer) {
++    byteBuffer.rewind();
++    byte[] result = new byte[byteBuffer.limit()];
++    byteBuffer.get(result);
++    return result;
++  }
++
++  public static HiveDecimal getHiveDecimalFromByteBuffer(ByteBuffer byteBuffer, int scale) {
++    byte[] result = getBytesFromByteBuffer(byteBuffer);
++    HiveDecimal dec = HiveDecimal.create(new BigInteger(result), scale);
++    return dec;
++  }
++
+ }
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/avro/AvroSerializer.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/avro/AvroSerializer.java
+index b2c58c7..2bd48ca 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/avro/AvroSerializer.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/avro/AvroSerializer.java
+@@ -17,8 +17,6 @@
+  */
+ package org.apache.hadoop.hive.serde2.avro;
+ 
+-
+-import java.nio.ByteBuffer;
+ import java.util.ArrayList;
+ import java.util.HashMap;
+ import java.util.List;
+@@ -32,6 +30,7 @@
+ import org.apache.avro.generic.GenericEnumSymbol;
+ import org.apache.commons.logging.Log;
+ import org.apache.commons.logging.LogFactory;
++import org.apache.hadoop.hive.common.type.HiveDecimal;
+ import org.apache.hadoop.hive.serde2.objectinspector.ListObjectInspector;
+ import org.apache.hadoop.hive.serde2.objectinspector.MapObjectInspector;
+ import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspector;
+@@ -39,6 +38,7 @@
+ import org.apache.hadoop.hive.serde2.objectinspector.StructField;
+ import org.apache.hadoop.hive.serde2.objectinspector.StructObjectInspector;
+ import org.apache.hadoop.hive.serde2.objectinspector.UnionObjectInspector;
++import org.apache.hadoop.hive.serde2.typeinfo.DecimalTypeInfo;
+ import org.apache.hadoop.hive.serde2.typeinfo.ListTypeInfo;
+ import org.apache.hadoop.hive.serde2.typeinfo.MapTypeInfo;
+ import org.apache.hadoop.hive.serde2.typeinfo.StructTypeInfo;
+@@ -102,6 +102,7 @@ private Object serialize(TypeInfo typeInfo, ObjectInspector fieldOI, Object stru
+     if(null == structFieldData) {
+       return null;
+     }
++
+     if(AvroSerdeUtils.isNullableType(schema)) {
+       schema = AvroSerdeUtils.getOtherTypeFromNullableType(schema);
+     }
+@@ -182,14 +183,16 @@ private Object serializePrimitive(TypeInfo typeInfo, PrimitiveObjectInspector fi
+     switch(fieldOI.getPrimitiveCategory()) {
+     case BINARY:
+       if (schema.getType() == Type.BYTES){
+-        ByteBuffer bb = ByteBuffer.wrap((byte[])fieldOI.getPrimitiveJavaObject(structFieldData));
+-        return bb.rewind();
++        return AvroSerdeUtils.getBufferFromBytes((byte[])fieldOI.getPrimitiveJavaObject(structFieldData));
+       } else if (schema.getType() == Type.FIXED){
+         Fixed fixed = new GenericData.Fixed(schema, (byte[])fieldOI.getPrimitiveJavaObject(structFieldData));
+         return fixed;
+       } else {
+         throw new AvroSerdeException("Unexpected Avro schema for Binary TypeInfo: " + schema.getType());
+       }
++    case DECIMAL:
++      HiveDecimal dec = (HiveDecimal)fieldOI.getPrimitiveJavaObject(structFieldData);
++      return AvroSerdeUtils.getBufferFromDecimal(dec, ((DecimalTypeInfo)typeInfo).scale());
+     case UNKNOWN:
+       throw new AvroSerdeException("Received UNKNOWN primitive category.");
+     case VOID:
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/avro/SchemaToTypeInfo.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/avro/SchemaToTypeInfo.java
+index 251f04f..769c300 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/avro/SchemaToTypeInfo.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/avro/SchemaToTypeInfo.java
+@@ -34,6 +34,7 @@
+ import java.util.Map;
+ 
+ import org.apache.avro.Schema;
++import org.apache.hadoop.hive.serde2.typeinfo.HiveDecimalUtils;
+ import org.apache.hadoop.hive.serde2.typeinfo.TypeInfo;
+ import org.apache.hadoop.hive.serde2.typeinfo.TypeInfoFactory;
+ 
+@@ -105,6 +106,28 @@ protected TypeInfo makeInstance(Schema s) throws AvroSerdeException {
+    * @throws AvroSerdeException for any problems during conversion.
+    */
+   public static TypeInfo generateTypeInfo(Schema schema) throws AvroSerdeException {
++    // For bytes type, it can be mapped to decimal.
++    Schema.Type type = schema.getType();
++    if (type == Schema.Type.BYTES &&
++        AvroSerDe.DECIMAL_TYPE_NAME.equalsIgnoreCase(schema.getProp(AvroSerDe.AVRO_PROP_LOGICAL_TYPE))) {
++      int precision = 0;
++      int scale = 0;
++      try {
++        precision = schema.getJsonProp(AvroSerDe.AVRO_PROP_PRECISION).getValueAsInt();
++        scale = schema.getJsonProp(AvroSerDe.AVRO_PROP_SCALE).getValueAsInt(0);
++      } catch (Exception ex) {
++        throw new AvroSerdeException("Failed to obtain scale value from file schema: " + schema, ex);
++      }
++
++      try {
++        HiveDecimalUtils.validateParameter(precision, scale);
++      } catch (Exception ex) {
++        throw new AvroSerdeException("Invalid precision or scale for decimal type", ex);
++      }
++
++      return TypeInfoFactory.getDecimalTypeInfo(precision, scale);
++    }
++
+     return typeInfoCache.retrieve(schema);
+   }
+ 
+@@ -116,7 +139,6 @@ private static TypeInfo generateTypeInfoWorker(Schema schema) throws AvroSerdeEx
+     }
+ 
+     Schema.Type type = schema.getType();
+-
+     if(primitiveTypeToTypeInfo.containsKey(type)) {
+       return primitiveTypeToTypeInfo.get(type);
+     }
+diff --git a/src/serde/src/test/org/apache/hadoop/hive/serde2/avro/TestAvroSerializer.java b/src/serde/src/test/org/apache/hadoop/hive/serde2/avro/TestAvroSerializer.java
+index b3559ea..f8161da 100644
+--- a/src/serde/src/test/org/apache/hadoop/hive/serde2/avro/TestAvroSerializer.java
++++ b/src/serde/src/test/org/apache/hadoop/hive/serde2/avro/TestAvroSerializer.java
+@@ -21,6 +21,7 @@
+ import org.apache.avro.generic.GenericData;
+ import org.apache.avro.generic.GenericRecord;
+ import org.apache.avro.generic.GenericEnumSymbol;
++import org.apache.hadoop.hive.common.type.HiveDecimal;
+ import org.apache.hadoop.hive.serde2.SerDeException;
+ import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspector;
+ import org.apache.hadoop.hive.serde2.typeinfo.TypeInfo;
+@@ -28,6 +29,7 @@
+ import org.junit.Test;
+ 
+ import java.io.IOException;
++import java.nio.Buffer;
+ import java.nio.ByteBuffer;
+ import java.util.ArrayList;
+ import java.util.Collections;
+@@ -84,34 +86,41 @@ private GenericRecord serializeAndDeserialize(String recordValue,
+ 
+   @Test
+   public void canSerializeStrings() throws SerDeException, IOException {
+-    singleFieldTest("string1", "hello", "string");
++    singleFieldTest("string1", "hello", "\"string\"");
+   }
+ 
+   private void singleFieldTest(String fieldName, Object fieldValue, String fieldType)
+           throws SerDeException, IOException {
+     GenericRecord r2 = serializeAndDeserialize("{ \"name\":\"" + fieldName +
+-            "\", \"type\":\"" + fieldType + "\" }", fieldName, fieldValue);
++            "\", \"type\":" + fieldType + " }", fieldName, fieldValue);
+     assertEquals(fieldValue, r2.get(fieldName));
+   }
+ 
+   @Test
+   public void canSerializeInts() throws SerDeException, IOException {
+-    singleFieldTest("int1", 42, "int");
++    singleFieldTest("int1", 42, "\"int\"");
+   }
+ 
+   @Test
+   public void canSerializeBooleans() throws SerDeException, IOException {
+-    singleFieldTest("boolean1", true, "boolean");
++    singleFieldTest("boolean1", true, "\"boolean\"");
+   }
+ 
+   @Test
+   public void canSerializeFloats() throws SerDeException, IOException {
+-    singleFieldTest("float1", 42.24342f, "float");
++    singleFieldTest("float1", 42.24342f, "\"float\"");
+   }
+ 
+   @Test
+   public void canSerializeDoubles() throws SerDeException, IOException {
+-    singleFieldTest("double1", 24.00000001, "double");
++    singleFieldTest("double1", 24.00000001, "\"double\"");
++  }
++
++  @Test
++  public void canSerializeDecimals() throws SerDeException, IOException {
++    ByteBuffer bb = ByteBuffer.wrap(HiveDecimal.create("3.1416").unscaledValue().toByteArray());
++    singleFieldTest("dec1", bb.rewind(),
++        "{\"type\":\"bytes\", \"logicalType\":\"decimal\", \"precision\":5, \"scale\":4}");
+   }
+ 
+   @Test
+@@ -124,6 +133,19 @@ public void canSerializeLists() throws SerDeException, IOException {
+   }
+ 
+   @Test
++  public void canSerializeListOfDecimals() throws SerDeException, IOException {
++    List<Buffer> bbList = new ArrayList<Buffer>();
++    String[] decs = new String[] {"3.1416", "4.7779", "0.2312", "9.1000", "5.5555"};
++    for (int i = 0; i < decs.length; i++) {
++      bbList.add(AvroSerdeUtils.getBufferFromDecimal(HiveDecimal.create(decs[i]), 4));
++    }
++    String field = "{ \"name\":\"list1\", \"type\":{\"type\":\"array\"," +
++        " \"items\":{\"type\":\"bytes\", \"logicalType\":\"decimal\", \"precision\":5, \"scale\":4}} }";
++    GenericRecord r = serializeAndDeserialize(field, "list1", bbList);
++    assertEquals(bbList, r.get("list1"));
++  }
++
++  @Test
+   public void canSerializeMaps() throws SerDeException, IOException {
+     Map<String, Boolean> m = new HashMap<String, Boolean>();
+     m.put("yes", true);
+@@ -135,6 +157,18 @@ public void canSerializeMaps() throws SerDeException, IOException {
+   }
+ 
+   @Test
++  public void canSerializeMapOfDecimals() throws SerDeException, IOException {
++    Map<String, Buffer> m = new HashMap<String, Buffer>();
++    m.put("yes", AvroSerdeUtils.getBufferFromDecimal(HiveDecimal.create("3.14"), 4));
++    m.put("no", AvroSerdeUtils.getBufferFromDecimal(HiveDecimal.create("6.2832732"), 4));
++    String field = "{ \"name\":\"map1\", \"type\":{\"type\":\"map\"," +
++        " \"values\":{\"type\":\"bytes\", \"logicalType\":\"decimal\", \"precision\":5, \"scale\":4}} }";
++    GenericRecord r = serializeAndDeserialize(field, "map1", m);
++
++    assertEquals(m, r.get("map1"));
++  }
++
++  @Test
+   public void canSerializeStructs() throws SerDeException {
+     String field = "{ \"name\":\"struct1\", \"type\":{\"type\":\"record\", " +
+             "\"name\":\"struct1_name\", \"fields\": [\n" +
+@@ -159,6 +193,7 @@ public void canSerializeStructs() throws SerDeException {
+     List<String> columnNames = aoig.getColumnNames();
+     List<TypeInfo> columnTypes = aoig.getColumnTypes();
+     AvroGenericRecordWritable agrw = new AvroGenericRecordWritable(r);
++    agrw.setFileSchema(r.getSchema());
+     Object obj = ad.deserialize(columnNames, columnTypes, agrw, s);
+ 
+     Writable result = as.serialize(obj, oi, columnNames, columnTypes, s);
+@@ -174,7 +209,8 @@ public void canSerializeStructs() throws SerDeException {
+ 
+   @Test
+   public void canSerializeUnions() throws SerDeException, IOException {
+-    String field = "{ \"name\":\"union1\", \"type\":[\"float\", \"boolean\", \"string\"] }";
++    String field = "{ \"name\":\"union1\", \"type\":[\"float\", \"boolean\", \"string\"," +
++        " {\"type\":\"bytes\", \"logicalType\":\"decimal\", \"precision\":5, \"scale\":4}] }";
+     GenericRecord r = serializeAndDeserialize(field, "union1", 424.4f);
+     assertEquals(424.4f, r.get("union1"));
+ 
+@@ -183,6 +219,11 @@ public void canSerializeUnions() throws SerDeException, IOException {
+ 
+     r = serializeAndDeserialize(field, "union1", "hello");
+     assertEquals("hello", r.get("union1"));
++
++    HiveDecimal dec = HiveDecimal.create("3.1415926");
++    r = serializeAndDeserialize(field, "union1", AvroSerdeUtils.getBufferFromDecimal(dec, 4));
++    HiveDecimal dec1 = AvroSerdeUtils.getHiveDecimalFromByteBuffer((ByteBuffer) r.get("union1"), 4);
++    assertEquals(dec.setScale(4), dec1);
+   }
+ 
+   private enum enum1 {BLUE, RED , GREEN};
+@@ -337,6 +378,21 @@ public void canSerializeNullableBytes() throws SerDeException, IOException {
+   }
+ 
+   @Test
++  public void canSerializeNullableDecimals() throws SerDeException, IOException {
++    String field = "{ \"name\":\"nullableBytes\", \"type\":[\"null\", " +
++        "{\"type\":\"bytes\", \"logicalType\":\"decimal\", \"precision\":5, \"scale\":4}] }";
++    Buffer bb = AvroSerdeUtils.getBufferFromDecimal(HiveDecimal.create("3.1416"), 4);
++    GenericRecord r = serializeAndDeserialize(field, "nullableBytes", bb);
++
++    Object result = r.get("nullableBytes");
++    assertNotSame(bb, result);
++    assertEquals(bb, result);
++
++    r = serializeAndDeserialize(field, "nullableBytes", null);
++    assertNull(r.get("nullableBytes"));
++  }
++
++  @Test
+   public void canSerializeArraysWithNullablePrimitiveElements() throws SerDeException, IOException {
+     final String field = "{ \"name\":\"listWithNulls\", \"type\": " +
+             "{\"type\":\"array\", \"items\": [\"null\", \"int\"]} }";
+diff --git a/src/serde/src/test/org/apache/hadoop/hive/serde2/avro/TestGenericAvroRecordWritable.java b/src/serde/src/test/org/apache/hadoop/hive/serde2/avro/TestGenericAvroRecordWritable.java
+index a0e5018..cf3b16c 100644
+--- a/src/serde/src/test/org/apache/hadoop/hive/serde2/avro/TestGenericAvroRecordWritable.java
++++ b/src/serde/src/test/org/apache/hadoop/hive/serde2/avro/TestGenericAvroRecordWritable.java
+@@ -60,6 +60,7 @@ public void writableContractIsImplementedCorrectly() throws IOException {
+     assertEquals("Doctor", gr.get("last"));
+ 
+     AvroGenericRecordWritable garw = new AvroGenericRecordWritable(gr);
++    garw.setFileSchema(gr.getSchema());
+     garw.setRecordReaderID(new UID());
+ 
+     ByteArrayOutputStream baos = new ByteArrayOutputStream();
+@@ -67,6 +68,7 @@ public void writableContractIsImplementedCorrectly() throws IOException {
+     garw.write(daos);
+ 
+     AvroGenericRecordWritable garw2 = new AvroGenericRecordWritable(gr);
++    garw.setFileSchema(gr.getSchema());
+     garw2.setRecordReaderID(new UID());
+ 
+     ByteArrayInputStream bais = new ByteArrayInputStream(baos.toByteArray());
+diff --git a/src/serde/src/test/org/apache/hadoop/hive/serde2/avro/Utils.java b/src/serde/src/test/org/apache/hadoop/hive/serde2/avro/Utils.java
+index d5730fa..80595e5 100644
+--- a/src/serde/src/test/org/apache/hadoop/hive/serde2/avro/Utils.java
++++ b/src/serde/src/test/org/apache/hadoop/hive/serde2/avro/Utils.java
+@@ -33,6 +33,8 @@
+   serializeAndDeserializeRecord(GenericData.Record record) throws IOException {
+     AvroGenericRecordWritable garw = new AvroGenericRecordWritable(record);
+     garw.setRecordReaderID(new UID());
++    // Assuming file schema is the same as record schema for testing purpose.
++    garw.setFileSchema(record.getSchema());
+     ByteArrayOutputStream baos = new ByteArrayOutputStream();
+     DataOutputStream daos = new DataOutputStream(baos);
+     garw.write(daos);
+-- 
+1.7.0.4
+

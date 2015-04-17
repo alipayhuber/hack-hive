@@ -1,0 +1,50 @@
+From 60b52c6a5e5ca229522fa8c3564797e170729be4 Mon Sep 17 00:00:00 2001
+From: Ashutosh Chauhan <hashutosh@apache.org>
+Date: Tue, 14 Jan 2014 04:44:35 +0000
+Subject: [PATCH 371/375] HIVE-5515 : Writing to an HBase table throws IllegalArgumentException, failing job submission (Viraj Bhat via Ashutosh Chauhan & Sushanth Sowmyan)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1557932 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../org/apache/hadoop/hive/ql/metadata/Table.java  |   19 +++++++++++++++++--
+ 1 files changed, 17 insertions(+), 2 deletions(-)
+
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/metadata/Table.java b/src/ql/src/java/org/apache/hadoop/hive/ql/metadata/Table.java
+index 321759b..afa7d22 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/metadata/Table.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/metadata/Table.java
+@@ -48,6 +48,7 @@
+ import org.apache.hadoop.hive.metastore.api.StorageDescriptor;
+ import org.apache.hadoop.hive.ql.io.HiveFileFormatUtils;
+ import org.apache.hadoop.hive.ql.io.HiveOutputFormat;
++import org.apache.hadoop.hive.ql.io.HivePassThroughOutputFormat;
+ import org.apache.hadoop.hive.ql.io.HiveSequenceFileOutputFormat;
+ import org.apache.hadoop.hive.serde.serdeConstants;
+ import org.apache.hadoop.hive.serde2.Deserializer;
+@@ -325,8 +326,22 @@ public HiveStorageHandler getStorageHandler() {
+           }
+           c = getStorageHandler().getOutputFormatClass();
+         } else {
+-          c = Class.forName(className, true,
+-            JavaUtils.getClassLoader());
++            // if HivePassThroughOutputFormat
++            if (className.equals(
++                 HivePassThroughOutputFormat.HIVE_PASSTHROUGH_OF_CLASSNAME)) {
++              if (getStorageHandler() != null) {
++                // get the storage handler real output format class
++                c = getStorageHandler().getOutputFormatClass();
++              }
++              else {
++                //should not happen
++                return null;
++              }
++            }
++            else {
++              c = Class.forName(className, true,
++                  JavaUtils.getClassLoader());
++            }
+         }
+         if (!HiveOutputFormat.class.isAssignableFrom(c)) {
+           if (getStorageHandler() != null) {
+-- 
+1.7.0.4
+

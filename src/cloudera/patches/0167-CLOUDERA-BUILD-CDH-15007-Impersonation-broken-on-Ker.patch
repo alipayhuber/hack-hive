@@ -1,0 +1,25 @@
+From 4d6ae77eaf28d4ee2c314f24621ab9c1ab182734 Mon Sep 17 00:00:00 2001
+From: Prasad Mujumdar <prasadm@cloudera.com>
+Date: Wed, 16 Oct 2013 07:42:49 -0700
+Subject: [PATCH 167/375] CLOUDERA-BUILD: CDH-15007: Impersonation broken on Kerberos clusters
+
+---
+ .../hive/service/cli/thrift/ThriftCLIService.java  |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+
+diff --git a/src/service/src/java/org/apache/hive/service/cli/thrift/ThriftCLIService.java b/src/service/src/java/org/apache/hive/service/cli/thrift/ThriftCLIService.java
+index d149617..2619cb4 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/thrift/ThriftCLIService.java
++++ b/src/service/src/java/org/apache/hive/service/cli/thrift/ThriftCLIService.java
+@@ -152,7 +152,7 @@ SessionHandle getSessionHandle(TOpenSessionReq req)
+     SessionHandle sessionHandle = null;
+     if (
+         cliService.getHiveConf().getVar(ConfVars.HIVE_SERVER2_AUTHENTICATION)
+-        .equals(HiveAuthFactory.AuthTypes.KERBEROS.toString())
++        .equalsIgnoreCase(HiveAuthFactory.AuthTypes.KERBEROS.toString())
+         &&
+         cliService.getHiveConf().
+         getBoolVar(ConfVars.HIVE_SERVER2_ENABLE_DOAS)
+-- 
+1.7.0.4
+

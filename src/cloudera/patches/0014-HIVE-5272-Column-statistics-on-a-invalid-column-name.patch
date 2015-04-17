@@ -1,0 +1,73 @@
+From a627da950d0ba4b14dfa19fdbdfed0e4851d1d6e Mon Sep 17 00:00:00 2001
+From: Ashutosh Chauhan <hashutosh@apache.org>
+Date: Fri, 27 Sep 2013 20:58:54 +0000
+Subject: [PATCH 014/375] HIVE-5272 : Column statistics on a invalid column name results in IndexOutOfBoundsException (Prasanth J via Ashutosh Chauhan)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1527078 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../hive/ql/parse/ColumnStatsSemanticAnalyzer.java |   20 ++++++++++++++++++++
+ .../clientnegative/columnstats_tbllvl.q.out        |    2 +-
+ .../columnstats_tbllvl_incorrect_column.q.out      |    2 +-
+ 3 files changed, 22 insertions(+), 2 deletions(-)
+
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/ColumnStatsSemanticAnalyzer.java b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/ColumnStatsSemanticAnalyzer.java
+index 8a3ded5..5b77e6f 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/ColumnStatsSemanticAnalyzer.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/ColumnStatsSemanticAnalyzer.java
+@@ -522,6 +522,7 @@ public ColumnStatsSemanticAnalyzer(HiveConf conf, ASTNode tree) throws SemanticE
+       boolean isPartitionStats = isPartitionLevelStats(tree);
+       PartitionList partList = null;
+       checkForPartitionColumns(colNames, getPartitionKeys(tableName));
++      validateSpecifiedColumnNames(tableName, colNames);
+ 
+       if (isPartitionStats) {
+         isTableLevel = false;
+@@ -545,6 +546,25 @@ public ColumnStatsSemanticAnalyzer(HiveConf conf, ASTNode tree) throws SemanticE
+     }
+   }
+ 
++  // fail early if the columns specified for column statistics are not valid
++  private void validateSpecifiedColumnNames(String tableName, List<String> specifiedCols)
++      throws SemanticException {
++    List<FieldSchema> fields = null;
++    try {
++      fields = db.getTable(tableName).getAllCols();
++    } catch (HiveException e) {
++      throw new SemanticException(ErrorMsg.INVALID_TABLE.getMsg(tableName));
++    }
++    List<String> tableCols = Utilities.getColumnNamesFromFieldSchema(fields);
++
++    for(String sc : specifiedCols) {
++      if (!tableCols.contains(sc.toLowerCase())) {
++        String msg = "'" + sc + "' (possible columns are " + tableCols.toString() + ")";
++        throw new SemanticException(ErrorMsg.INVALID_COLUMN.getMsg(msg));
++      }
++    }
++  }
++
+   private List<String> getPartitionKeys(String tableName) throws SemanticException {
+     List<FieldSchema> fields;
+     try {
+diff --git a/src/ql/src/test/results/clientnegative/columnstats_tbllvl.q.out b/src/ql/src/test/results/clientnegative/columnstats_tbllvl.q.out
+index 7741bef..4957557 100644
+--- a/src/ql/src/test/results/clientnegative/columnstats_tbllvl.q.out
++++ b/src/ql/src/test/results/clientnegative/columnstats_tbllvl.q.out
+@@ -33,4 +33,4 @@ PREHOOK: Output: default@uservisits_web_text_none
+ POSTHOOK: query: LOAD DATA LOCAL INPATH "../data/files/UserVisits.dat" INTO TABLE UserVisits_web_text_none
+ POSTHOOK: type: LOAD
+ POSTHOOK: Output: default@uservisits_web_text_none
+-FAILED: SemanticException [Error 10004]: Line 1:21 Invalid table alias or column reference 'destIP': (possible column names are: sourceip, desturl, visitdate, adrevenue, useragent, ccode, lcode, skeyword, avgtimeonsite)
++FAILED: SemanticException [Error 10002]: Invalid column reference 'destIP' (possible columns are [sourceip, desturl, visitdate, adrevenue, useragent, ccode, lcode, skeyword, avgtimeonsite])
+diff --git a/src/ql/src/test/results/clientnegative/columnstats_tbllvl_incorrect_column.q.out b/src/ql/src/test/results/clientnegative/columnstats_tbllvl_incorrect_column.q.out
+index 7741bef..4957557 100644
+--- a/src/ql/src/test/results/clientnegative/columnstats_tbllvl_incorrect_column.q.out
++++ b/src/ql/src/test/results/clientnegative/columnstats_tbllvl_incorrect_column.q.out
+@@ -33,4 +33,4 @@ PREHOOK: Output: default@uservisits_web_text_none
+ POSTHOOK: query: LOAD DATA LOCAL INPATH "../data/files/UserVisits.dat" INTO TABLE UserVisits_web_text_none
+ POSTHOOK: type: LOAD
+ POSTHOOK: Output: default@uservisits_web_text_none
+-FAILED: SemanticException [Error 10004]: Line 1:21 Invalid table alias or column reference 'destIP': (possible column names are: sourceip, desturl, visitdate, adrevenue, useragent, ccode, lcode, skeyword, avgtimeonsite)
++FAILED: SemanticException [Error 10002]: Invalid column reference 'destIP' (possible columns are [sourceip, desturl, visitdate, adrevenue, useragent, ccode, lcode, skeyword, avgtimeonsite])
+-- 
+1.7.0.4
+

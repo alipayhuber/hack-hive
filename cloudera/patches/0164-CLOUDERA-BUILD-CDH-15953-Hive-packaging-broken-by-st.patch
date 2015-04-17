@@ -1,0 +1,39 @@
+From abd7eb0bbeb1923a746e767526a356127e51f9f3 Mon Sep 17 00:00:00 2001
+From: Brock Noland <brock@cloudera.com>
+Date: Mon, 2 Dec 2013 13:00:49 -0600
+Subject: [PATCH 164/375] CLOUDERA-BUILD: CDH-15953: Hive packaging broken by strict filtering
+
+---
+ packaging/pom.xml                   |    2 +-
+ packaging/src/main/assembly/bin.xml |    2 --
+ 2 files changed, 1 insertions(+), 3 deletions(-)
+
+diff --git a/src/packaging/pom.xml b/src/packaging/pom.xml
+index 404b411..e43beb5 100644
+--- a/src/packaging/pom.xml
++++ b/src/packaging/pom.xml
+@@ -36,7 +36,7 @@
+       <id>dist</id>
+       <build>
+         <plugins>
+-    <!-- plugins are always listed in sorted order by groupId, artifectId -->
++          <!-- plugins are always listed in sorted order by groupId, artifectId -->
+           <plugin>
+             <groupId>org.apache.maven.plugins</groupId>
+             <artifactId>maven-assembly-plugin</artifactId>
+diff --git a/src/packaging/src/main/assembly/bin.xml b/src/packaging/src/main/assembly/bin.xml
+index 4ec0313..6cf41d7 100644
+--- a/src/packaging/src/main/assembly/bin.xml
++++ b/src/packaging/src/main/assembly/bin.xml
+@@ -39,8 +39,6 @@
+       <useStrictFiltering>true</useStrictFiltering>
+       <useTransitiveFiltering>true</useTransitiveFiltering>
+       <excludes>
+-        <exclude>org.apache.hadoop:*</exclude>
+-        <exclude>org.apache.hbase:*</exclude>
+         <exclude>org.apache.hive.hcatalog:*</exclude>
+       </excludes>
+     </dependencySet>
+-- 
+1.7.0.4
+

@@ -1,0 +1,80 @@
+From 50fce5f2b4cee6bb7490add5cb2b48beb8ce0cf2 Mon Sep 17 00:00:00 2001
+From: Ashutosh Chauhan <hashutosh@apache.org>
+Date: Fri, 6 Sep 2013 21:52:44 +0000
+Subject: [PATCH 002/375] HIVE-5204 : Change type compatibility methods to use PrimitiveCategory rather than TypeInfo (Jason Dere via Ashutosh Chauhan)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1520707 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../hadoop/hive/ql/exec/FunctionRegistry.java      |    1 +
+ .../hive/ql/udf/generic/GenericUDFBaseCompare.java |    4 +--
+ .../hadoop/hive/ql/exec/TestFunctionRegistry.java  |   27 ++++++++++++++++++++
+ 3 files changed, 29 insertions(+), 3 deletions(-)
+
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/FunctionRegistry.java b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/FunctionRegistry.java
+index 30df771..81abfaa 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/FunctionRegistry.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/FunctionRegistry.java
+@@ -862,6 +862,7 @@ public static boolean implicitConvertable(TypeInfo from, TypeInfo to) {
+     return false;
+   }
+ 
++
+   /**
+    * Get the GenericUDAF evaluator for the name and argumentClasses.
+    *
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDFBaseCompare.java b/src/ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDFBaseCompare.java
+index 5c00d36..76acbbb 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDFBaseCompare.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDFBaseCompare.java
+@@ -138,9 +138,7 @@ public ObjectInspector initialize(ObjectInspector[] arguments) throws UDFArgumen
+         compareType = CompareType.SAME_TYPE;
+       } else {
+         compareType = CompareType.NEED_CONVERT;
+-        TypeInfo compareType = FunctionRegistry.getCommonClassForComparison(
+-            oiTypeInfo0, oiTypeInfo1);
+-
++        TypeInfo compareType = FunctionRegistry.getCommonClassForComparison(oiTypeInfo0, oiTypeInfo1);
+         // For now, we always convert to double if we can't find a common type
+         compareOI = TypeInfoUtils.getStandardWritableObjectInspectorFromTypeInfo(
+             (compareType == null) ?
+diff --git a/src/ql/src/test/org/apache/hadoop/hive/ql/exec/TestFunctionRegistry.java b/src/ql/src/test/org/apache/hadoop/hive/ql/exec/TestFunctionRegistry.java
+index 50613f3..e8387be 100644
+--- a/src/ql/src/test/org/apache/hadoop/hive/ql/exec/TestFunctionRegistry.java
++++ b/src/ql/src/test/org/apache/hadoop/hive/ql/exec/TestFunctionRegistry.java
+@@ -328,6 +328,33 @@ public void testGetTypeInfoForPrimitiveCategory() {
+         PrimitiveCategory.DOUBLE));
+   }
+ 
++  private void unionAll(TypeInfo a, TypeInfo b, TypeInfo result) {
++    assertEquals(result, FunctionRegistry.getCommonClassForUnionAll(a,b));
++  }
++
++  public void testCommonClassUnionAll() {
++    unionAll(TypeInfoFactory.intTypeInfo, TypeInfoFactory.decimalTypeInfo,
++        TypeInfoFactory.decimalTypeInfo);
++    unionAll(TypeInfoFactory.stringTypeInfo, TypeInfoFactory.decimalTypeInfo,
++        TypeInfoFactory.decimalTypeInfo);
++    unionAll(TypeInfoFactory.doubleTypeInfo, TypeInfoFactory.decimalTypeInfo,
++        TypeInfoFactory.decimalTypeInfo);
++    unionAll(TypeInfoFactory.doubleTypeInfo, TypeInfoFactory.stringTypeInfo,
++        TypeInfoFactory.stringTypeInfo);
++  }
++
++  public void testGetTypeInfoForPrimitiveCategory() {
++    // non-qualified types should simply return the TypeInfo associated with that type
++    assertEquals(TypeInfoFactory.stringTypeInfo, FunctionRegistry.getTypeInfoForPrimitiveCategory(
++        (PrimitiveTypeInfo) TypeInfoFactory.stringTypeInfo,
++        (PrimitiveTypeInfo) TypeInfoFactory.stringTypeInfo,
++        PrimitiveCategory.STRING));
++    assertEquals(TypeInfoFactory.doubleTypeInfo, FunctionRegistry.getTypeInfoForPrimitiveCategory(
++        (PrimitiveTypeInfo) TypeInfoFactory.doubleTypeInfo,
++        (PrimitiveTypeInfo) TypeInfoFactory.stringTypeInfo,
++        PrimitiveCategory.DOUBLE));
++  }
++
+   @Override
+   protected void tearDown() {
+   }
+-- 
+1.7.0.4
+

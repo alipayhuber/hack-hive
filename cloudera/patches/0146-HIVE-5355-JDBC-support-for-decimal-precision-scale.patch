@@ -1,0 +1,409 @@
+From 4cb7910f320ce236c53403020d4bc4160060c22f Mon Sep 17 00:00:00 2001
+From: Brock Noland <brock@apache.org>
+Date: Wed, 6 Nov 2013 16:39:40 +0000
+Subject: [PATCH 146/375] HIVE-5355 - JDBC support for decimal precision/scale
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1539390 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../java/org/apache/hive/jdbc/TestJdbcDriver2.java |   20 ++++----
+ .../java/org/apache/hive/jdbc/HiveConnection.java  |    1 +
+ .../org/apache/hive/jdbc/HiveQueryResultSet.java   |    7 +++
+ jdbc/src/java/org/apache/hive/jdbc/JdbcColumn.java |   20 ++------
+ .../org/apache/hive/jdbc/JdbcColumnAttributes.java |    6 ++
+ service/if/TCLIService.thrift                      |    6 ++-
+ .../service/cli/thrift/TCLIServiceConstants.java   |   27 ++--------
+ .../hive/service/cli/thrift/TProtocolVersion.java  |   10 ++--
+ .../org/apache/hive/service/cli/ColumnValue.java   |    2 +-
+ .../apache/hive/service/cli/TypeQualifiers.java    |   53 ++++++++++++++++++--
+ 10 files changed, 92 insertions(+), 60 deletions(-)
+
+diff --git a/src/itests/hive-unit/src/test/java/org/apache/hive/jdbc/TestJdbcDriver2.java b/src/itests/hive-unit/src/test/java/org/apache/hive/jdbc/TestJdbcDriver2.java
+index 74f8655..fd1a918 100644
+--- a/src/itests/hive-unit/src/test/java/org/apache/hive/jdbc/TestJdbcDriver2.java
++++ b/src/itests/hive-unit/src/test/java/org/apache/hive/jdbc/TestJdbcDriver2.java
+@@ -347,34 +347,34 @@ public void testDataTypes2() throws Exception {
+     for (int i = 1; i < meta.getColumnCount(); i++) {
+       assertNull(res.getObject(i));
+     }
+-
+   }
+ 
+   @Test
+   public void testErrorDiag() throws SQLException {
+     Statement stmt = con.createStatement();
+-
+     // verify syntax error
+     try {
+-      ResultSet res = stmt.executeQuery("select from " + dataTypeTableName);
++      stmt.executeQuery("select from " + dataTypeTableName);
++      fail("SQLException is expected");
+     } catch (SQLException e) {
+       assertEquals("42000", e.getSQLState());
+     }
+ 
+     // verify table not fuond error
+     try {
+-      ResultSet res = stmt.executeQuery("select * from nonTable");
++      stmt.executeQuery("select * from nonTable");
++      fail("SQLException is expected");
+     } catch (SQLException e) {
+       assertEquals("42S02", e.getSQLState());
+     }
+ 
+     // verify invalid column error
+     try {
+-      ResultSet res = stmt.executeQuery("select zzzz from " + dataTypeTableName);
++      stmt.executeQuery("select zzzz from " + dataTypeTableName);
++      fail("SQLException is expected");
+     } catch (SQLException e) {
+       assertEquals("42000", e.getSQLState());
+     }
+-
+   }
+ 
+   /**
+@@ -1470,9 +1470,9 @@ public void testResultSetMetaData() throws SQLException {
+     assertEquals("c18", meta.getColumnName(16));
+     assertEquals(Types.DECIMAL, meta.getColumnType(16));
+     assertEquals("decimal", meta.getColumnTypeName(16));
+-    assertEquals(Integer.MAX_VALUE, meta.getColumnDisplaySize(16));
+-    assertEquals(Integer.MAX_VALUE, meta.getPrecision(16));
+-    assertEquals(Integer.MAX_VALUE, meta.getScale(16));
++    assertEquals(18, meta.getColumnDisplaySize(16));
++    assertEquals(16, meta.getPrecision(16));
++    assertEquals(7, meta.getScale(16));
+ 
+     assertEquals("c20", meta.getColumnName(17));
+     assertEquals(Types.DATE, meta.getColumnType(17));
+@@ -1536,7 +1536,7 @@ public void testDriverProperties() throws SQLException {
+ 
+   @Test
+   public void testParseUrlHttpMode() throws SQLException {
+-    HiveDriver driver = new HiveDriver();
++    new HiveDriver();
+     for (String[] testValues : HTTP_URL_PROPERTIES) {
+       JdbcConnectionParams params = Utils.parseURL(testValues[0]);
+       assertEquals(params.getHost(), testValues[1]);
+diff --git a/src/jdbc/src/java/org/apache/hive/jdbc/HiveConnection.java b/src/jdbc/src/java/org/apache/hive/jdbc/HiveConnection.java
+index 5a6ce44..bb82a6e 100644
+--- a/src/jdbc/src/java/org/apache/hive/jdbc/HiveConnection.java
++++ b/src/jdbc/src/java/org/apache/hive/jdbc/HiveConnection.java
+@@ -127,6 +127,7 @@ public HiveConnection(String uri, Properties info) throws SQLException {
+     supportedProtocols.add(TProtocolVersion.HIVE_CLI_SERVICE_PROTOCOL_V1);
+     supportedProtocols.add(TProtocolVersion.HIVE_CLI_SERVICE_PROTOCOL_V2);
+     supportedProtocols.add(TProtocolVersion.HIVE_CLI_SERVICE_PROTOCOL_V3);
++    supportedProtocols.add(TProtocolVersion.HIVE_CLI_SERVICE_PROTOCOL_V4);
+ 
+     // open client session
+     openSession();
+diff --git a/src/jdbc/src/java/org/apache/hive/jdbc/HiveQueryResultSet.java b/src/jdbc/src/java/org/apache/hive/jdbc/HiveQueryResultSet.java
+index 114cd6d..25faf48 100644
+--- a/src/jdbc/src/java/org/apache/hive/jdbc/HiveQueryResultSet.java
++++ b/src/jdbc/src/java/org/apache/hive/jdbc/HiveQueryResultSet.java
+@@ -29,6 +29,7 @@
+ 
+ import org.apache.commons.logging.Log;
+ import org.apache.commons.logging.LogFactory;
++import org.apache.hadoop.hive.common.type.HiveDecimal;
+ import org.apache.hive.service.cli.TableSchema;
+ import org.apache.hive.service.cli.thrift.TCLIService;
+ import org.apache.hive.service.cli.thrift.TCLIServiceConstants;
+@@ -188,6 +189,12 @@ private static JdbcColumnAttributes getColumnAttributes(
+             ret = new JdbcColumnAttributes(val.getI32Value(), 0);
+           }
+           break;
++        case DECIMAL_TYPE:
++          TTypeQualifierValue prec = tq.getQualifiers().get(TCLIServiceConstants.PRECISION);
++          TTypeQualifierValue scale = tq.getQualifiers().get(TCLIServiceConstants.SCALE);
++          ret = new JdbcColumnAttributes(prec == null ? HiveDecimal.DEFAULT_PRECISION : prec.getI32Value(),
++              scale == null ? HiveDecimal.DEFAULT_SCALE : scale.getI32Value());
++          break;
+         default:
+           break;
+       }
+diff --git a/src/jdbc/src/java/org/apache/hive/jdbc/JdbcColumn.java b/src/jdbc/src/java/org/apache/hive/jdbc/JdbcColumn.java
+index f133321..d612cf6 100644
+--- a/src/jdbc/src/java/org/apache/hive/jdbc/JdbcColumn.java
++++ b/src/jdbc/src/java/org/apache/hive/jdbc/JdbcColumn.java
+@@ -70,10 +70,7 @@ static int columnDisplaySize(int columnType, JdbcColumnAttributes columnAttribut
+     case Types.BOOLEAN:
+       return columnPrecision(columnType, columnAttributes);
+     case Types.VARCHAR:
+-      if (columnAttributes != null) {
+-        return columnAttributes.precision;
+-      }
+-      return Integer.MAX_VALUE; // hive has no max limit for strings
++      return columnPrecision(columnType, columnAttributes);
+     case Types.TINYINT:
+     case Types.SMALLINT:
+     case Types.INTEGER:
+@@ -91,10 +88,7 @@ static int columnDisplaySize(int columnType, JdbcColumnAttributes columnAttribut
+     case Types.DOUBLE:
+       return 25; // e.g. -(17#).e-####
+     case Types.DECIMAL:
+-      if (columnAttributes != null) {
+-        return columnAttributes.precision + 2;  // '-' sign and '.'
+-      }
+-      return Integer.MAX_VALUE;
++      return columnPrecision(columnType, columnAttributes) + 2;  // '-' sign and '.'
+     default:
+       throw new SQLException("Invalid column type: " + columnType);
+     }
+@@ -128,10 +122,7 @@ static int columnPrecision(int columnType, JdbcColumnAttributes columnAttributes
+     case Types.TIMESTAMP:
+       return 29;
+     case Types.DECIMAL:
+-      if (columnAttributes != null) {
+-        return columnAttributes.precision;
+-      }
+-      return Integer.MAX_VALUE;
++      return columnAttributes.precision;
+     default:
+       throw new SQLException("Invalid column type: " + columnType);
+     }
+@@ -156,10 +147,7 @@ static int columnScale(int columnType, JdbcColumnAttributes columnAttributes)
+     case  Types.TIMESTAMP:
+       return 9;
+     case Types.DECIMAL:
+-      if (columnAttributes != null) {
+-        return columnAttributes.scale;
+-      }
+-      return Integer.MAX_VALUE;
++      return columnAttributes.scale;
+     default:
+       throw new SQLException("Invalid column type: " + columnType);
+     }
+diff --git a/src/jdbc/src/java/org/apache/hive/jdbc/JdbcColumnAttributes.java b/src/jdbc/src/java/org/apache/hive/jdbc/JdbcColumnAttributes.java
+index 45e7938..9b4faa4 100644
+--- a/src/jdbc/src/java/org/apache/hive/jdbc/JdbcColumnAttributes.java
++++ b/src/jdbc/src/java/org/apache/hive/jdbc/JdbcColumnAttributes.java
+@@ -29,4 +29,10 @@ public JdbcColumnAttributes(int precision, int scale) {
+     this.precision = precision;
+     this.scale = scale;
+   }
++
++  @Override
++  public String toString() {
++    return "(" + precision + "," + scale + ")";
++  }
++
+ }
+\ No newline at end of file
+diff --git a/src/service/if/TCLIService.thrift b/src/service/if/TCLIService.thrift
+index 6e20375..81da066 100644
+--- a/src/service/if/TCLIService.thrift
++++ b/src/service/if/TCLIService.thrift
+@@ -168,6 +168,10 @@ typedef i32 TTypeEntryPtr
+ // Valid TTypeQualifiers key names
+ const string CHARACTER_MAXIMUM_LENGTH = "characterMaximumLength"
+ 
++// Type qualifier key name for decimal
++const string PRECISION = "precision"
++const string SCALE = "scale"
++
+ union TTypeQualifierValue {
+   1: optional i32 i32Value
+   2: optional string stringValue
+@@ -497,7 +501,7 @@ struct TOpenSessionResp {
+   1: required TStatus status
+ 
+   // The protocol version that the server is using.
+-  2: required TProtocolVersion serverProtocolVersion = TProtocolVersion.HIVE_CLI_SERVICE_PROTOCOL_V3
++  2: required TProtocolVersion serverProtocolVersion = TProtocolVersion.HIVE_CLI_SERVICE_PROTOCOL_V4
+ 
+   // Session Handle
+   3: optional TSessionHandle sessionHandle
+diff --git a/src/service/src/gen/thrift/gen-javabean/org/apache/hive/service/cli/thrift/TCLIServiceConstants.java b/src/service/src/gen/thrift/gen-javabean/org/apache/hive/service/cli/thrift/TCLIServiceConstants.java
+index 4748e79..7b4c576 100644
+--- a/src/service/src/gen/thrift/gen-javabean/org/apache/hive/service/cli/thrift/TCLIServiceConstants.java
++++ b/src/service/src/gen/thrift/gen-javabean/org/apache/hive/service/cli/thrift/TCLIServiceConstants.java
+@@ -6,30 +6,10 @@
+  */
+ package org.apache.hive.service.cli.thrift;
+ 
+-import org.apache.commons.lang.builder.HashCodeBuilder;
+-import org.apache.thrift.scheme.IScheme;
+-import org.apache.thrift.scheme.SchemeFactory;
+-import org.apache.thrift.scheme.StandardScheme;
+-
+-import org.apache.thrift.scheme.TupleScheme;
+-import org.apache.thrift.protocol.TTupleProtocol;
+-import org.apache.thrift.protocol.TProtocolException;
+-import org.apache.thrift.EncodingUtils;
+-import org.apache.thrift.TException;
+-import java.util.List;
+-import java.util.ArrayList;
+-import java.util.Map;
+ import java.util.HashMap;
+-import java.util.EnumMap;
+-import java.util.Set;
+ import java.util.HashSet;
+-import java.util.EnumSet;
+-import java.util.Collections;
+-import java.util.BitSet;
+-import java.nio.ByteBuffer;
+-import java.util.Arrays;
+-import org.slf4j.Logger;
+-import org.slf4j.LoggerFactory;
++import java.util.Map;
++import java.util.Set;
+ 
+ public class TCLIServiceConstants {
+ 
+@@ -88,6 +68,9 @@
+     TYPE_NAMES.put(org.apache.hive.service.cli.thrift.TTypeId.VARCHAR_TYPE, "VARCHAR");
+   }
+ 
++  // Constants for column type attributes.
+   public static final String CHARACTER_MAXIMUM_LENGTH = "characterMaximumLength";
++  public static final String PRECISION = "precision";
++  public static final String SCALE = "scale";
+ 
+ }
+diff --git a/src/service/src/gen/thrift/gen-javabean/org/apache/hive/service/cli/thrift/TProtocolVersion.java b/src/service/src/gen/thrift/gen-javabean/org/apache/hive/service/cli/thrift/TProtocolVersion.java
+index 59e5ed1..15f2973 100644
+--- a/src/service/src/gen/thrift/gen-javabean/org/apache/hive/service/cli/thrift/TProtocolVersion.java
++++ b/src/service/src/gen/thrift/gen-javabean/org/apache/hive/service/cli/thrift/TProtocolVersion.java
+@@ -7,14 +7,12 @@
+ package org.apache.hive.service.cli.thrift;
+ 
+ 
+-import java.util.Map;
+-import java.util.HashMap;
+-import org.apache.thrift.TEnum;
+ 
+ public enum TProtocolVersion implements org.apache.thrift.TEnum {
+   HIVE_CLI_SERVICE_PROTOCOL_V1(0),
+   HIVE_CLI_SERVICE_PROTOCOL_V2(1),
+-  HIVE_CLI_SERVICE_PROTOCOL_V3(2);
++  HIVE_CLI_SERVICE_PROTOCOL_V3(2),
++  HIVE_CLI_SERVICE_PROTOCOL_V4(3);
+ 
+   private final int value;
+ 
+@@ -33,7 +31,7 @@ public int getValue() {
+    * Find a the enum type by its integer value, as defined in the Thrift IDL.
+    * @return null if the value is not found.
+    */
+-  public static TProtocolVersion findByValue(int value) { 
++  public static TProtocolVersion findByValue(int value) {
+     switch (value) {
+       case 0:
+         return HIVE_CLI_SERVICE_PROTOCOL_V1;
+@@ -41,6 +39,8 @@ public static TProtocolVersion findByValue(int value) {
+         return HIVE_CLI_SERVICE_PROTOCOL_V2;
+       case 2:
+         return HIVE_CLI_SERVICE_PROTOCOL_V3;
++      case 3:
++        return HIVE_CLI_SERVICE_PROTOCOL_V4;
+       default:
+         return null;
+     }
+diff --git a/src/service/src/java/org/apache/hive/service/cli/ColumnValue.java b/src/service/src/java/org/apache/hive/service/cli/ColumnValue.java
+index 905ba01..62e221b 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/ColumnValue.java
++++ b/src/service/src/java/org/apache/hive/service/cli/ColumnValue.java
+@@ -146,7 +146,7 @@ public static ColumnValue timestampValue(Timestamp value) {
+   public static ColumnValue stringValue(HiveDecimal value) {
+     TStringValue tStrValue = new TStringValue();
+     if (value != null) {
+-      tStrValue.setValue(((HiveDecimal)value).toString());
++      tStrValue.setValue(value.toString());
+     }
+     return new ColumnValue(TColumnValue.stringVal(tStrValue));
+   }
+diff --git a/src/service/src/java/org/apache/hive/service/cli/TypeQualifiers.java b/src/service/src/java/org/apache/hive/service/cli/TypeQualifiers.java
+index 5f1804e..66a4b12 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/TypeQualifiers.java
++++ b/src/service/src/java/org/apache/hive/service/cli/TypeQualifiers.java
+@@ -21,6 +21,7 @@
+ import java.util.HashMap;
+ import java.util.Map;
+ 
++import org.apache.hadoop.hive.serde2.typeinfo.DecimalTypeInfo;
+ import org.apache.hadoop.hive.serde2.typeinfo.PrimitiveTypeInfo;
+ import org.apache.hadoop.hive.serde2.typeinfo.VarcharTypeInfo;
+ import org.apache.hive.service.cli.thrift.TCLIServiceConstants;
+@@ -33,6 +34,8 @@
+  */
+ public class TypeQualifiers {
+   private Integer characterMaximumLength;
++  private Integer precision;
++  private Integer scale;
+ 
+   public TypeQualifiers() {}
+ 
+@@ -53,6 +56,18 @@ public TTypeQualifiers toTTypeQualifiers() {
+       qMap.put(TCLIServiceConstants.CHARACTER_MAXIMUM_LENGTH, val);
+     }
+ 
++    if (precision != null) {
++      TTypeQualifierValue val = new TTypeQualifierValue();
++      val.setI32Value(precision.intValue());
++      qMap.put(TCLIServiceConstants.PRECISION, val);
++    }
++
++    if (scale != null) {
++      TTypeQualifierValue val = new TTypeQualifierValue();
++      val.setI32Value(scale.intValue());
++      qMap.put(TCLIServiceConstants.SCALE, val);
++    }
++
+     if (qMap.size() > 0) {
+       ret = new TTypeQualifiers(qMap);
+     }
+@@ -70,18 +85,46 @@ public static TypeQualifiers fromTTypeQualifiers(TTypeQualifiers ttq) {
+         ret.setCharacterMaximumLength(
+             tqMap.get(TCLIServiceConstants.CHARACTER_MAXIMUM_LENGTH).getI32Value());
+       }
++
++      if (tqMap.containsKey(TCLIServiceConstants.PRECISION)) {
++        ret.setPrecision(tqMap.get(TCLIServiceConstants.PRECISION).getI32Value());
++      }
++
++      if (tqMap.containsKey(TCLIServiceConstants.SCALE)) {
++        ret.setScale(tqMap.get(TCLIServiceConstants.SCALE).getI32Value());
++      }
+     }
+     return ret;
+   }
+ 
+   public static TypeQualifiers fromTypeInfo(PrimitiveTypeInfo pti) {
++    TypeQualifiers result = null;
+     if (pti instanceof VarcharTypeInfo) {
+-      TypeQualifiers ret = new TypeQualifiers();
+-      ret.setCharacterMaximumLength(((VarcharTypeInfo)pti).getLength());
+-      return ret;
+-    } else {
+-      return null;
++      result = new TypeQualifiers();
++      result.setCharacterMaximumLength(((VarcharTypeInfo)pti).getLength());
++
++    } else if (pti instanceof DecimalTypeInfo) {
++      result = new TypeQualifiers();
++      result.setPrecision(((DecimalTypeInfo)pti).precision());
++      result.setScale(((DecimalTypeInfo)pti).scale());
+     }
++    return result;
++  }
++
++  public Integer getPrecision() {
++    return precision;
++  }
++
++  public void setPrecision(Integer precision) {
++    this.precision = precision;
++  }
++
++  public Integer getScale() {
++    return scale;
++  }
++
++  public void setScale(Integer scale) {
++    this.scale = scale;
+   }
+ 
+ }
+-- 
+1.7.0.4
+

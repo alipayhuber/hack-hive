@@ -1,0 +1,29 @@
+From 87288121400f682966ff0a637927c571a983b498 Mon Sep 17 00:00:00 2001
+From: Prasad Mujumdar <prasadm@cloudera.com>
+Date: Tue, 14 Jan 2014 15:51:38 -0800
+Subject: [PATCH 231/375] CDH-16128: HiveServer2 does not provide the MR2 jobs IDs by default
+
+---
+ common/src/main/resources/hive-log4j.properties |    9 +++++++++
+ 1 files changed, 9 insertions(+), 0 deletions(-)
+
+diff --git a/src/common/src/main/resources/hive-log4j.properties b/src/common/src/main/resources/hive-log4j.properties
+index 212156e..b05aa04 100644
+--- a/src/common/src/main/resources/hive-log4j.properties
++++ b/src/common/src/main/resources/hive-log4j.properties
+@@ -86,3 +86,12 @@ log4j.category.JPOX.Enhancer=ERROR,DRFA
+ # Silence useless ZK logs
+ log4j.logger.org.apache.zookeeper.server.NIOServerCnxn=WARN,DRFA
+ log4j.logger.org.apache.zookeeper.ClientCnxnSocketNIO=WARN,DRFA
++
++#custom logging levels
++log4j.logger.org.apache.hadoop.hive.ql.parse.SemanticAnalyzer=INFO
++log4j.logger.org.apache.hadoop.hive.ql.Driver=INFO
++log4j.logger.org.apache.hadoop.hive.ql.exec.mr.ExecDriver=INFO
++log4j.logger.org.apache.hadoop.hive.ql.exec.mr.MapRedTask=INFO
++log4j.logger.org.apache.hadoop.hive.ql.exec.mr.MapredLocalTask=INFO
++log4j.logger.org.apache.hadoop.hive.ql.exec.Task=INFO
++
+-- 
+1.7.0.4
+

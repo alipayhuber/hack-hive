@@ -1,0 +1,35 @@
+From dbe155242359206e0172659adea47e214e4eece1 Mon Sep 17 00:00:00 2001
+From: Thejas Madhavan Nair <thejas@apache.org>
+Date: Mon, 14 Oct 2013 20:14:34 +0000
+Subject: [PATCH 090/375] HIVE-5535 : [WebHCat] Webhcat e2e test JOBS_2 fail due to permission when hdfs umask setting is 022 (Daniel Dai via Thejas Nair)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1532054 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../test/e2e/templeton/drivers/TestDriverCurl.pm   |   11 +++++++++++
+ 1 files changed, 11 insertions(+), 0 deletions(-)
+
+diff --git a/src/hcatalog/src/test/e2e/templeton/drivers/TestDriverCurl.pm b/src/hcatalog/src/test/e2e/templeton/drivers/TestDriverCurl.pm
+index b4ee4bf..acf9c38 100644
+--- a/src/hcatalog/src/test/e2e/templeton/drivers/TestDriverCurl.pm
++++ b/src/hcatalog/src/test/e2e/templeton/drivers/TestDriverCurl.pm
+@@ -207,6 +207,17 @@ sub globalSetup
+         die "Cannot create temporary directory " . $globalHash->{'tmpPath'} .
+           " " . "$ERRNO\n";
+ 
++    my $testCmdBasics = $self->copyTestBasicConfig($globalHash);
++    $testCmdBasics->{'method'} = 'PUT';
++    $testCmdBasics->{'url'} = ':WEBHDFS_URL:/webhdfs/v1' . $globalHash->{'outpath'} . '?op=MKDIRS&permission=777';
++    if (!defined $globalHash->{'is_secure_mode'} || $globalHash->{'is_secure_mode'} !~ /y.*/i) {
++        $testCmdBasics->{'url'} = $testCmdBasics->{'url'} . '&user.name=' . $globalHash->{'current_user'};
++    }
++    my $curl_result = $self->execCurlCmd($testCmdBasics, "", $log);
++    my $json = new JSON;
++    $json->utf8->decode($curl_result->{'body'})->{'boolean'} or
++        die "Cannot create hdfs directory " . $globalHash->{'outpath'} .
++          " " . "$ERRNO\n";
+   }
+ 
+ ###############################################################################
+-- 
+1.7.0.4
+

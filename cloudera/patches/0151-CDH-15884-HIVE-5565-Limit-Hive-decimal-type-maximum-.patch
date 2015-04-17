@@ -1,0 +1,2161 @@
+From aadd029e84d0caea780d14854ccf039c15dafe31 Mon Sep 17 00:00:00 2001
+From: Xuefu Zhang <xuefu@apache.org>
+Date: Wed, 20 Nov 2013 19:58:00 +0000
+Subject: [PATCH 151/375] CDH-15884: HIVE-5565: Limit Hive decimal type maximum precision and scale to 38 (reviewed by Brock)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1543916 13f79535-47bb-0310-9956-ffa450edef68
+
+Conflicts:
+	ql/src/test/queries/clientpositive/udf_case.q
+	ql/src/test/queries/clientpositive/udf_when.q
+	ql/src/test/results/clientpositive/decimal_udf.q.out
+	ql/src/test/results/clientpositive/literal_decimal.q.out
+	ql/src/test/results/clientpositive/udf_case.q.out
+	ql/src/test/results/clientpositive/udf_when.q.out
+	ql/src/test/results/clientpositive/vectorization_short_regress.q.out
+
+Conflicts were only qtest files, some tests or part of tests modified upstream that are not part of downstream.
+---
+ .../hadoop/hive/common/type/HiveDecimal.java       |   20 +-
+ .../hadoop/hive/common/type/TestHiveDecimal.java   |   21 +-
+ .../org/apache/hive/jdbc/HiveQueryResultSet.java   |    4 +-
+ .../org/apache/hadoop/hive/ql/exec/DDLTask.java    |    4 +-
+ .../apache/hadoop/hive/ql/io/orc/OrcStruct.java    |    4 +-
+ .../hadoop/hive/ql/io/orc/RecordReaderImpl.java    |    4 +-
+ .../apache/hadoop/hive/ql/parse/ParseUtils.java    |    4 +-
+ .../hive/ql/udf/generic/GenericUDFBridge.java      |    2 +-
+ .../hadoop/hive/ql/exec/TestFunctionRegistry.java  |    6 +-
+ .../apache/hadoop/hive/ql/io/orc/TestOrcFile.java  |   18 +-
+ .../hadoop/hive/ql/parse/TestHiveDecimalParse.java |    6 +-
+ ql/src/test/queries/clientpositive/decimal_3.q     |    2 +-
+ .../queries/clientpositive/decimal_precision.q     |   12 +-
+ ql/src/test/queries/clientpositive/decimal_udf.q   |    2 +-
+ ql/src/test/queries/clientpositive/serde_regex.q   |    4 +-
+ .../invalid_cast_from_binary_1.q.out               |    2 +-
+ .../invalid_cast_from_binary_2.q.out               |    2 +-
+ .../invalid_cast_from_binary_3.q.out               |    2 +-
+ .../invalid_cast_from_binary_4.q.out               |    2 +-
+ .../invalid_cast_from_binary_5.q.out               |    2 +-
+ .../invalid_cast_from_binary_6.q.out               |    2 +-
+ .../results/clientnegative/wrong_column_type.q.out |    2 +-
+ ql/src/test/results/clientpositive/decimal_3.q.out |   22 +-
+ .../results/clientpositive/decimal_precision.q.out |  534 ++++++++++----------
+ .../test/results/clientpositive/decimal_udf.q.out  |  262 +++++-----
+ .../results/clientpositive/literal_decimal.q.out   |    4 +-
+ .../clientpositive/ql_rewrite_gbtoidx.q.out        |    2 +-
+ .../test/results/clientpositive/serde_regex.q.out  |   14 +-
+ ql/src/test/results/clientpositive/udf7.q.out      |    6 +-
+ .../hive/serde2/typeinfo/TypeInfoFactory.java      |    4 +-
+ .../hadoop/hive/serde2/typeinfo/TypeInfoUtils.java |    4 +-
+ 31 files changed, 497 insertions(+), 482 deletions(-)
+
+diff --git a/src/common/src/java/org/apache/hadoop/hive/common/type/HiveDecimal.java b/src/common/src/java/org/apache/hadoop/hive/common/type/HiveDecimal.java
+index a38442d..729908a 100644
+--- a/src/common/src/java/org/apache/hadoop/hive/common/type/HiveDecimal.java
++++ b/src/common/src/java/org/apache/hadoop/hive/common/type/HiveDecimal.java
+@@ -28,10 +28,22 @@
+  *
+  */
+ public class HiveDecimal implements Comparable<HiveDecimal> {
+-  public static final int MAX_PRECISION = 65;
+-  public static final int MAX_SCALE = 30;
+-  public static final int DEFAULT_PRECISION = 10;
+-  public static final int DEFAULT_SCALE = 0;
++  public static final int MAX_PRECISION = 38;
++  public static final int MAX_SCALE = 38;
++
++  /**
++   * Default precision/scale when user doesn't specify in the column metadata, such as
++   * decimal and decimal(8).
++   */
++  public static final int USER_DEFAULT_PRECISION = 10;
++  public static final int USER_DEFAULT_SCALE = 0;
++
++  /**
++   *  Default precision/scale when system is not able to determine them, such as in case
++   *  of a non-generic udf.
++   */
++  public static final int SYSTEM_DEFAULT_PRECISION = 38;
++  public static final int SYSTEM_DEFAULT_SCALE = 18;
+ 
+   public static final HiveDecimal ZERO = new HiveDecimal(BigDecimal.ZERO);
+   public static final HiveDecimal ONE = new HiveDecimal(BigDecimal.ONE);
+diff --git a/src/common/src/test/org/apache/hadoop/hive/common/type/TestHiveDecimal.java b/src/common/src/test/org/apache/hadoop/hive/common/type/TestHiveDecimal.java
+index 21d58c5..3e666e5 100644
+--- a/src/common/src/test/org/apache/hadoop/hive/common/type/TestHiveDecimal.java
++++ b/src/common/src/test/org/apache/hadoop/hive/common/type/TestHiveDecimal.java
+@@ -28,16 +28,17 @@
+   public void testPrecisionScaleEnforcement() {
+     String decStr = "1786135888657847525803324040144343378.09799306448796128931113691624";
+     HiveDecimal dec = HiveDecimal.create(decStr);
+-    Assert.assertEquals("1786135888657847525803324040144343378.0979930644879612893111369162", dec.toString());
++    Assert.assertEquals("1786135888657847525803324040144343378.1", dec.toString());
+     Assert.assertTrue("Decimal precision should not go above maximum",
+         dec.precision() <= HiveDecimal.MAX_PRECISION);
+     Assert.assertTrue("Decimal scale should not go above maximum", dec.scale() <= HiveDecimal.MAX_SCALE);
+ 
++    decStr = "57847525803324040144343378.09799306448796128931113691624";
+     BigDecimal bd = new BigDecimal(decStr);
+     BigDecimal bd1 = HiveDecimal.enforcePrecisionScale(bd, 20, 5);
+     Assert.assertNull(bd1);
+-    bd1 = HiveDecimal.enforcePrecisionScale(bd, 45, 5);
+-    Assert.assertEquals("1786135888657847525803324040144343378.09799", bd1.toString());
++    bd1 = HiveDecimal.enforcePrecisionScale(bd, 35, 5);
++    Assert.assertEquals("57847525803324040144343378.09799", bd1.toString());
+     bd1 = HiveDecimal.enforcePrecisionScale(bd, 45, 20);
+     Assert.assertNull(bd1);
+ 
+@@ -45,7 +46,7 @@ public void testPrecisionScaleEnforcement() {
+     Assert.assertNull(dec);
+ 
+     dec = HiveDecimal.create("-1786135888657847525803324040144343378.09799306448796128931113691624");
+-    Assert.assertEquals("-1786135888657847525803324040144343378.0979930644879612893111369162", dec.toString());
++    Assert.assertEquals("-1786135888657847525803324040144343378.1", dec.toString());
+ 
+     dec = HiveDecimal.create("005.34000");
+     Assert.assertEquals(dec.precision(), 3);
+@@ -57,18 +58,18 @@ public void testPrecisionScaleEnforcement() {
+ 
+   @Test
+   public void testTrailingZeroRemovalAfterEnforcement() {
+-    String decStr = "8.0900000000000000000000000000000123456";
++    String decStr = "8.090000000000000000000000000000000000000123456";
+     HiveDecimal dec = HiveDecimal.create(decStr);
+     Assert.assertEquals("8.09", dec.toString());
+   }
+ 
+   @Test
+   public void testMultiply() {
+-    HiveDecimal dec1 = HiveDecimal.create("0.1786135888657847525803");
+-    HiveDecimal dec2 = HiveDecimal.create("3.123456789");
++    HiveDecimal dec1 = HiveDecimal.create("0.00001786135888657847525803");
++    HiveDecimal dec2 = HiveDecimal.create("3.0000123456789");
+     Assert.assertNull(dec1.multiply(dec2));
+ 
+-    dec1 = HiveDecimal.create("1786135888657847525803232322323234442321.4");
++    dec1 = HiveDecimal.create("178613588865784752580323232232323444.4");
+     dec2 = HiveDecimal.create("178613588865784752580302323232.3");
+     Assert.assertNull(dec1.multiply(dec2));
+ 
+@@ -79,10 +80,10 @@ public void testMultiply() {
+ 
+   @Test
+   public void testPow() {
+-    HiveDecimal dec = HiveDecimal.create("3.1415926");
++    HiveDecimal dec = HiveDecimal.create("3.00001415926");
+     Assert.assertEquals(dec.pow(2), dec.multiply(dec));
+ 
+-    HiveDecimal dec1 = HiveDecimal.create("0.17861358882");
++    HiveDecimal dec1 = HiveDecimal.create("0.000017861358882");
+     dec1 = dec1.pow(3);
+     Assert.assertNull(dec1);
+   }
+diff --git a/src/jdbc/src/java/org/apache/hive/jdbc/HiveQueryResultSet.java b/src/jdbc/src/java/org/apache/hive/jdbc/HiveQueryResultSet.java
+index 25faf48..e005547 100644
+--- a/src/jdbc/src/java/org/apache/hive/jdbc/HiveQueryResultSet.java
++++ b/src/jdbc/src/java/org/apache/hive/jdbc/HiveQueryResultSet.java
+@@ -192,8 +192,8 @@ private static JdbcColumnAttributes getColumnAttributes(
+         case DECIMAL_TYPE:
+           TTypeQualifierValue prec = tq.getQualifiers().get(TCLIServiceConstants.PRECISION);
+           TTypeQualifierValue scale = tq.getQualifiers().get(TCLIServiceConstants.SCALE);
+-          ret = new JdbcColumnAttributes(prec == null ? HiveDecimal.DEFAULT_PRECISION : prec.getI32Value(),
+-              scale == null ? HiveDecimal.DEFAULT_SCALE : scale.getI32Value());
++          ret = new JdbcColumnAttributes(prec == null ? HiveDecimal.USER_DEFAULT_PRECISION : prec.getI32Value(),
++              scale == null ? HiveDecimal.USER_DEFAULT_SCALE : scale.getI32Value());
+           break;
+         default:
+           break;
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/DDLTask.java b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/DDLTask.java
+index 2de4a41..d32be59 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/DDLTask.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/DDLTask.java
+@@ -2870,8 +2870,8 @@ private int describeTable(Hive db, DescTableDesc descTbl) throws HiveException {
+   private static void fixDecimalColumnTypeName(List<FieldSchema> cols) {
+     for (FieldSchema col : cols) {
+       if (serdeConstants.DECIMAL_TYPE_NAME.equals(col.getType())) {
+-        col.setType(DecimalTypeInfo.getQualifiedName(HiveDecimal.DEFAULT_PRECISION,
+-            HiveDecimal.DEFAULT_SCALE));
++        col.setType(DecimalTypeInfo.getQualifiedName(HiveDecimal.USER_DEFAULT_PRECISION,
++            HiveDecimal.USER_DEFAULT_SCALE));
+       }
+     }
+   }
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/io/orc/OrcStruct.java b/src/ql/src/java/org/apache/hadoop/hive/ql/io/orc/OrcStruct.java
+index a46ef53..7195af0 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/io/orc/OrcStruct.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/io/orc/OrcStruct.java
+@@ -545,8 +545,8 @@ static ObjectInspector createObjectInspector(int columnId,
+       case DATE:
+         return PrimitiveObjectInspectorFactory.javaDateObjectInspector;
+       case DECIMAL:
+-        int precision = type.hasPrecision() ? type.getPrecision() : HiveDecimal.MAX_PRECISION;
+-        int scale =  type.hasScale()? type.getScale() : HiveDecimal.MAX_SCALE;
++        int precision = type.hasPrecision() ? type.getPrecision() : HiveDecimal.SYSTEM_DEFAULT_PRECISION;
++        int scale =  type.hasScale()? type.getScale() : HiveDecimal.SYSTEM_DEFAULT_SCALE;
+         return PrimitiveObjectInspectorFactory.getPrimitiveJavaObjectInspector(
+             TypeInfoFactory.getDecimalTypeInfo(precision, scale));
+       case STRUCT:
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/io/orc/RecordReaderImpl.java b/src/ql/src/java/org/apache/hadoop/hive/ql/io/orc/RecordReaderImpl.java
+index 796dc42..50c9afd 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/io/orc/RecordReaderImpl.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/io/orc/RecordReaderImpl.java
+@@ -1475,8 +1475,8 @@ private static TreeReader createTreeReader(Path path,
+       case DATE:
+         return new DateTreeReader(path, columnId);
+       case DECIMAL:
+-        int precision = type.hasPrecision() ? type.getPrecision() : HiveDecimal.MAX_PRECISION;
+-        int scale =  type.hasScale()? type.getScale() : HiveDecimal.MAX_SCALE;
++        int precision = type.hasPrecision() ? type.getPrecision() : HiveDecimal.SYSTEM_DEFAULT_PRECISION;
++        int scale =  type.hasScale()? type.getScale() : HiveDecimal.SYSTEM_DEFAULT_SCALE;
+         return new DecimalTreeReader(path, columnId, precision, scale);
+       case STRUCT:
+         return new StructTreeReader(path, columnId, types, included);
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/ParseUtils.java b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/ParseUtils.java
+index b79127e..91581d9 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/ParseUtils.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/ParseUtils.java
+@@ -138,8 +138,8 @@ public static DecimalTypeInfo getDecimalTypeTypeInfo(ASTNode node)
+         throw new SemanticException("Bad params for type decimal");
+       }
+ 
+-      int precision = HiveDecimal.DEFAULT_PRECISION;
+-      int scale = HiveDecimal.DEFAULT_SCALE;
++      int precision = HiveDecimal.USER_DEFAULT_PRECISION;
++      int scale = HiveDecimal.USER_DEFAULT_SCALE;
+ 
+       if (node.getChildCount() >= 1) {
+         String precStr = node.getChild(0).getText();
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDFBridge.java b/src/ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDFBridge.java
+index 4f7277b..8206edd 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDFBridge.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDFBridge.java
+@@ -185,7 +185,7 @@ public Object evaluate(DeferredObject[] arguments) throws HiveException {
+     // If the returned value is HiveDecimal, we assume maximum precision/scale.
+     if (result != null && result instanceof HiveDecimalWritable) {
+       result = HiveDecimalUtils.enforcePrecisionScale((HiveDecimalWritable) result,
+-          HiveDecimal.MAX_PRECISION, HiveDecimal.MAX_SCALE);
++          HiveDecimal.SYSTEM_DEFAULT_PRECISION, HiveDecimal.SYSTEM_DEFAULT_SCALE);
+     }
+ 
+     return result;
+diff --git a/src/ql/src/test/org/apache/hadoop/hive/ql/exec/TestFunctionRegistry.java b/src/ql/src/test/org/apache/hadoop/hive/ql/exec/TestFunctionRegistry.java
+index 9ecac2e..50613f3 100644
+--- a/src/ql/src/test/org/apache/hadoop/hive/ql/exec/TestFunctionRegistry.java
++++ b/src/ql/src/test/org/apache/hadoop/hive/ql/exec/TestFunctionRegistry.java
+@@ -208,7 +208,7 @@ public void testCommonClass() {
+     common(TypeInfoFactory.stringTypeInfo, TypeInfoFactory.decimalTypeInfo,
+            TypeInfoFactory.stringTypeInfo);
+     common(TypeInfoFactory.doubleTypeInfo, TypeInfoFactory.decimalTypeInfo,
+-           TypeInfoFactory.getDecimalTypeInfo(65, 30));
++           TypeInfoFactory.decimalTypeInfo);
+     common(TypeInfoFactory.doubleTypeInfo, TypeInfoFactory.stringTypeInfo,
+            TypeInfoFactory.stringTypeInfo);
+ 
+@@ -226,7 +226,7 @@ public void testCommonClassComparison() {
+     comparison(TypeInfoFactory.stringTypeInfo, TypeInfoFactory.decimalTypeInfo,
+                TypeInfoFactory.decimalTypeInfo);
+     comparison(TypeInfoFactory.doubleTypeInfo, TypeInfoFactory.decimalTypeInfo,
+-               TypeInfoFactory.getDecimalTypeInfo(65, 30));
++               TypeInfoFactory.decimalTypeInfo);
+     comparison(TypeInfoFactory.doubleTypeInfo, TypeInfoFactory.stringTypeInfo,
+                TypeInfoFactory.doubleTypeInfo);
+ 
+@@ -296,7 +296,7 @@ public void testCommonClassUnionAll() {
+     unionAll(TypeInfoFactory.stringTypeInfo, TypeInfoFactory.decimalTypeInfo,
+         TypeInfoFactory.decimalTypeInfo);
+     unionAll(TypeInfoFactory.doubleTypeInfo, TypeInfoFactory.decimalTypeInfo,
+-        TypeInfoFactory.getDecimalTypeInfo(65, 30));
++        TypeInfoFactory.decimalTypeInfo);
+     unionAll(TypeInfoFactory.doubleTypeInfo, TypeInfoFactory.stringTypeInfo,
+         TypeInfoFactory.stringTypeInfo);
+ 
+diff --git a/src/ql/src/test/org/apache/hadoop/hive/ql/io/orc/TestOrcFile.java b/src/ql/src/test/org/apache/hadoop/hive/ql/io/orc/TestOrcFile.java
+index 461e6d5..3258900 100644
+--- a/src/ql/src/test/org/apache/hadoop/hive/ql/io/orc/TestOrcFile.java
++++ b/src/ql/src/test/org/apache/hadoop/hive/ql/io/orc/TestOrcFile.java
+@@ -328,7 +328,7 @@ public void testReadFormat_0_11() throws Exception {
+         + "binary,string1:string,middle:struct<list:array<struct<int1:int,"
+         + "string1:string>>>,list:array<struct<int1:int,string1:string>>,"
+         + "map:map<string,struct<int1:int,string1:string>>,ts:timestamp,"
+-        + "decimal1:decimal(65,30)>", readerInspector.getTypeName());
++        + "decimal1:decimal(38,18)>", readerInspector.getTypeName());
+     List<? extends StructField> fields = readerInspector
+         .getAllStructFieldRefs();
+     BooleanObjectInspector bo = (BooleanObjectInspector) readerInspector
+@@ -936,7 +936,7 @@ public void testUnionAndTimestamp() throws Exception {
+     synchronized (TestOrcFile.class) {
+       inspector = OrcStruct.createObjectInspector(0, types);
+     }
+-    HiveDecimal maxValue = HiveDecimal.create("100000000000000000000");
++    HiveDecimal maxValue = HiveDecimal.create("10000000000000000000");
+     Writer writer = OrcFile.createWriter(testFilePath,
+                                          OrcFile.writerOptions(conf)
+                                          .inspector(inspector)
+@@ -968,7 +968,7 @@ public void testUnionAndTimestamp() throws Exception {
+     writer.addRow(row);
+     union.set((byte) 0, new IntWritable(200000));
+     row.setFieldValue(0, Timestamp.valueOf("1900-01-01 00:00:00"));
+-    value = HiveDecimal.create("100000000000000000000");
++    value = HiveDecimal.create("10000000000000000000");
+     row.setFieldValue(2, value);
+     writer.addRow(row);
+     Random rand = new Random(42);
+@@ -979,8 +979,8 @@ public void testUnionAndTimestamp() throws Exception {
+       } else {
+         union.set((byte) 1, new Text(new Integer(i*i).toString()));
+       }
+-      value = HiveDecimal.create(new BigInteger(104, rand),
+-          rand.nextInt(28));
++      value = HiveDecimal.create(new BigInteger(64, rand),
++          rand.nextInt(18));
+       row.setFieldValue(2, value);
+       if (maxValue.compareTo(value) < 0) {
+         maxValue = value;
+@@ -1036,7 +1036,7 @@ public void testUnionAndTimestamp() throws Exception {
+     row = (OrcStruct) rows.next(null);
+     assertEquals(1, rows.getRowNumber());
+     inspector = reader.getObjectInspector();
+-    assertEquals("struct<time:timestamp,union:uniontype<int,string>,decimal:decimal(65,30)>",
++    assertEquals("struct<time:timestamp,union:uniontype<int,string>,decimal:decimal(38,18)>",
+         inspector.getTypeName());
+     assertEquals(Timestamp.valueOf("2000-03-12 15:00:00"),
+         row.getFieldValue(0));
+@@ -1070,7 +1070,7 @@ public void testUnionAndTimestamp() throws Exception {
+     assertEquals(Timestamp.valueOf("1900-01-01 00:00:00"),
+         row.getFieldValue(0));
+     assertEquals(new IntWritable(200000), union.getObject());
+-    assertEquals(HiveDecimal.create("100000000000000000000"),
++    assertEquals(HiveDecimal.create("10000000000000000000"),
+                  row.getFieldValue(2));
+     rand = new Random(42);
+     for(int i=1900; i < 2200; ++i) {
+@@ -1084,8 +1084,8 @@ public void testUnionAndTimestamp() throws Exception {
+         assertEquals(1, union.getTag());
+         assertEquals(new Text(new Integer(i*i).toString()), union.getObject());
+       }
+-      assertEquals(HiveDecimal.create(new BigInteger(104, rand),
+-                                   rand.nextInt(28)), row.getFieldValue(2));
++      assertEquals(HiveDecimal.create(new BigInteger(64, rand),
++                                   rand.nextInt(18)), row.getFieldValue(2));
+     }
+     for(int i=0; i < 5000; ++i) {
+       row = (OrcStruct) rows.next(row);
+diff --git a/src/ql/src/test/org/apache/hadoop/hive/ql/parse/TestHiveDecimalParse.java b/src/ql/src/test/org/apache/hadoop/hive/ql/parse/TestHiveDecimalParse.java
+index 01e29af..7d5a414 100644
+--- a/src/ql/src/test/org/apache/hadoop/hive/ql/parse/TestHiveDecimalParse.java
++++ b/src/ql/src/test/org/apache/hadoop/hive/ql/parse/TestHiveDecimalParse.java
+@@ -61,7 +61,7 @@ public void testDecimalType3() throws ParseException {
+     int rc = driver.compile(query);
+     Assert.assertTrue("Got " + rc + ", expected not zero", rc != 0);
+     Assert.assertTrue(driver.getErrorMsg(),
+-        driver.getErrorMsg().contains("Decimal precision out of allowed range [1,65]"));
++        driver.getErrorMsg().contains("Decimal precision out of allowed range [1,38]"));
+   }
+ 
+   @Test
+@@ -72,7 +72,7 @@ public void testDecimalType4() throws ParseException {
+     int rc = driver.compile(query);
+     Assert.assertTrue("Got " + rc + ", expected not zero", rc != 0);
+     Assert.assertTrue(driver.getErrorMsg(),
+-        driver.getErrorMsg().contains("Decimal precision out of allowed range [1,65]"));
++        driver.getErrorMsg().contains("Decimal precision out of allowed range [1,38]"));
+   }
+ 
+   @Test
+@@ -83,7 +83,7 @@ public void testDecimalType5() throws ParseException {
+     int rc = driver.compile(query);
+     Assert.assertTrue("Got " + rc + ", expected not zero", rc != 0);
+     Assert.assertTrue(driver.getErrorMsg(),
+-        driver.getErrorMsg().contains("Decimal scale out of allowed range [0,30]"));
++        driver.getErrorMsg().contains("Decimal scale must be less than or equal to precision"));
+   }
+ 
+   @Test
+diff --git a/src/ql/src/test/queries/clientpositive/decimal_3.q b/src/ql/src/test/queries/clientpositive/decimal_3.q
+index d7e46a6..e4fba06 100644
+--- a/src/ql/src/test/queries/clientpositive/decimal_3.q
++++ b/src/ql/src/test/queries/clientpositive/decimal_3.q
+@@ -1,6 +1,6 @@
+ DROP TABLE IF EXISTS DECIMAL_3;
+ 
+-CREATE TABLE DECIMAL_3(key decimal(65,30), value int) 
++CREATE TABLE DECIMAL_3(key decimal(38,18), value int)
+ ROW FORMAT DELIMITED
+    FIELDS TERMINATED BY ' '
+ STORED AS TEXTFILE;
+diff --git a/src/ql/src/test/queries/clientpositive/decimal_precision.q b/src/ql/src/test/queries/clientpositive/decimal_precision.q
+index da09c6c..d46d3ce 100644
+--- a/src/ql/src/test/queries/clientpositive/decimal_precision.q
++++ b/src/ql/src/test/queries/clientpositive/decimal_precision.q
+@@ -1,6 +1,6 @@
+ DROP TABLE IF EXISTS DECIMAL_PRECISION;
+ 
+-CREATE TABLE DECIMAL_PRECISION(dec decimal(60,30)) 
++CREATE TABLE DECIMAL_PRECISION(dec decimal(38,18))
+ ROW FORMAT DELIMITED
+    FIELDS TERMINATED BY ' '
+ STORED AS TEXTFILE;
+@@ -17,11 +17,11 @@ SELECT dec, dec * dec FROM DECIMAL_PRECISION ORDER BY dec;
+ 
+ SELECT avg(dec), sum(dec) FROM DECIMAL_PRECISION;
+ 
+-SELECT dec * cast('123456789012345678901234567890.123456789' as decimal(39,9)) FROM DECIMAL_PRECISION LIMIT 1;
+-SELECT * from DECIMAL_PRECISION WHERE dec > cast('123456789012345678901234567890.123456789' as decimal(39,9)) LIMIT 1;
+-SELECT dec * 123456789012345678901234567890.123456789 FROM DECIMAL_PRECISION LIMIT 1;
++SELECT dec * cast('12345678901234567890.12345678' as decimal(38,18)) FROM DECIMAL_PRECISION LIMIT 1;
++SELECT * from DECIMAL_PRECISION WHERE dec > cast('1234567890123456789012345678.12345678' as decimal(38,18)) LIMIT 1;
++SELECT dec * 12345678901234567890.12345678 FROM DECIMAL_PRECISION LIMIT 1;
+ 
+-SELECT MIN(cast('123456789012345678901234567890.123456789' as decimal(39,9))) FROM DECIMAL_PRECISION;
+-SELECT COUNT(cast('123456789012345678901234567890.123456789' as decimal(39,9))) FROM DECIMAL_PRECISION;
++SELECT MIN(cast('12345678901234567890.12345678' as decimal(38,18))) FROM DECIMAL_PRECISION;
++SELECT COUNT(cast('12345678901234567890.12345678' as decimal(38,18))) FROM DECIMAL_PRECISION;
+ 
+ DROP TABLE DECIMAL_PRECISION;
+diff --git a/src/ql/src/test/queries/clientpositive/decimal_udf.q b/src/ql/src/test/queries/clientpositive/decimal_udf.q
+index f1ea686..6e8d892 100644
+--- a/src/ql/src/test/queries/clientpositive/decimal_udf.q
++++ b/src/ql/src/test/queries/clientpositive/decimal_udf.q
+@@ -1,6 +1,6 @@
+ DROP TABLE IF EXISTS DECIMAL_UDF;
+ 
+-CREATE TABLE DECIMAL_UDF (key decimal(65,30), value int) 
++CREATE TABLE DECIMAL_UDF (key decimal(38,18), value int)
+ ROW FORMAT DELIMITED
+    FIELDS TERMINATED BY ' '
+ STORED AS TEXTFILE;
+diff --git a/src/ql/src/test/queries/clientpositive/serde_regex.q b/src/ql/src/test/queries/clientpositive/serde_regex.q
+index b7b611a..accdb54 100644
+--- a/src/ql/src/test/queries/clientpositive/serde_regex.q
++++ b/src/ql/src/test/queries/clientpositive/serde_regex.q
+@@ -42,7 +42,7 @@ DROP TABLE serde_regex;
+ 
+ EXPLAIN
+ CREATE TABLE serde_regex1(
+-  key decimal(65,30),
++  key decimal(38,18),
+   value int)
+ ROW FORMAT SERDE 'org.apache.hadoop.hive.serde2.RegexSerDe'
+ WITH SERDEPROPERTIES (
+@@ -51,7 +51,7 @@ WITH SERDEPROPERTIES (
+ STORED AS TEXTFILE;
+ 
+ CREATE TABLE serde_regex1(
+-  key decimal(65,30),
++  key decimal(38,18),
+   value int)
+ ROW FORMAT SERDE 'org.apache.hadoop.hive.serde2.RegexSerDe'
+ WITH SERDEPROPERTIES (
+diff --git a/src/ql/src/test/results/clientnegative/invalid_cast_from_binary_1.q.out b/src/ql/src/test/results/clientnegative/invalid_cast_from_binary_1.q.out
+index bae97c3..c16de25 100644
+--- a/src/ql/src/test/results/clientnegative/invalid_cast_from_binary_1.q.out
++++ b/src/ql/src/test/results/clientnegative/invalid_cast_from_binary_1.q.out
+@@ -3,4 +3,4 @@ PREHOOK: type: CREATETABLE
+ POSTHOOK: query: create table tbl (a binary)
+ POSTHOOK: type: CREATETABLE
+ POSTHOOK: Output: default@tbl
+-FAILED: SemanticException Line 0:-1 Wrong arguments 'a': No matching method for class org.apache.hadoop.hive.ql.udf.UDFToInteger with (binary). Possible choices: _FUNC_(bigint)  _FUNC_(boolean)  _FUNC_(decimal(65,30))  _FUNC_(double)  _FUNC_(float)  _FUNC_(smallint)  _FUNC_(string)  _FUNC_(timestamp)  _FUNC_(tinyint)  _FUNC_(void)  
++FAILED: SemanticException Line 0:-1 Wrong arguments 'a': No matching method for class org.apache.hadoop.hive.ql.udf.UDFToInteger with (binary). Possible choices: _FUNC_(bigint)  _FUNC_(boolean)  _FUNC_(decimal(38,18))  _FUNC_(double)  _FUNC_(float)  _FUNC_(smallint)  _FUNC_(string)  _FUNC_(timestamp)  _FUNC_(tinyint)  _FUNC_(void)  
+diff --git a/src/ql/src/test/results/clientnegative/invalid_cast_from_binary_2.q.out b/src/ql/src/test/results/clientnegative/invalid_cast_from_binary_2.q.out
+index b036f6a..1ebd218 100644
+--- a/src/ql/src/test/results/clientnegative/invalid_cast_from_binary_2.q.out
++++ b/src/ql/src/test/results/clientnegative/invalid_cast_from_binary_2.q.out
+@@ -3,4 +3,4 @@ PREHOOK: type: CREATETABLE
+ POSTHOOK: query: create table tbl (a binary)
+ POSTHOOK: type: CREATETABLE
+ POSTHOOK: Output: default@tbl
+-FAILED: SemanticException Line 0:-1 Wrong arguments 'a': No matching method for class org.apache.hadoop.hive.ql.udf.UDFToByte with (binary). Possible choices: _FUNC_(bigint)  _FUNC_(boolean)  _FUNC_(decimal(65,30))  _FUNC_(double)  _FUNC_(float)  _FUNC_(int)  _FUNC_(smallint)  _FUNC_(string)  _FUNC_(timestamp)  _FUNC_(void)  
++FAILED: SemanticException Line 0:-1 Wrong arguments 'a': No matching method for class org.apache.hadoop.hive.ql.udf.UDFToByte with (binary). Possible choices: _FUNC_(bigint)  _FUNC_(boolean)  _FUNC_(decimal(38,18))  _FUNC_(double)  _FUNC_(float)  _FUNC_(int)  _FUNC_(smallint)  _FUNC_(string)  _FUNC_(timestamp)  _FUNC_(void)  
+diff --git a/src/ql/src/test/results/clientnegative/invalid_cast_from_binary_3.q.out b/src/ql/src/test/results/clientnegative/invalid_cast_from_binary_3.q.out
+index c2cbb0a..a6d0062 100644
+--- a/src/ql/src/test/results/clientnegative/invalid_cast_from_binary_3.q.out
++++ b/src/ql/src/test/results/clientnegative/invalid_cast_from_binary_3.q.out
+@@ -3,4 +3,4 @@ PREHOOK: type: CREATETABLE
+ POSTHOOK: query: create table tbl (a binary)
+ POSTHOOK: type: CREATETABLE
+ POSTHOOK: Output: default@tbl
+-FAILED: SemanticException Line 0:-1 Wrong arguments 'a': No matching method for class org.apache.hadoop.hive.ql.udf.UDFToShort with (binary). Possible choices: _FUNC_(bigint)  _FUNC_(boolean)  _FUNC_(decimal(65,30))  _FUNC_(double)  _FUNC_(float)  _FUNC_(int)  _FUNC_(string)  _FUNC_(timestamp)  _FUNC_(tinyint)  _FUNC_(void)  
++FAILED: SemanticException Line 0:-1 Wrong arguments 'a': No matching method for class org.apache.hadoop.hive.ql.udf.UDFToShort with (binary). Possible choices: _FUNC_(bigint)  _FUNC_(boolean)  _FUNC_(decimal(38,18))  _FUNC_(double)  _FUNC_(float)  _FUNC_(int)  _FUNC_(string)  _FUNC_(timestamp)  _FUNC_(tinyint)  _FUNC_(void)  
+diff --git a/src/ql/src/test/results/clientnegative/invalid_cast_from_binary_4.q.out b/src/ql/src/test/results/clientnegative/invalid_cast_from_binary_4.q.out
+index 60ee51e..1df4e1d 100644
+--- a/src/ql/src/test/results/clientnegative/invalid_cast_from_binary_4.q.out
++++ b/src/ql/src/test/results/clientnegative/invalid_cast_from_binary_4.q.out
+@@ -3,4 +3,4 @@ PREHOOK: type: CREATETABLE
+ POSTHOOK: query: create table tbl (a binary)
+ POSTHOOK: type: CREATETABLE
+ POSTHOOK: Output: default@tbl
+-FAILED: SemanticException Line 0:-1 Wrong arguments 'a': No matching method for class org.apache.hadoop.hive.ql.udf.UDFToLong with (binary). Possible choices: _FUNC_(bigint)  _FUNC_(boolean)  _FUNC_(decimal(65,30))  _FUNC_(double)  _FUNC_(float)  _FUNC_(int)  _FUNC_(smallint)  _FUNC_(string)  _FUNC_(timestamp)  _FUNC_(tinyint)  _FUNC_(void)  
++FAILED: SemanticException Line 0:-1 Wrong arguments 'a': No matching method for class org.apache.hadoop.hive.ql.udf.UDFToLong with (binary). Possible choices: _FUNC_(bigint)  _FUNC_(boolean)  _FUNC_(decimal(38,18))  _FUNC_(double)  _FUNC_(float)  _FUNC_(int)  _FUNC_(smallint)  _FUNC_(string)  _FUNC_(timestamp)  _FUNC_(tinyint)  _FUNC_(void)  
+diff --git a/src/ql/src/test/results/clientnegative/invalid_cast_from_binary_5.q.out b/src/ql/src/test/results/clientnegative/invalid_cast_from_binary_5.q.out
+index 2da7787..82bfc92 100644
+--- a/src/ql/src/test/results/clientnegative/invalid_cast_from_binary_5.q.out
++++ b/src/ql/src/test/results/clientnegative/invalid_cast_from_binary_5.q.out
+@@ -3,4 +3,4 @@ PREHOOK: type: CREATETABLE
+ POSTHOOK: query: create table tbl (a binary)
+ POSTHOOK: type: CREATETABLE
+ POSTHOOK: Output: default@tbl
+-FAILED: SemanticException Line 0:-1 Wrong arguments 'a': No matching method for class org.apache.hadoop.hive.ql.udf.UDFToFloat with (binary). Possible choices: _FUNC_(bigint)  _FUNC_(boolean)  _FUNC_(decimal(65,30))  _FUNC_(double)  _FUNC_(int)  _FUNC_(smallint)  _FUNC_(string)  _FUNC_(timestamp)  _FUNC_(tinyint)  _FUNC_(void)  
++FAILED: SemanticException Line 0:-1 Wrong arguments 'a': No matching method for class org.apache.hadoop.hive.ql.udf.UDFToFloat with (binary). Possible choices: _FUNC_(bigint)  _FUNC_(boolean)  _FUNC_(decimal(38,18))  _FUNC_(double)  _FUNC_(int)  _FUNC_(smallint)  _FUNC_(string)  _FUNC_(timestamp)  _FUNC_(tinyint)  _FUNC_(void)  
+diff --git a/src/ql/src/test/results/clientnegative/invalid_cast_from_binary_6.q.out b/src/ql/src/test/results/clientnegative/invalid_cast_from_binary_6.q.out
+index 4442aff..f3e1261 100644
+--- a/src/ql/src/test/results/clientnegative/invalid_cast_from_binary_6.q.out
++++ b/src/ql/src/test/results/clientnegative/invalid_cast_from_binary_6.q.out
+@@ -3,4 +3,4 @@ PREHOOK: type: CREATETABLE
+ POSTHOOK: query: create table tbl (a binary)
+ POSTHOOK: type: CREATETABLE
+ POSTHOOK: Output: default@tbl
+-FAILED: SemanticException Line 0:-1 Wrong arguments 'a': No matching method for class org.apache.hadoop.hive.ql.udf.UDFToDouble with (binary). Possible choices: _FUNC_(bigint)  _FUNC_(boolean)  _FUNC_(decimal(65,30))  _FUNC_(float)  _FUNC_(int)  _FUNC_(smallint)  _FUNC_(string)  _FUNC_(timestamp)  _FUNC_(tinyint)  _FUNC_(void)  
++FAILED: SemanticException Line 0:-1 Wrong arguments 'a': No matching method for class org.apache.hadoop.hive.ql.udf.UDFToDouble with (binary). Possible choices: _FUNC_(bigint)  _FUNC_(boolean)  _FUNC_(decimal(38,18))  _FUNC_(float)  _FUNC_(int)  _FUNC_(smallint)  _FUNC_(string)  _FUNC_(timestamp)  _FUNC_(tinyint)  _FUNC_(void)  
+diff --git a/src/ql/src/test/results/clientnegative/wrong_column_type.q.out b/src/ql/src/test/results/clientnegative/wrong_column_type.q.out
+index 600f0bb..c30fe20 100644
+--- a/src/ql/src/test/results/clientnegative/wrong_column_type.q.out
++++ b/src/ql/src/test/results/clientnegative/wrong_column_type.q.out
+@@ -3,4 +3,4 @@ PREHOOK: type: CREATETABLE
+ POSTHOOK: query: CREATE TABLE dest1(a float)
+ POSTHOOK: type: CREATETABLE
+ POSTHOOK: Output: default@dest1
+-FAILED: NoMatchingMethodException No matching method for class org.apache.hadoop.hive.ql.udf.UDFToFloat with (array<double>). Possible choices: _FUNC_(bigint)  _FUNC_(boolean)  _FUNC_(decimal(65,30))  _FUNC_(double)  _FUNC_(int)  _FUNC_(smallint)  _FUNC_(string)  _FUNC_(timestamp)  _FUNC_(tinyint)  _FUNC_(void)  
++FAILED: NoMatchingMethodException No matching method for class org.apache.hadoop.hive.ql.udf.UDFToFloat with (array<double>). Possible choices: _FUNC_(bigint)  _FUNC_(boolean)  _FUNC_(decimal(38,18))  _FUNC_(double)  _FUNC_(int)  _FUNC_(smallint)  _FUNC_(string)  _FUNC_(timestamp)  _FUNC_(tinyint)  _FUNC_(void)  
+diff --git a/src/ql/src/test/results/clientpositive/decimal_3.q.out b/src/ql/src/test/results/clientpositive/decimal_3.q.out
+index 3fc814b..30b80c8 100644
+--- a/src/ql/src/test/results/clientpositive/decimal_3.q.out
++++ b/src/ql/src/test/results/clientpositive/decimal_3.q.out
+@@ -2,12 +2,12 @@ PREHOOK: query: DROP TABLE IF EXISTS DECIMAL_3
+ PREHOOK: type: DROPTABLE
+ POSTHOOK: query: DROP TABLE IF EXISTS DECIMAL_3
+ POSTHOOK: type: DROPTABLE
+-PREHOOK: query: CREATE TABLE DECIMAL_3(key decimal(65,30), value int) 
++PREHOOK: query: CREATE TABLE DECIMAL_3(key decimal(38,18), value int)
+ ROW FORMAT DELIMITED
+    FIELDS TERMINATED BY ' '
+ STORED AS TEXTFILE
+ PREHOOK: type: CREATETABLE
+-POSTHOOK: query: CREATE TABLE DECIMAL_3(key decimal(65,30), value int) 
++POSTHOOK: query: CREATE TABLE DECIMAL_3(key decimal(38,18), value int)
+ ROW FORMAT DELIMITED
+    FIELDS TERMINATED BY ' '
+ STORED AS TEXTFILE
+@@ -47,7 +47,7 @@ NULL	0
+ 0.3	0
+ 0.33	0
+ 0.333	0
+-0.9999999999999999999999999	1
++1	1
+ 1	1
+ 1	1
+ 1.12	1
+@@ -90,7 +90,7 @@ POSTHOOK: Input: default@decimal_3
+ 1.12	1
+ 1	1
+ 1	1
+-0.9999999999999999999999999	1
++1	1
+ 0.333	0
+ 0.33	0
+ 0.3	0
+@@ -139,7 +139,7 @@ NULL	0
+ 0.3	0
+ 0.33	0
+ 0.333	0
+-0.9999999999999999999999999	1
++1	1
+ 1	1
+ 1	1
+ 1.12	1
+@@ -182,7 +182,6 @@ NULL
+ 0.3
+ 0.33
+ 0.333
+-0.9999999999999999999999999
+ 1
+ 1.12
+ 1.122
+@@ -220,8 +219,7 @@ NULL	0
+ 0.3	0
+ 0.33	0
+ 0.333	0
+-0.9999999999999999999999999	1
+-1	2
++1	3
+ 1.12	1
+ 1.122	1
+ 2	4
+@@ -246,7 +244,7 @@ POSTHOOK: Input: default@decimal_3
+ -11	-1.122
+ -1	-2.24
+ 0	0.33
+-1	5.2419999999999999999999999
++1	5.242
+ 2	4
+ 3	9.42
+ 4	3.14
+@@ -293,7 +291,11 @@ POSTHOOK: Input: default@decimal_3
+ 0.3	0	0.3	0
+ 0.33	0	0.33	0
+ 0.333	0	0.333	0
+-0.9999999999999999999999999	1	0.9999999999999999999999999	1
++1	1	1	1
++1	1	1	1
++1	1	1	1
++1	1	1	1
++1	1	1	1
+ 1	1	1	1
+ 1	1	1	1
+ 1	1	1	1
+diff --git a/src/ql/src/test/results/clientpositive/decimal_precision.q.out b/src/ql/src/test/results/clientpositive/decimal_precision.q.out
+index 8af799b..2ee3578 100644
+--- a/src/ql/src/test/results/clientpositive/decimal_precision.q.out
++++ b/src/ql/src/test/results/clientpositive/decimal_precision.q.out
+@@ -2,12 +2,12 @@ PREHOOK: query: DROP TABLE IF EXISTS DECIMAL_PRECISION
+ PREHOOK: type: DROPTABLE
+ POSTHOOK: query: DROP TABLE IF EXISTS DECIMAL_PRECISION
+ POSTHOOK: type: DROPTABLE
+-PREHOOK: query: CREATE TABLE DECIMAL_PRECISION(dec decimal(60,30)) 
++PREHOOK: query: CREATE TABLE DECIMAL_PRECISION(dec decimal(38,18))
+ ROW FORMAT DELIMITED
+    FIELDS TERMINATED BY ' '
+ STORED AS TEXTFILE
+ PREHOOK: type: CREATETABLE
+-POSTHOOK: query: CREATE TABLE DECIMAL_PRECISION(dec decimal(60,30)) 
++POSTHOOK: query: CREATE TABLE DECIMAL_PRECISION(dec decimal(38,18))
+ ROW FORMAT DELIMITED
+    FIELDS TERMINATED BY ' '
+ STORED AS TEXTFILE
+@@ -46,62 +46,62 @@ NULL
+ NULL
+ NULL
+ NULL
++NULL
++NULL
++NULL
++NULL
++NULL
++NULL
++NULL
++NULL
++NULL
++NULL
+ 0
+ 0
+ 0
+ 0
+ 0
+ 0.123456789012345
+-0.12345678901234567890123456789
++0.123456789012345679
+ 1.234567890123456
+-1.234567890123456789012345678901
+-1.234567890123456789012345678901
++1.234567890123456789
++1.234567890123456789
+ 12.34567890123456
+-12.345678901234567890123456789012
+-12.345678901234567890123456789012
++12.34567890123456789
++12.34567890123456789
+ 123.4567890123456
+-123.456789012345678901234567890123
+-123.456789012345678901234567890123
++123.456789012345678901
++123.456789012345678901
+ 1234.567890123456
+-1234.567890123456789012345678901235
+-1234.567890123456789012345678901235
++1234.567890123456789012
++1234.567890123456789012
+ 12345.67890123456
+-12345.678901234567890123456789012346
++12345.678901234567890123
+ 123456.7890123456
+-123456.789012345678901234567890123457
++123456.789012345678901235
+ 1234567.890123456
+-1234567.890123456789012345678901234568
++1234567.890123456789012346
+ 12345678.90123456
+-12345678.901234567890123456789012345678
++12345678.901234567890123457
+ 123456789.0123456
+-123456789.01234567890123456789012345678
++123456789.012345678901234568
+ 1234567890.123456
+-1234567890.1234567890123456789012345678
++1234567890.123456789012345679
+ 12345678901.23456
+-12345678901.234567890123456789012345678
++12345678901.234567890123456789
+ 123456789012.3456
+-123456789012.34567890123456789012345678
++123456789012.34567890123456789
+ 1234567890123.456
+-1234567890123.4567890123456789012345678
++1234567890123.456789012345678901
+ 12345678901234.56
+-12345678901234.567890123456789012345678
++12345678901234.567890123456789012
+ 123456789012345.6
+-123456789012345.67890123456789012345678
+-1234567890123456.7890123456789012345678
+-12345678901234567.890123456789012345678
+-123456789012345678.90123456789012345678
+-1234567890123456789.0123456789012345678
++123456789012345.678901234567890123
++1234567890123456.789012345678901235
++12345678901234567.890123456789012346
++123456789012345678.901234567890123457
++1234567890123456789.012345678901234568
+ 12345678901234567890.123456789012345678
+-123456789012345678901.23456789012345678
+-1234567890123456789012.3456789012345678
+-12345678901234567890123.456789012345678
+-123456789012345678901234.56789012345678
+-1234567890123456789012345.6789012345678
+-12345678901234567890123456.789012345678
+-123456789012345678901234567.89012345678
+-1234567890123456789012345678.9012345678
+-12345678901234567890123456789.012345678
+-123456789012345678901234567890.12345678
+ PREHOOK: query: SELECT dec, dec + 1, dec - 1 FROM DECIMAL_PRECISION ORDER BY dec
+ PREHOOK: type: QUERY
+ PREHOOK: Input: default@decimal_precision
+@@ -129,62 +129,62 @@ NULL	NULL	NULL
+ NULL	NULL	NULL
+ NULL	NULL	NULL
+ NULL	NULL	NULL
++NULL	NULL	NULL
++NULL	NULL	NULL
++NULL	NULL	NULL
++NULL	NULL	NULL
++NULL	NULL	NULL
++NULL	NULL	NULL
++NULL	NULL	NULL
++NULL	NULL	NULL
++NULL	NULL	NULL
++NULL	NULL	NULL
+ 0	1	-1
+ 0	1	-1
+ 0	1	-1
+ 0	1	-1
+ 0	1	-1
+ 0.123456789012345	1.123456789012345	-0.876543210987655
+-0.12345678901234567890123456789	1.12345678901234567890123456789	-0.87654321098765432109876543211
++0.123456789012345679	1.123456789012345679	-0.876543210987654321
+ 1.234567890123456	2.234567890123456	0.234567890123456
+-1.234567890123456789012345678901	2.234567890123456789012345678901	0.234567890123456789012345678901
+-1.234567890123456789012345678901	2.234567890123456789012345678901	0.234567890123456789012345678901
++1.234567890123456789	2.234567890123456789	0.234567890123456789
++1.234567890123456789	2.234567890123456789	0.234567890123456789
+ 12.34567890123456	13.34567890123456	11.34567890123456
+-12.345678901234567890123456789012	13.345678901234567890123456789012	11.345678901234567890123456789012
+-12.345678901234567890123456789012	13.345678901234567890123456789012	11.345678901234567890123456789012
++12.34567890123456789	13.34567890123456789	11.34567890123456789
++12.34567890123456789	13.34567890123456789	11.34567890123456789
+ 123.4567890123456	124.4567890123456	122.4567890123456
+-123.456789012345678901234567890123	124.456789012345678901234567890123	122.456789012345678901234567890123
+-123.456789012345678901234567890123	124.456789012345678901234567890123	122.456789012345678901234567890123
++123.456789012345678901	124.456789012345678901	122.456789012345678901
++123.456789012345678901	124.456789012345678901	122.456789012345678901
+ 1234.567890123456	1235.567890123456	1233.567890123456
+-1234.567890123456789012345678901235	1235.567890123456789012345678901235	1233.567890123456789012345678901235
+-1234.567890123456789012345678901235	1235.567890123456789012345678901235	1233.567890123456789012345678901235
++1234.567890123456789012	1235.567890123456789012	1233.567890123456789012
++1234.567890123456789012	1235.567890123456789012	1233.567890123456789012
+ 12345.67890123456	12346.67890123456	12344.67890123456
+-12345.678901234567890123456789012346	12346.678901234567890123456789012346	12344.678901234567890123456789012346
++12345.678901234567890123	12346.678901234567890123	12344.678901234567890123
+ 123456.7890123456	123457.7890123456	123455.7890123456
+-123456.789012345678901234567890123457	123457.789012345678901234567890123457	123455.789012345678901234567890123457
++123456.789012345678901235	123457.789012345678901235	123455.789012345678901235
+ 1234567.890123456	1234568.890123456	1234566.890123456
+-1234567.890123456789012345678901234568	1234568.890123456789012345678901234568	1234566.890123456789012345678901234568
++1234567.890123456789012346	1234568.890123456789012346	1234566.890123456789012346
+ 12345678.90123456	12345679.90123456	12345677.90123456
+-12345678.901234567890123456789012345678	12345679.901234567890123456789012345678	12345677.901234567890123456789012345678
++12345678.901234567890123457	12345679.901234567890123457	12345677.901234567890123457
+ 123456789.0123456	123456790.0123456	123456788.0123456
+-123456789.01234567890123456789012345678	123456790.01234567890123456789012345678	123456788.01234567890123456789012345678
++123456789.012345678901234568	123456790.012345678901234568	123456788.012345678901234568
+ 1234567890.123456	1234567891.123456	1234567889.123456
+-1234567890.1234567890123456789012345678	1234567891.1234567890123456789012345678	1234567889.1234567890123456789012345678
++1234567890.123456789012345679	1234567891.123456789012345679	1234567889.123456789012345679
+ 12345678901.23456	12345678902.23456	12345678900.23456
+-12345678901.234567890123456789012345678	12345678902.234567890123456789012345678	12345678900.234567890123456789012345678
++12345678901.234567890123456789	12345678902.234567890123456789	12345678900.234567890123456789
+ 123456789012.3456	123456789013.3456	123456789011.3456
+-123456789012.34567890123456789012345678	123456789013.34567890123456789012345678	123456789011.34567890123456789012345678
++123456789012.34567890123456789	123456789013.34567890123456789	123456789011.34567890123456789
+ 1234567890123.456	1234567890124.456	1234567890122.456
+-1234567890123.4567890123456789012345678	1234567890124.4567890123456789012345678	1234567890122.4567890123456789012345678
++1234567890123.456789012345678901	1234567890124.456789012345678901	1234567890122.456789012345678901
+ 12345678901234.56	12345678901235.56	12345678901233.56
+-12345678901234.567890123456789012345678	12345678901235.567890123456789012345678	12345678901233.567890123456789012345678
++12345678901234.567890123456789012	12345678901235.567890123456789012	12345678901233.567890123456789012
+ 123456789012345.6	123456789012346.6	123456789012344.6
+-123456789012345.67890123456789012345678	123456789012346.67890123456789012345678	123456789012344.67890123456789012345678
+-1234567890123456.7890123456789012345678	1234567890123457.7890123456789012345678	1234567890123455.7890123456789012345678
+-12345678901234567.890123456789012345678	12345678901234568.890123456789012345678	12345678901234566.890123456789012345678
+-123456789012345678.90123456789012345678	123456789012345679.90123456789012345678	123456789012345677.90123456789012345678
+-1234567890123456789.0123456789012345678	1234567890123456790.0123456789012345678	1234567890123456788.0123456789012345678
++123456789012345.678901234567890123	123456789012346.678901234567890123	123456789012344.678901234567890123
++1234567890123456.789012345678901235	1234567890123457.789012345678901235	1234567890123455.789012345678901235
++12345678901234567.890123456789012346	12345678901234568.890123456789012346	12345678901234566.890123456789012346
++123456789012345678.901234567890123457	123456789012345679.901234567890123457	123456789012345677.901234567890123457
++1234567890123456789.012345678901234568	1234567890123456790.012345678901234568	1234567890123456788.012345678901234568
+ 12345678901234567890.123456789012345678	12345678901234567891.123456789012345678	12345678901234567889.123456789012345678
+-123456789012345678901.23456789012345678	123456789012345678902.23456789012345678	123456789012345678900.23456789012345678
+-1234567890123456789012.3456789012345678	1234567890123456789013.3456789012345678	1234567890123456789011.3456789012345678
+-12345678901234567890123.456789012345678	12345678901234567890124.456789012345678	12345678901234567890122.456789012345678
+-123456789012345678901234.56789012345678	123456789012345678901235.56789012345678	123456789012345678901233.56789012345678
+-1234567890123456789012345.6789012345678	1234567890123456789012346.6789012345678	1234567890123456789012344.6789012345678
+-12345678901234567890123456.789012345678	12345678901234567890123457.789012345678	12345678901234567890123455.789012345678
+-123456789012345678901234567.89012345678	123456789012345678901234568.89012345678	123456789012345678901234566.89012345678
+-1234567890123456789012345678.9012345678	1234567890123456789012345679.9012345678	1234567890123456789012345677.9012345678
+-12345678901234567890123456789.012345678	12345678901234567890123456790.012345678	12345678901234567890123456788.012345678
+-123456789012345678901234567890.12345678	123456789012345678901234567891.12345678	123456789012345678901234567889.12345678
+ PREHOOK: query: SELECT dec, dec * 2, dec / 3  FROM DECIMAL_PRECISION ORDER BY dec
+ PREHOOK: type: QUERY
+ PREHOOK: Input: default@decimal_precision
+@@ -212,62 +212,62 @@ NULL	NULL	NULL
+ NULL	NULL	NULL
+ NULL	NULL	NULL
+ NULL	NULL	NULL
++NULL	NULL	NULL
++NULL	NULL	NULL
++NULL	NULL	NULL
++NULL	NULL	NULL
++NULL	NULL	NULL
++NULL	NULL	NULL
++NULL	NULL	NULL
++NULL	NULL	NULL
++NULL	NULL	NULL
++NULL	NULL	NULL
+ 0	0	0
+ 0	0	0
+ 0	0	0
+ 0	0	0
+ 0	0	0
+ 0.123456789012345	0.24691357802469	0.041152263004115
+-0.12345678901234567890123456789	0.24691357802469135780246913578	0.04115226300411522630041152263
++0.123456789012345679	0.246913578024691358	0.04115226300411522633
+ 1.234567890123456	2.469135780246912	0.411522630041152
+-1.234567890123456789012345678901	2.469135780246913578024691357802	0.4115226300411522630041152263
+-1.234567890123456789012345678901	2.469135780246913578024691357802	0.4115226300411522630041152263
++1.234567890123456789	2.469135780246913578	0.411522630041152263
++1.234567890123456789	2.469135780246913578	0.411522630041152263
+ 12.34567890123456	24.69135780246912	4.11522630041152
+-12.345678901234567890123456789012	24.691357802469135780246913578024	4.115226300411522630041152263004
+-12.345678901234567890123456789012	24.691357802469135780246913578024	4.115226300411522630041152263004
++12.34567890123456789	24.69135780246913578	4.11522630041152263
++12.34567890123456789	24.69135780246913578	4.11522630041152263
+ 123.4567890123456	246.9135780246912	41.1522630041152
+-123.456789012345678901234567890123	246.913578024691357802469135780246	41.152263004115226300411522630041
+-123.456789012345678901234567890123	246.913578024691357802469135780246	41.152263004115226300411522630041
++123.456789012345678901	246.913578024691357802	41.15226300411522630033
++123.456789012345678901	246.913578024691357802	41.15226300411522630033
+ 1234.567890123456	2469.135780246912	411.522630041152
+-1234.567890123456789012345678901235	2469.13578024691357802469135780247	411.522630041152263004115226300412
+-1234.567890123456789012345678901235	2469.13578024691357802469135780247	411.522630041152263004115226300412
++1234.567890123456789012	2469.135780246913578024	411.522630041152263004
++1234.567890123456789012	2469.135780246913578024	411.522630041152263004
+ 12345.67890123456	24691.35780246912	4115.22630041152
+-12345.678901234567890123456789012346	24691.357802469135780246913578024692	4115.226300411522630041152263004115
++12345.678901234567890123	24691.357802469135780246	4115.226300411522630041
+ 123456.7890123456	246913.5780246912	41152.2630041152
+-123456.789012345678901234567890123457	246913.578024691357802469135780246914	41152.263004115226300411522630041152
++123456.789012345678901235	246913.57802469135780247	41152.26300411522630041167
+ 1234567.890123456	2469135.780246912	411522.630041152
+-1234567.890123456789012345678901234568	2469135.780246913578024691357802469136	411522.630041152263004115226300411523
++1234567.890123456789012346	2469135.780246913578024692	411522.63004115226300411533
+ 12345678.90123456	24691357.80246912	4115226.30041152
+-12345678.901234567890123456789012345678	24691357.802469135780246913578024691356	4115226.300411522630041152263004115226
++12345678.901234567890123457	24691357.802469135780246914	4115226.30041152263004115233
+ 123456789.0123456	246913578.0246912	41152263.0041152
+-123456789.01234567890123456789012345678	246913578.02469135780246913578024691356	41152263.00411522630041152263004115226
++123456789.012345678901234568	246913578.024691357802469136	41152263.00411522630041152267
+ 1234567890.123456	2469135780.246912	411522630.041152
+-1234567890.1234567890123456789012345678	2469135780.2469135780246913578024691356	411522630.0411522630041152263004115226
++1234567890.123456789012345679	2469135780.246913578024691358	411522630.04115226300411522633
+ 12345678901.23456	24691357802.46912	4115226300.41152
+-12345678901.234567890123456789012345678	24691357802.469135780246913578024691356	4115226300.411522630041152263004115226
++12345678901.234567890123456789	24691357802.469135780246913578	4115226300.411522630041152263
+ 123456789012.3456	246913578024.6912	41152263004.1152
+-123456789012.34567890123456789012345678	246913578024.69135780246913578024691356	41152263004.11522630041152263004115226
++123456789012.34567890123456789	246913578024.69135780246913578	41152263004.11522630041152263
+ 1234567890123.456	2469135780246.912	411522630041.152
+-1234567890123.4567890123456789012345678	2469135780246.9135780246913578024691356	411522630041.1522630041152263004115226
++1234567890123.456789012345678901	2469135780246.913578024691357802	411522630041.15226300411522630033
+ 12345678901234.56	24691357802469.12	4115226300411.52
+-12345678901234.567890123456789012345678	24691357802469.135780246913578024691356	4115226300411.522630041152263004115226
++12345678901234.567890123456789012	24691357802469.135780246913578024	4115226300411.522630041152263004
+ 123456789012345.6	246913578024691.2	41152263004115.2
+-123456789012345.67890123456789012345678	246913578024691.35780246913578024691356	41152263004115.22630041152263004115226
+-1234567890123456.7890123456789012345678	2469135780246913.5780246913578024691356	411522630041152.2630041152263004115226
+-12345678901234567.890123456789012345678	24691357802469135.780246913578024691356	4115226300411522.630041152263004115226
+-123456789012345678.90123456789012345678	246913578024691357.80246913578024691356	41152263004115226.30041152263004115226
+-1234567890123456789.0123456789012345678	2469135780246913578.0246913578024691356	411522630041152263.0041152263004115226
+-12345678901234567890.123456789012345678	24691357802469135780.246913578024691356	4115226300411522630.041152263004115226
+-123456789012345678901.23456789012345678	246913578024691357802.46913578024691356	41152263004115226300.41152263004115226
+-1234567890123456789012.3456789012345678	2469135780246913578024.6913578024691356	411522630041152263004.1152263004115226
+-12345678901234567890123.456789012345678	24691357802469135780246.913578024691356	4115226300411522630041.152263004115226
+-123456789012345678901234.56789012345678	246913578024691357802469.13578024691356	41152263004115226300411.52263004115226
+-1234567890123456789012345.6789012345678	2469135780246913578024691.3578024691356	411522630041152263004115.2263004115226
+-12345678901234567890123456.789012345678	24691357802469135780246913.578024691356	4115226300411522630041152.263004115226
+-123456789012345678901234567.89012345678	246913578024691357802469135.78024691356	41152263004115226300411522.63004115226
+-1234567890123456789012345678.9012345678	2469135780246913578024691357.8024691356	411522630041152263004115226.3004115226
+-12345678901234567890123456789.012345678	24691357802469135780246913578.024691356	4115226300411522630041152263.004115226
+-123456789012345678901234567890.12345678	246913578024691357802469135780.24691356	41152263004115226300411522630.04115226
++123456789012345.678901234567890123	246913578024691.357802469135780246	41152263004115.226300411522630041
++1234567890123456.789012345678901235	2469135780246913.57802469135780247	411522630041152.26300411522630041167
++12345678901234567.890123456789012346	24691357802469135.780246913578024692	4115226300411522.63004115226300411533
++123456789012345678.901234567890123457	246913578024691357.802469135780246914	41152263004115226.30041152263004115233
++1234567890123456789.012345678901234568	2469135780246913578.024691357802469136	NULL
++12345678901234567890.123456789012345678	24691357802469135780.246913578024691356	NULL
+ PREHOOK: query: SELECT dec, dec / 9 FROM DECIMAL_PRECISION ORDER BY dec
+ PREHOOK: type: QUERY
+ PREHOOK: Input: default@decimal_precision
+@@ -295,62 +295,62 @@ NULL	NULL
+ NULL	NULL
+ NULL	NULL
+ NULL	NULL
++NULL	NULL
++NULL	NULL
++NULL	NULL
++NULL	NULL
++NULL	NULL
++NULL	NULL
++NULL	NULL
++NULL	NULL
++NULL	NULL
++NULL	NULL
+ 0	0
+ 0	0
+ 0	0
+ 0	0
+ 0	0
+-0.123456789012345	0.013717421001371666666666666667
+-0.12345678901234567890123456789	0.01371742100137174210013717421
+-1.234567890123456	0.137174210013717333333333333333
+-1.234567890123456789012345678901	0.1371742100137174210013717421
+-1.234567890123456789012345678901	0.1371742100137174210013717421
+-12.34567890123456	1.371742100137173333333333333333
+-12.345678901234567890123456789012	1.371742100137174210013717421001
+-12.345678901234567890123456789012	1.371742100137174210013717421001
+-123.4567890123456	13.717421001371733333333333333333
+-123.456789012345678901234567890123	13.717421001371742100137174210014
+-123.456789012345678901234567890123	13.717421001371742100137174210014
+-1234.567890123456	137.174210013717333333333333333333
+-1234.567890123456789012345678901235	137.174210013717421001371742100137
+-1234.567890123456789012345678901235	137.174210013717421001371742100137
+-12345.67890123456	1371.742100137173333333333333333333
+-12345.678901234567890123456789012346	1371.742100137174210013717421001372
+-123456.7890123456	13717.421001371733333333333333333333
+-123456.789012345678901234567890123457	13717.421001371742100137174210013717
+-1234567.890123456	137174.210013717333333333333333333333
+-1234567.890123456789012345678901234568	137174.210013717421001371742100137174
+-12345678.90123456	1371742.100137173333333333333333333333
+-12345678.901234567890123456789012345678	1371742.100137174210013717421001371742
+-123456789.0123456	13717421.001371733333333333333333333333
+-123456789.01234567890123456789012345678	13717421.00137174210013717421001371742
+-1234567890.123456	137174210.013717333333333333333333333333
+-1234567890.1234567890123456789012345678	137174210.0137174210013717421001371742
+-12345678901.23456	1371742100.137173333333333333333333333333
+-12345678901.234567890123456789012345678	1371742100.137174210013717421001371742
+-123456789012.3456	13717421001.371733333333333333333333333333
+-123456789012.34567890123456789012345678	13717421001.37174210013717421001371742
+-1234567890123.456	137174210013.717333333333333333333333333333
+-1234567890123.4567890123456789012345678	137174210013.7174210013717421001371742
+-12345678901234.56	1371742100137.173333333333333333333333333333
+-12345678901234.567890123456789012345678	1371742100137.174210013717421001371742
+-123456789012345.6	13717421001371.733333333333333333333333333333
+-123456789012345.67890123456789012345678	13717421001371.74210013717421001371742
+-1234567890123456.7890123456789012345678	137174210013717.4210013717421001371742
+-12345678901234567.890123456789012345678	1371742100137174.210013717421001371742
+-123456789012345678.90123456789012345678	13717421001371742.10013717421001371742
+-1234567890123456789.0123456789012345678	137174210013717421.0013717421001371742
+-12345678901234567890.123456789012345678	1371742100137174210.013717421001371742
+-123456789012345678901.23456789012345678	13717421001371742100.13717421001371742
+-1234567890123456789012.3456789012345678	137174210013717421001.3717421001371742
+-12345678901234567890123.456789012345678	1371742100137174210013.717421001371742
+-123456789012345678901234.56789012345678	13717421001371742100137.17421001371742
+-1234567890123456789012345.6789012345678	137174210013717421001371.7421001371742
+-12345678901234567890123456.789012345678	1371742100137174210013717.421001371742
+-123456789012345678901234567.89012345678	13717421001371742100137174.21001371742
+-1234567890123456789012345678.9012345678	137174210013717421001371742.1001371742
+-12345678901234567890123456789.012345678	1371742100137174210013717421.001371742
+-123456789012345678901234567890.12345678	13717421001371742100137174210.01371742
++0.123456789012345	0.01371742100137166667
++0.123456789012345679	0.01371742100137174211
++1.234567890123456	0.13717421001371733333
++1.234567890123456789	0.137174210013717421
++1.234567890123456789	0.137174210013717421
++12.34567890123456	1.37174210013717333333
++12.34567890123456789	1.37174210013717421
++12.34567890123456789	1.37174210013717421
++123.4567890123456	13.71742100137173333333
++123.456789012345678901	13.71742100137174210011
++123.456789012345678901	13.71742100137174210011
++1234.567890123456	137.17421001371733333333
++1234.567890123456789012	137.17421001371742100133
++1234.567890123456789012	137.17421001371742100133
++12345.67890123456	1371.74210013717333333333
++12345.678901234567890123	1371.74210013717421001367
++123456.7890123456	13717.42100137173333333333
++123456.789012345678901235	13717.42100137174210013722
++1234567.890123456	137174.21001371733333333333
++1234567.890123456789012346	137174.21001371742100137178
++12345678.90123456	1371742.10013717333333333333
++12345678.901234567890123457	1371742.10013717421001371744
++123456789.0123456	13717421.00137173333333333333
++123456789.012345678901234568	13717421.00137174210013717422
++1234567890.123456	137174210.01371733333333333333
++1234567890.123456789012345679	137174210.01371742100137174211
++12345678901.23456	1371742100.13717333333333333333
++12345678901.234567890123456789	1371742100.137174210013717421
++123456789012.3456	13717421001.37173333333333333333
++123456789012.34567890123456789	13717421001.37174210013717421
++1234567890123.456	137174210013.71733333333333333333
++1234567890123.456789012345678901	137174210013.71742100137174210011
++12345678901234.56	1371742100137.17333333333333333333
++12345678901234.567890123456789012	1371742100137.17421001371742100133
++123456789012345.6	13717421001371.73333333333333333333
++123456789012345.678901234567890123	13717421001371.74210013717421001367
++1234567890123456.789012345678901235	137174210013717.42100137174210013722
++12345678901234567.890123456789012346	1371742100137174.21001371742100137178
++123456789012345678.901234567890123457	13717421001371742.10013717421001371744
++1234567890123456789.012345678901234568	NULL
++12345678901234567890.123456789012345678	NULL
+ PREHOOK: query: SELECT dec, dec / 27 FROM DECIMAL_PRECISION ORDER BY dec
+ PREHOOK: type: QUERY
+ PREHOOK: Input: default@decimal_precision
+@@ -378,62 +378,62 @@ NULL	NULL
+ NULL	NULL
+ NULL	NULL
+ NULL	NULL
++NULL	NULL
++NULL	NULL
++NULL	NULL
++NULL	NULL
++NULL	NULL
++NULL	NULL
++NULL	NULL
++NULL	NULL
++NULL	NULL
++NULL	NULL
+ 0	0
+ 0	0
+ 0	0
+ 0	0
+ 0	0
+-0.123456789012345	0.004572473667123888888888888889
+-0.12345678901234567890123456789	0.00457247366712391403337905807
+-1.234567890123456	0.045724736671239111111111111111
+-1.234567890123456789012345678901	0.0457247366712391403337905807
+-1.234567890123456789012345678901	0.0457247366712391403337905807
+-12.34567890123456	0.457247366712391111111111111111
+-12.345678901234567890123456789012	0.457247366712391403337905807
+-12.345678901234567890123456789012	0.457247366712391403337905807
+-123.4567890123456	4.572473667123911111111111111111
+-123.456789012345678901234567890123	4.572473667123914033379058070005
+-123.456789012345678901234567890123	4.572473667123914033379058070005
+-1234.567890123456	45.724736671239111111111111111111
+-1234.567890123456789012345678901235	45.724736671239140333790580700046
+-1234.567890123456789012345678901235	45.724736671239140333790580700046
+-12345.67890123456	457.247366712391111111111111111111
+-12345.678901234567890123456789012346	457.247366712391403337905807000457
+-123456.7890123456	4572.473667123911111111111111111111
+-123456.789012345678901234567890123457	4572.473667123914033379058070004572
+-1234567.890123456	45724.736671239111111111111111111111
+-1234567.890123456789012345678901234568	45724.736671239140333790580700045725
+-12345678.90123456	457247.366712391111111111111111111111
+-12345678.901234567890123456789012345678	457247.366712391403337905807000457247
+-123456789.0123456	4572473.667123911111111111111111111111
+-123456789.01234567890123456789012345678	4572473.667123914033379058070004572473
+-1234567890.123456	45724736.671239111111111111111111111111
+-1234567890.1234567890123456789012345678	45724736.671239140333790580700045724733
+-12345678901.23456	457247366.712391111111111111111111111111
+-12345678901.234567890123456789012345678	457247366.712391403337905807000457247333
+-123456789012.3456	4572473667.123911111111111111111111111111
+-123456789012.34567890123456789012345678	4572473667.123914033379058070004572473333
+-1234567890123.456	45724736671.239111111111111111111111111111
+-1234567890123.4567890123456789012345678	45724736671.239140333790580700045724733333
+-12345678901234.56	457247366712.391111111111111111111111111111
+-12345678901234.567890123456789012345678	457247366712.391403337905807000457247333333
+-123456789012345.6	4572473667123.911111111111111111111111111111
+-123456789012345.67890123456789012345678	4572473667123.914033379058070004572473333333
+-1234567890123456.7890123456789012345678	45724736671239.140333790580700045724733333333
+-12345678901234567.890123456789012345678	457247366712391.403337905807000457247333333333
+-123456789012345678.90123456789012345678	4572473667123914.033379058070004572473333333333
+-1234567890123456789.0123456789012345678	45724736671239140.333790580700045724733333333333
+-12345678901234567890.123456789012345678	457247366712391403.337905807000457247333333333333
+-123456789012345678901.23456789012345678	4572473667123914033.379058070004572473333333333333
+-1234567890123456789012.3456789012345678	45724736671239140333.790580700045724733333333333333
+-12345678901234567890123.456789012345678	457247366712391403337.905807000457247333333333333333
+-123456789012345678901234.56789012345678	4572473667123914033379.058070004572473333333333333333
+-1234567890123456789012345.6789012345678	45724736671239140333790.580700045724733333333333333333
+-12345678901234567890123456.789012345678	457247366712391403337905.807000457247333333333333333333
+-123456789012345678901234567.89012345678	4572473667123914033379058.070004572473333333333333333333
+-1234567890123456789012345678.9012345678	45724736671239140333790580.700045724733333333333333333333
+-12345678901234567890123456789.012345678	457247366712391403337905807.000457247333333333333333333333
+-123456789012345678901234567890.12345678	4572473667123914033379058070.004572473333333333333333333333
++0.123456789012345	0.004572473667123888889
++0.123456789012345679	0.004572473667123914037
++1.234567890123456	0.045724736671239111111
++1.234567890123456789	0.045724736671239140333
++1.234567890123456789	0.045724736671239140333
++12.34567890123456	0.457247366712391111111
++12.34567890123456789	0.457247366712391403333
++12.34567890123456789	0.457247366712391403333
++123.4567890123456	4.572473667123911111111
++123.456789012345678901	4.57247366712391403337
++123.456789012345678901	4.57247366712391403337
++1234.567890123456	45.724736671239111111111
++1234.567890123456789012	45.724736671239140333778
++1234.567890123456789012	45.724736671239140333778
++12345.67890123456	457.247366712391111111111
++12345.678901234567890123	457.247366712391403337889
++123456.7890123456	4572.473667123911111111111
++123456.789012345678901235	4572.473667123914033379074
++1234567.890123456	45724.736671239111111111111
++1234567.890123456789012346	45724.736671239140333790593
++12345678.90123456	457247.366712391111111111111
++12345678.901234567890123457	457247.366712391403337905815
++123456789.0123456	4572473.667123911111111111111
++123456789.012345678901234568	4572473.667123914033379058074
++1234567890.123456	45724736.671239111111111111111
++1234567890.123456789012345679	45724736.671239140333790580704
++12345678901.23456	457247366.712391111111111111111
++12345678901.234567890123456789	457247366.712391403337905807
++123456789012.3456	4572473667.123911111111111111111
++123456789012.34567890123456789	4572473667.12391403337905807
++1234567890123.456	45724736671.239111111111111111111
++1234567890123.456789012345678901	45724736671.239140333790580700037
++12345678901234.56	457247366712.391111111111111111111
++12345678901234.567890123456789012	457247366712.391403337905807000444
++123456789012345.6	4572473667123.911111111111111111111
++123456789012345.678901234567890123	4572473667123.914033379058070004556
++1234567890123456.789012345678901235	45724736671239.140333790580700045741
++12345678901234567.890123456789012346	457247366712391.403337905807000457259
++123456789012345678.901234567890123457	NULL
++1234567890123456789.012345678901234568	NULL
++12345678901234567890.123456789012345678	NULL
+ PREHOOK: query: SELECT dec, dec * dec FROM DECIMAL_PRECISION ORDER BY dec
+ PREHOOK: type: QUERY
+ PREHOOK: Input: default@decimal_precision
+@@ -461,62 +461,62 @@ NULL	NULL
+ NULL	NULL
+ NULL	NULL
+ NULL	NULL
++NULL	NULL
++NULL	NULL
++NULL	NULL
++NULL	NULL
++NULL	NULL
++NULL	NULL
++NULL	NULL
++NULL	NULL
++NULL	NULL
++NULL	NULL
+ 0	0
+ 0	0
+ 0	0
+ 0	0
+ 0	0
+ 0.123456789012345	0.015241578753238669120562399025
+-0.12345678901234567890123456789	NULL
++0.123456789012345679	0.015241578753238836774881877789971041
+ 1.234567890123456	1.524157875323881726870921383936
+-1.234567890123456789012345678901	NULL
+-1.234567890123456789012345678901	NULL
+-12.34567890123456	152.4157875323881726870921383936
+-12.345678901234567890123456789012	NULL
+-12.345678901234567890123456789012	NULL
+-123.4567890123456	15241.57875323881726870921383936
+-123.456789012345678901234567890123	NULL
+-123.456789012345678901234567890123	NULL
+-1234.567890123456	1524157.875323881726870921383936
+-1234.567890123456789012345678901235	NULL
+-1234.567890123456789012345678901235	NULL
+-12345.67890123456	152415787.5323881726870921383936
+-12345.678901234567890123456789012346	NULL
+-123456.7890123456	15241578753.23881726870921383936
+-123456.789012345678901234567890123457	NULL
+-1234567.890123456	1524157875323.881726870921383936
+-1234567.890123456789012345678901234568	NULL
+-12345678.90123456	152415787532388.1726870921383936
+-12345678.901234567890123456789012345678	NULL
+-123456789.0123456	15241578753238817.26870921383936
+-123456789.01234567890123456789012345678	NULL
+-1234567890.123456	1524157875323881726.870921383936
+-1234567890.1234567890123456789012345678	NULL
+-12345678901.23456	152415787532388172687.0921383936
+-12345678901.234567890123456789012345678	NULL
+-123456789012.3456	15241578753238817268709.21383936
+-123456789012.34567890123456789012345678	NULL
+-1234567890123.456	1524157875323881726870921.383936
+-1234567890123.4567890123456789012345678	NULL
+-12345678901234.56	152415787532388172687092138.3936
+-12345678901234.567890123456789012345678	NULL
+-123456789012345.6	15241578753238817268709213839.36
+-123456789012345.67890123456789012345678	NULL
+-1234567890123456.7890123456789012345678	NULL
+-12345678901234567.890123456789012345678	NULL
+-123456789012345678.90123456789012345678	NULL
+-1234567890123456789.0123456789012345678	NULL
++1.234567890123456789	1.524157875323883675019051998750190521
++1.234567890123456789	1.524157875323883675019051998750190521
++12.34567890123456	NULL
++12.34567890123456789	NULL
++12.34567890123456789	NULL
++123.4567890123456	NULL
++123.456789012345678901	NULL
++123.456789012345678901	NULL
++1234.567890123456	NULL
++1234.567890123456789012	NULL
++1234.567890123456789012	NULL
++12345.67890123456	NULL
++12345.678901234567890123	NULL
++123456.7890123456	NULL
++123456.789012345678901235	NULL
++1234567.890123456	NULL
++1234567.890123456789012346	NULL
++12345678.90123456	NULL
++12345678.901234567890123457	NULL
++123456789.0123456	NULL
++123456789.012345678901234568	NULL
++1234567890.123456	NULL
++1234567890.123456789012345679	NULL
++12345678901.23456	NULL
++12345678901.234567890123456789	NULL
++123456789012.3456	NULL
++123456789012.34567890123456789	NULL
++1234567890123.456	NULL
++1234567890123.456789012345678901	NULL
++12345678901234.56	NULL
++12345678901234.567890123456789012	NULL
++123456789012345.6	NULL
++123456789012345.678901234567890123	NULL
++1234567890123456.789012345678901235	NULL
++12345678901234567.890123456789012346	NULL
++123456789012345678.901234567890123457	NULL
++1234567890123456789.012345678901234568	NULL
+ 12345678901234567890.123456789012345678	NULL
+-123456789012345678901.23456789012345678	NULL
+-1234567890123456789012.3456789012345678	NULL
+-12345678901234567890123.456789012345678	NULL
+-123456789012345678901234.56789012345678	NULL
+-1234567890123456789012345.6789012345678	NULL
+-12345678901234567890123456.789012345678	NULL
+-123456789012345678901234567.89012345678	NULL
+-1234567890123456789012345678.9012345678	NULL
+-12345678901234567890123456789.012345678	NULL
+-123456789012345678901234567890.12345678	NULL
+ PREHOOK: query: SELECT avg(dec), sum(dec) FROM DECIMAL_PRECISION
+ PREHOOK: type: QUERY
+ PREHOOK: Input: default@decimal_precision
+@@ -525,47 +525,47 @@ POSTHOOK: query: SELECT avg(dec), sum(dec) FROM DECIMAL_PRECISION
+ POSTHOOK: type: QUERY
+ POSTHOOK: Input: default@decimal_precision
+ #### A masked pattern was here ####
+-2449539464530670681706817092.661571403901626461618141287233	137174210013717558175581757189.047998618491081850615912085061
+-PREHOOK: query: SELECT dec * cast('123456789012345678901234567890.123456789' as decimal(39,9)) FROM DECIMAL_PRECISION LIMIT 1
++298207786425690373.674956491924017375	13717558175581757189.04799862850479927
++PREHOOK: query: SELECT dec * cast('12345678901234567890.12345678' as decimal(38,18)) FROM DECIMAL_PRECISION LIMIT 1
+ PREHOOK: type: QUERY
+ PREHOOK: Input: default@decimal_precision
+ #### A masked pattern was here ####
+-POSTHOOK: query: SELECT dec * cast('123456789012345678901234567890.123456789' as decimal(39,9)) FROM DECIMAL_PRECISION LIMIT 1
++POSTHOOK: query: SELECT dec * cast('12345678901234567890.12345678' as decimal(38,18)) FROM DECIMAL_PRECISION LIMIT 1
+ POSTHOOK: type: QUERY
+ POSTHOOK: Input: default@decimal_precision
+ #### A masked pattern was here ####
+ NULL
+-PREHOOK: query: SELECT * from DECIMAL_PRECISION WHERE dec > cast('123456789012345678901234567890.123456789' as decimal(39,9)) LIMIT 1
++PREHOOK: query: SELECT * from DECIMAL_PRECISION WHERE dec > cast('1234567890123456789012345678.12345678' as decimal(38,18)) LIMIT 1
+ PREHOOK: type: QUERY
+ PREHOOK: Input: default@decimal_precision
+ #### A masked pattern was here ####
+-POSTHOOK: query: SELECT * from DECIMAL_PRECISION WHERE dec > cast('123456789012345678901234567890.123456789' as decimal(39,9)) LIMIT 1
++POSTHOOK: query: SELECT * from DECIMAL_PRECISION WHERE dec > cast('1234567890123456789012345678.12345678' as decimal(38,18)) LIMIT 1
+ POSTHOOK: type: QUERY
+ POSTHOOK: Input: default@decimal_precision
+ #### A masked pattern was here ####
+-PREHOOK: query: SELECT dec * 123456789012345678901234567890.123456789 FROM DECIMAL_PRECISION LIMIT 1
++PREHOOK: query: SELECT dec * 12345678901234567890.12345678 FROM DECIMAL_PRECISION LIMIT 1
+ PREHOOK: type: QUERY
+ PREHOOK: Input: default@decimal_precision
+ #### A masked pattern was here ####
+-POSTHOOK: query: SELECT dec * 123456789012345678901234567890.123456789 FROM DECIMAL_PRECISION LIMIT 1
++POSTHOOK: query: SELECT dec * 12345678901234567890.12345678 FROM DECIMAL_PRECISION LIMIT 1
+ POSTHOOK: type: QUERY
+ POSTHOOK: Input: default@decimal_precision
+ #### A masked pattern was here ####
+ NULL
+-PREHOOK: query: SELECT MIN(cast('123456789012345678901234567890.123456789' as decimal(39,9))) FROM DECIMAL_PRECISION
++PREHOOK: query: SELECT MIN(cast('12345678901234567890.12345678' as decimal(38,18))) FROM DECIMAL_PRECISION
+ PREHOOK: type: QUERY
+ PREHOOK: Input: default@decimal_precision
+ #### A masked pattern was here ####
+-POSTHOOK: query: SELECT MIN(cast('123456789012345678901234567890.123456789' as decimal(39,9))) FROM DECIMAL_PRECISION
++POSTHOOK: query: SELECT MIN(cast('12345678901234567890.12345678' as decimal(38,18))) FROM DECIMAL_PRECISION
+ POSTHOOK: type: QUERY
+ POSTHOOK: Input: default@decimal_precision
+ #### A masked pattern was here ####
+-123456789012345678901234567890.123456789
+-PREHOOK: query: SELECT COUNT(cast('123456789012345678901234567890.123456789' as decimal(39,9))) FROM DECIMAL_PRECISION
++12345678901234567890.12345678
++PREHOOK: query: SELECT COUNT(cast('12345678901234567890.12345678' as decimal(38,18))) FROM DECIMAL_PRECISION
+ PREHOOK: type: QUERY
+ PREHOOK: Input: default@decimal_precision
+ #### A masked pattern was here ####
+-POSTHOOK: query: SELECT COUNT(cast('123456789012345678901234567890.123456789' as decimal(39,9))) FROM DECIMAL_PRECISION
++POSTHOOK: query: SELECT COUNT(cast('12345678901234567890.12345678' as decimal(38,18))) FROM DECIMAL_PRECISION
+ POSTHOOK: type: QUERY
+ POSTHOOK: Input: default@decimal_precision
+ #### A masked pattern was here ####
+diff --git a/src/ql/src/test/results/clientpositive/decimal_udf.q.out b/src/ql/src/test/results/clientpositive/decimal_udf.q.out
+index 8e2f0bc..3f3510f 100644
+--- a/src/ql/src/test/results/clientpositive/decimal_udf.q.out
++++ b/src/ql/src/test/results/clientpositive/decimal_udf.q.out
+@@ -2,12 +2,12 @@ PREHOOK: query: DROP TABLE IF EXISTS DECIMAL_UDF
+ PREHOOK: type: DROPTABLE
+ POSTHOOK: query: DROP TABLE IF EXISTS DECIMAL_UDF
+ POSTHOOK: type: DROPTABLE
+-PREHOOK: query: CREATE TABLE DECIMAL_UDF (key decimal(65,30), value int) 
++PREHOOK: query: CREATE TABLE DECIMAL_UDF (key decimal(38,18), value int)
+ ROW FORMAT DELIMITED
+    FIELDS TERMINATED BY ' '
+ STORED AS TEXTFILE
+ PREHOOK: type: CREATETABLE
+-POSTHOOK: query: CREATE TABLE DECIMAL_UDF (key decimal(65,30), value int) 
++POSTHOOK: query: CREATE TABLE DECIMAL_UDF (key decimal(38,18), value int)
+ ROW FORMAT DELIMITED
+    FIELDS TERMINATED BY ' '
+ STORED AS TEXTFILE
+@@ -42,7 +42,7 @@ STAGE PLANS:
+             Select Operator
+               expressions:
+                     expr: (key + key)
+-                    type: decimal(65,30)
++                    type: decimal(38,18)
+               outputColumnNames: _col0
+               File Output Operator
+                 compressed: false
+@@ -100,7 +100,7 @@ NULL
+ 6.28
+ 6.28
+ 6.28
+-1.9999999999999999999999998
++2
+ -2469135780.246913578
+ 2469135780.24691356
+ PREHOOK: query: EXPLAIN SELECT key + value FROM DECIMAL_UDF
+@@ -124,7 +124,7 @@ STAGE PLANS:
+             Select Operator
+               expressions:
+                     expr: (key + value)
+-                    type: decimal(65,30)
++                    type: decimal(38,18)
+               outputColumnNames: _col0
+               File Output Operator
+                 compressed: false
+@@ -182,7 +182,7 @@ NULL
+ 6.14
+ 6.14
+ 7.14
+-1.9999999999999999999999999
++2
+ -2469135780.123456789
+ 2469135780.12345678
+ PREHOOK: query: EXPLAIN SELECT key + (value/2) FROM DECIMAL_UDF
+@@ -206,7 +206,7 @@ STAGE PLANS:
+             Select Operator
+               expressions:
+                     expr: (key + (value / 2))
+-                    type: decimal(65,30)
++                    type: decimal(38,18)
+               outputColumnNames: _col0
+               File Output Operator
+                 compressed: false
+@@ -264,7 +264,7 @@ NULL
+ 4.64
+ 4.64
+ 5.14
+-1.4999999999999999999999999
++1.5
+ -1851851835.123456789
+ 1851851835.12345678
+ PREHOOK: query: EXPLAIN SELECT key + '1.0' FROM DECIMAL_UDF
+@@ -372,7 +372,7 @@ STAGE PLANS:
+             Select Operator
+               expressions:
+                     expr: (key - key)
+-                    type: decimal(65,30)
++                    type: decimal(38,18)
+               outputColumnNames: _col0
+               File Output Operator
+                 compressed: false
+@@ -454,7 +454,7 @@ STAGE PLANS:
+             Select Operator
+               expressions:
+                     expr: (key - value)
+-                    type: decimal(65,30)
++                    type: decimal(38,18)
+               outputColumnNames: _col0
+               File Output Operator
+                 compressed: false
+@@ -512,7 +512,7 @@ NULL
+ 0.14
+ 0.14
+ -0.86
+--0.0000000000000000000000001
++0
+ -0.123456789
+ 0.12345678
+ PREHOOK: query: EXPLAIN SELECT key - (value/2) FROM DECIMAL_UDF
+@@ -536,7 +536,7 @@ STAGE PLANS:
+             Select Operator
+               expressions:
+                     expr: (key - (value / 2))
+-                    type: decimal(65,30)
++                    type: decimal(38,18)
+               outputColumnNames: _col0
+               File Output Operator
+                 compressed: false
+@@ -594,7 +594,7 @@ NULL
+ 1.64
+ 1.64
+ 1.14
+-0.4999999999999999999999999
++0.5
+ -617283945.123456789
+ 617283945.12345678
+ PREHOOK: query: EXPLAIN SELECT key - '1.0' FROM DECIMAL_UDF
+@@ -702,7 +702,7 @@ STAGE PLANS:
+             Select Operator
+               expressions:
+                     expr: (key * key)
+-                    type: decimal(65,30)
++                    type: decimal(38,36)
+               outputColumnNames: _col0
+               File Output Operator
+                 compressed: false
+@@ -725,17 +725,17 @@ POSTHOOK: query: SELECT key * key FROM DECIMAL_UDF
+ POSTHOOK: type: QUERY
+ POSTHOOK: Input: default@decimal_udf
+ #### A masked pattern was here ####
+-19360000
++NULL
+ NULL
+ 0
+ 0
+-10000
+-100
++NULL
++NULL
+ 1
+ 0.01
+ 0.0001
+-40000
+-400
++NULL
++NULL
+ 4
+ 0
+ 0.04
+@@ -754,15 +754,15 @@ NULL
+ 1.258884
+ 1.2544
+ 1.258884
+-15376
+-15675.04
+-1576255.1401
++NULL
++NULL
++NULL
+ 9.8596
+ 9.8596
+ 9.8596
++1
++NULL
+ NULL
+-1524157875323883675.019051998750190521
+-1524157875323883652.7968299765279684
+ PREHOOK: query: EXPLAIN SELECT key * value FROM DECIMAL_UDF
+ PREHOOK: type: QUERY
+ POSTHOOK: query: EXPLAIN SELECT key * value FROM DECIMAL_UDF
+@@ -784,7 +784,7 @@ STAGE PLANS:
+             Select Operator
+               expressions:
+                     expr: (key * value)
+-                    type: decimal(65,30)
++                    type: decimal(38,18)
+               outputColumnNames: _col0
+               File Output Operator
+                 compressed: false
+@@ -842,7 +842,7 @@ NULL
+ 9.42
+ 9.42
+ 12.56
+-0.9999999999999999999999999
++1
+ 1524157875171467887.50190521
+ 1524157875171467876.3907942
+ PREHOOK: query: EXPLAIN SELECT key * (value/2) FROM DECIMAL_UDF
+@@ -866,7 +866,7 @@ STAGE PLANS:
+             Select Operator
+               expressions:
+                     expr: (key * (value / 2))
+-                    type: decimal(65,30)
++                    type: decimal(38,24)
+               outputColumnNames: _col0
+               File Output Operator
+                 compressed: false
+@@ -924,9 +924,9 @@ NULL
+ 4.71
+ 4.71
+ 6.28
+-0.49999999999999999999999995
+-762078937585733943.750952605
+-762078937585733938.1953971
++0.5
++NULL
++NULL
+ PREHOOK: query: EXPLAIN SELECT key * '2.0' FROM DECIMAL_UDF
+ PREHOOK: type: QUERY
+ POSTHOOK: query: EXPLAIN SELECT key * '2.0' FROM DECIMAL_UDF
+@@ -1032,7 +1032,7 @@ STAGE PLANS:
+             Select Operator
+               expressions:
+                     expr: (key / 0)
+-                    type: decimal(65,30)
++                    type: decimal(38,20)
+               outputColumnNames: _col0
+               Limit
+                 File Output Operator
+@@ -1128,7 +1128,7 @@ STAGE PLANS:
+               Select Operator
+                 expressions:
+                       expr: (key / key)
+-                      type: decimal(65,30)
++                      type: decimal(38,38)
+                 outputColumnNames: _col0
+                 File Output Operator
+                   compressed: false
+@@ -1151,40 +1151,40 @@ POSTHOOK: query: SELECT key / key FROM DECIMAL_UDF WHERE key is not null and key
+ POSTHOOK: type: QUERY
+ POSTHOOK: Input: default@decimal_udf
+ #### A masked pattern was here ####
+-1
+-1
+-1
+-1
+-1
+-1
+-1
+-1
+-1
+-1
+-1
+-1
+-1
+-1
+-1
+-1
+-1
+-1
+-1
+-1
+-1
+-1
+-1
+-1
+-1
+-1
+-1
+-1
+-1
+-1
+-1
+-1
+-1
+-1
++NULL
++NULL
++NULL
++NULL
++NULL
++NULL
++NULL
++NULL
++NULL
++NULL
++NULL
++NULL
++NULL
++NULL
++NULL
++NULL
++NULL
++NULL
++NULL
++NULL
++NULL
++NULL
++NULL
++NULL
++NULL
++NULL
++NULL
++NULL
++NULL
++NULL
++NULL
++NULL
++NULL
++NULL
+ PREHOOK: query: EXPLAIN SELECT key / value FROM DECIMAL_UDF WHERE value is not null and value <> 0
+ PREHOOK: type: QUERY
+ POSTHOOK: query: EXPLAIN SELECT key / value FROM DECIMAL_UDF WHERE value is not null and value <> 0
+@@ -1210,7 +1210,7 @@ STAGE PLANS:
+               Select Operator
+                 expressions:
+                       expr: (key / value)
+-                      type: decimal(65,30)
++                      type: decimal(38,29)
+                 outputColumnNames: _col0
+                 File Output Operator
+                   compressed: false
+@@ -1242,7 +1242,7 @@ POSTHOOK: Input: default@decimal_udf
+ 1
+ 1
+ 1
+-1.046666666666666666666666666667
++1.04666666666666666666666666667
+ 1.12
+ 1.12
+ 0.102
+@@ -1250,13 +1250,13 @@ POSTHOOK: Input: default@decimal_udf
+ 1.122
+ 1
+ 1.0016
+-1.000390438247011952191235059761
+-1.046666666666666666666666666667
+-1.046666666666666666666666666667
++1.00039043824701195219123505976
++1.04666666666666666666666666667
++1.04666666666666666666666666667
+ 0.785
+-0.9999999999999999999999999
+-1.0000000001
+-1.000000000099999992709999933661
++1
++NULL
++NULL
+ PREHOOK: query: EXPLAIN SELECT key / (value/2) FROM DECIMAL_UDF  WHERE value is not null and value <> 0
+ PREHOOK: type: QUERY
+ POSTHOOK: query: EXPLAIN SELECT key / (value/2) FROM DECIMAL_UDF  WHERE value is not null and value <> 0
+@@ -1282,7 +1282,7 @@ STAGE PLANS:
+               Select Operator
+                 expressions:
+                       expr: (key / (value / 2))
+-                      type: decimal(65,30)
++                      type: decimal(38,35)
+                 outputColumnNames: _col0
+                 File Output Operator
+                   compressed: false
+@@ -1305,7 +1305,7 @@ POSTHOOK: query: SELECT key / (value/2) FROM DECIMAL_UDF  WHERE value is not nul
+ POSTHOOK: type: QUERY
+ POSTHOOK: Input: default@decimal_udf
+ #### A masked pattern was here ####
+--2
++NULL
+ 2
+ 2
+ 2
+@@ -1314,7 +1314,7 @@ POSTHOOK: Input: default@decimal_udf
+ 2
+ 2
+ 2
+-2.093333333333333333333333333333
++2.09333333333333333333333333333333333
+ 2.24
+ 2.24
+ 0.204
+@@ -1322,13 +1322,13 @@ POSTHOOK: Input: default@decimal_udf
+ 2.244
+ 2
+ 2.0032
+-2.000780876494023904382470119522
+-2.093333333333333333333333333333
+-2.093333333333333333333333333333
++NULL
++2.09333333333333333333333333333333333
++2.09333333333333333333333333333333333
+ 1.57
+-1.9999999999999999999999998
+-2.0000000002
+-2.000000000199999985419999867322
++2
++NULL
++NULL
+ PREHOOK: query: EXPLAIN SELECT key / '2.0' FROM DECIMAL_UDF
+ PREHOOK: type: QUERY
+ POSTHOOK: query: EXPLAIN SELECT key / '2.0' FROM DECIMAL_UDF
+@@ -1434,7 +1434,7 @@ STAGE PLANS:
+             Select Operator
+               expressions:
+                     expr: abs(key)
+-                    type: decimal(65,30)
++                    type: decimal(38,18)
+               outputColumnNames: _col0
+               File Output Operator
+                 compressed: false
+@@ -1492,7 +1492,7 @@ NULL
+ 3.14
+ 3.14
+ 3.14
+-0.9999999999999999999999999
++1
+ 1234567890.123456789
+ 1234567890.12345678
+ PREHOOK: query: -- avg
+@@ -1521,7 +1521,7 @@ STAGE PLANS:
+                     expr: value
+                     type: int
+                     expr: key
+-                    type: decimal(65,30)
++                    type: decimal(38,18)
+               outputColumnNames: value, key
+               Group By Operator
+                 aggregations:
+@@ -1545,11 +1545,11 @@ STAGE PLANS:
+                   tag: -1
+                   value expressions:
+                         expr: _col1
+-                        type: decimal(65,30)
++                        type: decimal(38,18)
+                         expr: _col2
+                         type: bigint
+                         expr: _col3
+-                        type: struct<count:bigint,sum:decimal(65,30)>
++                        type: struct<count:bigint,sum:decimal(38,18)>
+       Reduce Operator Tree:
+         Group By Operator
+           aggregations:
+@@ -1567,9 +1567,9 @@ STAGE PLANS:
+                   expr: _col0
+                   type: int
+                   expr: (_col1 / _col2)
+-                  type: decimal(65,30)
++                  type: decimal(38,38)
+                   expr: _col3
+-                  type: decimal(65,30)
++                  type: decimal(38,18)
+             outputColumnNames: _col0, _col1, _col2
+             File Output Operator
+               compressed: false
+@@ -1594,9 +1594,9 @@ STAGE PLANS:
+                     expr: _col0
+                     type: int
+                     expr: _col1
+-                    type: decimal(65,30)
++                    type: decimal(38,38)
+                     expr: _col2
+-                    type: decimal(65,30)
++                    type: decimal(38,18)
+       Reduce Operator Tree:
+         Extract
+           File Output Operator
+@@ -1620,23 +1620,23 @@ POSTHOOK: query: SELECT value, sum(key) / count(key), avg(key) FROM DECIMAL_UDF
+ POSTHOOK: type: QUERY
+ POSTHOOK: Input: default@decimal_udf
+ #### A masked pattern was here ####
+--1234567890	-1234567890.123456789	-1234567890.123456789
+--1255	-1255.49	-1255.49
+--11	-1.122	-1.122
+--1	-1.12	-1.12
+-0	0.025384615384615384615384615385	0.025384615384615384615384615385
+-1	1.04839999999999999999999998	1.04839999999999999999999998
+-2	2	2
+-3	3.14	3.14
+-4	3.14	3.14
+-10	10	10
+-20	20	20
+-100	100	100
+-124	124	124
+-125	125.2	125.2
+-200	200	200
+-4400	-4400	-4400
+-1234567890	1234567890.12345678	1234567890.12345678
++-1234567890	NULL	-1234567890.123456789
++-1255	NULL	-1255.49
++-11	NULL	-1.122
++-1	NULL	-1.12
++0	NULL	0.025384615384615385
++1	NULL	1.0484
++2	NULL	2
++3	NULL	3.14
++4	NULL	3.14
++10	NULL	10
++20	NULL	20
++100	NULL	100
++124	NULL	124
++125	NULL	125.2
++200	NULL	200
++4400	NULL	-4400
++1234567890	NULL	1234567890.12345678
+ PREHOOK: query: -- negative
+ EXPLAIN SELECT -key FROM DECIMAL_UDF
+ PREHOOK: type: QUERY
+@@ -1660,7 +1660,7 @@ STAGE PLANS:
+             Select Operator
+               expressions:
+                     expr: (- key)
+-                    type: decimal(65,30)
++                    type: decimal(38,18)
+               outputColumnNames: _col0
+               File Output Operator
+                 compressed: false
+@@ -1718,7 +1718,7 @@ NULL
+ -3.14
+ -3.14
+ -3.14
+--0.9999999999999999999999999
++-1
+ 1234567890.123456789
+ -1234567890.12345678
+ PREHOOK: query: -- positive
+@@ -1744,7 +1744,7 @@ STAGE PLANS:
+             Select Operator
+               expressions:
+                     expr: key
+-                    type: decimal(65,30)
++                    type: decimal(38,18)
+               outputColumnNames: _col0
+               File Output Operator
+                 compressed: false
+@@ -1802,7 +1802,7 @@ NULL
+ 3.14
+ 3.14
+ 3.14
+-0.9999999999999999999999999
++1
+ -1234567890.123456789
+ 1234567890.12345678
+ PREHOOK: query: -- ceiling
+@@ -1828,7 +1828,7 @@ STAGE PLANS:
+             Select Operator
+               expressions:
+                     expr: ceil(key)
+-                    type: decimal(65,30)
++                    type: decimal(38,18)
+               outputColumnNames: _col0
+               File Output Operator
+                 compressed: false
+@@ -1912,7 +1912,7 @@ STAGE PLANS:
+             Select Operator
+               expressions:
+                     expr: floor(key)
+-                    type: decimal(65,30)
++                    type: decimal(38,18)
+               outputColumnNames: _col0
+               File Output Operator
+                 compressed: false
+@@ -1970,7 +1970,7 @@ NULL
+ 3
+ 3
+ 3
+-0
++1
+ -1234567891
+ 1234567890
+ PREHOOK: query: -- round
+@@ -1996,7 +1996,7 @@ STAGE PLANS:
+             Select Operator
+               expressions:
+                     expr: round(key, 2)
+-                    type: decimal(38,2)
++                    type: decimal(23,2)
+               outputColumnNames: _col0
+               File Output Operator
+                 compressed: false
+@@ -2080,7 +2080,7 @@ STAGE PLANS:
+             Select Operator
+               expressions:
+                     expr: power(key, 2)
+-                    type: decimal(65,30)
++                    type: decimal(38,18)
+               outputColumnNames: _col0
+               File Output Operator
+                 compressed: false
+@@ -2138,7 +2138,7 @@ NULL
+ 9.8596
+ 9.8596
+ 9.8596
+-NULL
++1
+ 1524157875323883675.019051998750190521
+ 1524157875323883652.7968299765279684
+ PREHOOK: query: -- modulo
+@@ -2164,7 +2164,7 @@ STAGE PLANS:
+             Select Operator
+               expressions:
+                     expr: ((key + 1) % (key / 2))
+-                    type: decimal(65,30)
++                    type: decimal(38,20)
+               outputColumnNames: _col0
+               File Output Operator
+                 compressed: false
+@@ -2222,7 +2222,7 @@ NULL
+ 1
+ 1
+ 1
+-0.0000000000000000000000001
++0
+ -617283944.0617283945
+ 1
+ PREHOOK: query: -- stddev, var
+@@ -2250,7 +2250,7 @@ STAGE PLANS:
+                     expr: value
+                     type: int
+                     expr: key
+-                    type: decimal(65,30)
++                    type: decimal(38,18)
+               outputColumnNames: value, key
+               Group By Operator
+                 aggregations:
+@@ -2359,7 +2359,7 @@ STAGE PLANS:
+                     expr: value
+                     type: int
+                     expr: key
+-                    type: decimal(65,30)
++                    type: decimal(38,18)
+               outputColumnNames: value, key
+               Group By Operator
+                 aggregations:
+@@ -2466,7 +2466,7 @@ STAGE PLANS:
+             Select Operator
+               expressions:
+                     expr: key
+-                    type: decimal(65,30)
++                    type: decimal(38,18)
+               outputColumnNames: key
+               Group By Operator
+                 aggregations:
+@@ -2537,7 +2537,7 @@ STAGE PLANS:
+             Select Operator
+               expressions:
+                     expr: key
+-                    type: decimal(65,30)
++                    type: decimal(38,18)
+               outputColumnNames: key
+               Group By Operator
+                 aggregations:
+@@ -2550,7 +2550,7 @@ STAGE PLANS:
+                   tag: -1
+                   value expressions:
+                         expr: _col0
+-                        type: decimal(65,30)
++                        type: decimal(38,18)
+       Reduce Operator Tree:
+         Group By Operator
+           aggregations:
+@@ -2561,7 +2561,7 @@ STAGE PLANS:
+           Select Operator
+             expressions:
+                   expr: _col0
+-                  type: decimal(65,30)
++                  type: decimal(38,18)
+             outputColumnNames: _col0
+             File Output Operator
+               compressed: false
+@@ -2608,7 +2608,7 @@ STAGE PLANS:
+             Select Operator
+               expressions:
+                     expr: key
+-                    type: decimal(65,30)
++                    type: decimal(38,18)
+               outputColumnNames: key
+               Group By Operator
+                 aggregations:
+@@ -2621,7 +2621,7 @@ STAGE PLANS:
+                   tag: -1
+                   value expressions:
+                         expr: _col0
+-                        type: decimal(65,30)
++                        type: decimal(38,18)
+       Reduce Operator Tree:
+         Group By Operator
+           aggregations:
+@@ -2632,7 +2632,7 @@ STAGE PLANS:
+           Select Operator
+             expressions:
+                   expr: _col0
+-                  type: decimal(65,30)
++                  type: decimal(38,18)
+             outputColumnNames: _col0
+             File Output Operator
+               compressed: false
+@@ -2679,7 +2679,7 @@ STAGE PLANS:
+             Select Operator
+               expressions:
+                     expr: key
+-                    type: decimal(65,30)
++                    type: decimal(38,18)
+               outputColumnNames: key
+               Group By Operator
+                 aggregations:
+diff --git a/src/ql/src/test/results/clientpositive/literal_decimal.q.out b/src/ql/src/test/results/clientpositive/literal_decimal.q.out
+index 802a061..a68ce2b 100644
+--- a/src/ql/src/test/results/clientpositive/literal_decimal.q.out
++++ b/src/ql/src/test/results/clientpositive/literal_decimal.q.out
+@@ -19,7 +19,7 @@ STAGE PLANS:
+             Select Operator
+               expressions:
+                     expr: (- 1)
+-                    type: decimal(65,30)
++                    type: decimal(38,18)
+                     expr: 0
+                     type: decimal(1,0)
+                     expr: 1
+@@ -27,7 +27,7 @@ STAGE PLANS:
+                     expr: 3.14
+                     type: decimal(3,2)
+                     expr: (- 3.14)
+-                    type: decimal(65,30)
++                    type: decimal(38,18)
+                     expr: 99999999999999999
+                     type: decimal(17,0)
+                     expr: 99999999999999999.9999999999999
+diff --git a/src/ql/src/test/results/clientpositive/ql_rewrite_gbtoidx.q.out b/src/ql/src/test/results/clientpositive/ql_rewrite_gbtoidx.q.out
+index 53f9ac9..83787ee 100644
+--- a/src/ql/src/test/results/clientpositive/ql_rewrite_gbtoidx.q.out
++++ b/src/ql/src/test/results/clientpositive/ql_rewrite_gbtoidx.q.out
+@@ -1022,7 +1022,7 @@ STAGE PLANS:
+                   expr: _col4
+                   type: int
+                   expr: ((_col5 - _col2) / _col2)
+-                  type: decimal(39,20)
++                  type: decimal(38,20)
+             outputColumnNames: _col0, _col1, _col2
+             File Output Operator
+               compressed: false
+diff --git a/src/ql/src/test/results/clientpositive/serde_regex.q.out b/src/ql/src/test/results/clientpositive/serde_regex.q.out
+index 64207f1..0dcb5c6 100644
+--- a/src/ql/src/test/results/clientpositive/serde_regex.q.out
++++ b/src/ql/src/test/results/clientpositive/serde_regex.q.out
+@@ -129,7 +129,7 @@ POSTHOOK: Input: default@serde_regex
+ POSTHOOK: Output: default@serde_regex
+ PREHOOK: query: EXPLAIN
+ CREATE TABLE serde_regex1(
+-  key decimal(65,30),
++  key decimal(38,18),
+   value int)
+ ROW FORMAT SERDE 'org.apache.hadoop.hive.serde2.RegexSerDe'
+ WITH SERDEPROPERTIES (
+@@ -139,7 +139,7 @@ STORED AS TEXTFILE
+ PREHOOK: type: CREATETABLE
+ POSTHOOK: query: EXPLAIN
+ CREATE TABLE serde_regex1(
+-  key decimal(65,30),
++  key decimal(38,18),
+   value int)
+ ROW FORMAT SERDE 'org.apache.hadoop.hive.serde2.RegexSerDe'
+ WITH SERDEPROPERTIES (
+@@ -148,7 +148,7 @@ WITH SERDEPROPERTIES (
+ STORED AS TEXTFILE
+ POSTHOOK: type: CREATETABLE
+ ABSTRACT SYNTAX TREE:
+-  (TOK_CREATETABLE (TOK_TABNAME serde_regex1) TOK_LIKETABLE (TOK_TABCOLLIST (TOK_TABCOL key (TOK_DECIMAL 65 30)) (TOK_TABCOL value TOK_INT)) (TOK_TABLESERIALIZER (TOK_SERDENAME 'org.apache.hadoop.hive.serde2.RegexSerDe' (TOK_TABLEPROPERTIES (TOK_TABLEPROPLIST (TOK_TABLEPROPERTY "input.regex" "([^ ]*) ([^ ]*)"))))) TOK_TBLTEXTFILE)
++  (TOK_CREATETABLE (TOK_TABNAME serde_regex1) TOK_LIKETABLE (TOK_TABCOLLIST (TOK_TABCOL key (TOK_DECIMAL 38 18)) (TOK_TABCOL value TOK_INT)) (TOK_TABLESERIALIZER (TOK_SERDENAME 'org.apache.hadoop.hive.serde2.RegexSerDe' (TOK_TABLEPROPERTIES (TOK_TABLEPROPLIST (TOK_TABLEPROPERTY "input.regex" "([^ ]*) ([^ ]*)"))))) TOK_TBLTEXTFILE)
+ 
+ STAGE DEPENDENCIES:
+   Stage-0 is a root stage
+@@ -157,7 +157,7 @@ STAGE PLANS:
+   Stage: Stage-0
+       Create Table Operator:
+         Create Table
+-          columns: key decimal(65,30), value int
++          columns: key decimal(38,18), value int
+           if not exists: false
+           input format: org.apache.hadoop.mapred.TextInputFormat
+           # buckets: -1
+@@ -170,7 +170,7 @@ STAGE PLANS:
+ 
+ 
+ PREHOOK: query: CREATE TABLE serde_regex1(
+-  key decimal(65,30),
++  key decimal(38,18),
+   value int)
+ ROW FORMAT SERDE 'org.apache.hadoop.hive.serde2.RegexSerDe'
+ WITH SERDEPROPERTIES (
+@@ -179,7 +179,7 @@ WITH SERDEPROPERTIES (
+ STORED AS TEXTFILE
+ PREHOOK: type: CREATETABLE
+ POSTHOOK: query: CREATE TABLE serde_regex1(
+-  key decimal(65,30),
++  key decimal(38,18),
+   value int)
+ ROW FORMAT SERDE 'org.apache.hadoop.hive.serde2.RegexSerDe'
+ WITH SERDEPROPERTIES (
+@@ -222,7 +222,7 @@ NULL	0
+ 0.3	0
+ 0.33	0
+ 0.333	0
+-0.9999999999999999999999999	1
++1	1
+ 1	1
+ 1	1
+ 1.12	1
+diff --git a/src/ql/src/test/results/clientpositive/udf7.q.out b/src/ql/src/test/results/clientpositive/udf7.q.out
+index c868453..7316449 100644
+--- a/src/ql/src/test/results/clientpositive/udf7.q.out
++++ b/src/ql/src/test/results/clientpositive/udf7.q.out
+@@ -100,11 +100,11 @@ STAGE PLANS:
+                     expr: power((- 1), 2)
+                     type: double
+                     expr: power(CAST( 1 AS decimal(10,0)), 0)
+-                    type: decimal(65,30)
++                    type: decimal(38,18)
+                     expr: power(CAST( 2 AS decimal(10,0)), 3)
+-                    type: decimal(65,30)
++                    type: decimal(38,18)
+                     expr: pow(CAST( 2 AS decimal(10,0)), 3)
+-                    type: decimal(65,30)
++                    type: decimal(38,18)
+               outputColumnNames: _col0, _col1, _col2, _col3, _col4, _col5, _col6, _col7, _col8, _col9, _col10, _col11, _col12, _col13, _col14, _col15, _col16, _col17, _col18, _col19, _col20, _col21, _col22, _col23, _col24, _col25, _col26, _col27
+               File Output Operator
+                 compressed: false
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/typeinfo/TypeInfoFactory.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/typeinfo/TypeInfoFactory.java
+index 08a8c8e..18e26fd 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/typeinfo/TypeInfoFactory.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/typeinfo/TypeInfoFactory.java
+@@ -59,8 +59,8 @@ private TypeInfoFactory() {
+   /**
+    * A DecimalTypeInfo instance that has max precision and max scale.
+    */
+-  public static final DecimalTypeInfo decimalTypeInfo = new DecimalTypeInfo(HiveDecimal.MAX_PRECISION,
+-      HiveDecimal.MAX_SCALE);
++  public static final DecimalTypeInfo decimalTypeInfo = new DecimalTypeInfo(HiveDecimal.SYSTEM_DEFAULT_PRECISION,
++      HiveDecimal.SYSTEM_DEFAULT_SCALE);
+ 
+   public static final PrimitiveTypeInfo unknownTypeInfo = new PrimitiveTypeInfo("unknown");
+ 
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/typeinfo/TypeInfoUtils.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/typeinfo/TypeInfoUtils.java
+index ed1dcd9..29b46b9 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/typeinfo/TypeInfoUtils.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/typeinfo/TypeInfoUtils.java
+@@ -411,8 +411,8 @@ private TypeInfo parseType() {
+                 params.length + " is seen");
+           }
+         case DECIMAL:
+-          int precision = HiveDecimal.DEFAULT_PRECISION;
+-          int scale = HiveDecimal.DEFAULT_SCALE;
++          int precision = HiveDecimal.USER_DEFAULT_PRECISION;
++          int scale = HiveDecimal.USER_DEFAULT_SCALE;
+           if (params == null || params.length == 0) {
+             // It's possible that old metadata still refers to "decimal" as a column type w/o
+             // precision/scale. In this case, the default (10,0) is assumed. Thus, do nothing here.
+-- 
+1.7.0.4
+

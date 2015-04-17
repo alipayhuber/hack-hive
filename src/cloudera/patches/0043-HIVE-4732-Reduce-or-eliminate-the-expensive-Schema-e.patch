@@ -1,0 +1,461 @@
+From 3acab85325924dd55d056e0f21130fd624514f8d Mon Sep 17 00:00:00 2001
+From: Ashutosh Chauhan <hashutosh@apache.org>
+Date: Sat, 21 Sep 2013 20:36:16 +0000
+Subject: [PATCH 043/375] HIVE-4732 : Reduce or eliminate the expensive Schema equals() check for AvroSerde (Mohammad Kamrul Islam via Ashutosh Chauhan)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1525290 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../hive/ql/io/avro/AvroGenericRecordReader.java   |    7 ++
+ .../hadoop/hive/serde2/avro/AvroDeserializer.java  |   78 +++++++++++++++-----
+ .../serde2/avro/AvroGenericRecordWritable.java     |   27 +++++--
+ .../hive/serde2/avro/TestAvroDeserializer.java     |   61 +++++++++++++++
+ .../serde2/avro/TestGenericAvroRecordWritable.java |   13 ++-
+ .../hive/serde2/avro/TestSchemaReEncoder.java      |   13 ++--
+ .../org/apache/hadoop/hive/serde2/avro/Utils.java  |    7 +-
+ 7 files changed, 167 insertions(+), 39 deletions(-)
+
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/io/avro/AvroGenericRecordReader.java b/src/ql/src/java/org/apache/hadoop/hive/ql/io/avro/AvroGenericRecordReader.java
+index ed2a9af..52a22e5 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/io/avro/AvroGenericRecordReader.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/io/avro/AvroGenericRecordReader.java
+@@ -19,6 +19,7 @@
+ 
+ 
+ import java.io.IOException;
++import java.rmi.server.UID;
+ import java.util.Map;
+ import java.util.Properties;
+ 
+@@ -57,6 +58,10 @@
+   final private long start;
+   final private long stop;
+   protected JobConf jobConf;
++  /**
++   * A unique ID for each record reader.
++   */
++  final private UID recordReaderID;
+ 
+   public AvroGenericRecordReader(JobConf job, FileSplit split, Reporter reporter) throws IOException {
+     this.jobConf = job;
+@@ -78,6 +83,7 @@ public AvroGenericRecordReader(JobConf job, FileSplit split, Reporter reporter) 
+     this.reader.sync(split.getStart());
+     this.start = reader.tell();
+     this.stop = split.getStart() + split.getLength();
++    this.recordReaderID = new UID();
+   }
+ 
+   /**
+@@ -148,6 +154,7 @@ public boolean next(NullWritable nullWritable, AvroGenericRecordWritable record)
+ 
+     GenericData.Record r = (GenericData.Record)reader.next();
+     record.setRecord(r);
++    record.setRecordReaderID(recordReaderID);
+ 
+     return true;
+   }
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/avro/AvroDeserializer.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/avro/AvroDeserializer.java
+index e994411..a28861f 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/avro/AvroDeserializer.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/avro/AvroDeserializer.java
+@@ -21,8 +21,10 @@
+ import java.io.ByteArrayOutputStream;
+ import java.io.IOException;
+ import java.nio.ByteBuffer;
++import java.rmi.server.UID;
+ import java.util.ArrayList;
+ import java.util.HashMap;
++import java.util.HashSet;
+ import java.util.List;
+ import java.util.Map;
+ 
+@@ -52,6 +54,20 @@
+ class AvroDeserializer {
+   private static final Log LOG = LogFactory.getLog(AvroDeserializer.class);
+   /**
++   * Set of already seen and valid record readers IDs which doesn't need re-encoding
++   */
++  private final HashSet<UID> noEncodingNeeded = new HashSet<UID>();
++  /**
++   * Map of record reader ID and the associated re-encoder. It contains only the record readers
++   *  that record needs to be re-encoded.
++   */
++  private final HashMap<UID, SchemaReEncoder> reEncoderCache = new HashMap<UID, SchemaReEncoder>();
++  /**
++   * Flag to print the re-encoding warning message only once. Avoid excessive logging for each
++   * record encoding.
++   */
++  private static boolean warnedOnce = false;
++  /**
+    * When encountering a record with an older schema than the one we're trying
+    * to read, it is necessary to re-encode with a reader against the newer schema.
+    * Because Hive doesn't provide a way to pass extra information to the
+@@ -64,16 +80,15 @@
+     private final ByteArrayOutputStream baos = new ByteArrayOutputStream();
+     private final GenericDatumWriter<GenericRecord> gdw = new GenericDatumWriter<GenericRecord>();
+     private BinaryDecoder binaryDecoder = null;
+-    private final InstanceCache<ReaderWriterSchemaPair, GenericDatumReader<GenericRecord>> gdrCache
+-        = new InstanceCache<ReaderWriterSchemaPair, GenericDatumReader<GenericRecord>>() {
+-            @Override
+-            protected GenericDatumReader<GenericRecord> makeInstance(ReaderWriterSchemaPair hv) {
+-              return new GenericDatumReader<GenericRecord>(hv.getWriter(), hv.getReader());
+-            }
+-          };
+-
+-    public GenericRecord reencode(GenericRecord r, Schema readerSchema)
+-            throws AvroSerdeException {
++
++    GenericDatumReader<GenericRecord> gdr = null;
++
++    public SchemaReEncoder(Schema writer, Schema reader) {
++      gdr = new GenericDatumReader<GenericRecord>(writer, reader);
++    }
++
++    public GenericRecord reencode(GenericRecord r)
++        throws AvroSerdeException {
+       baos.reset();
+ 
+       BinaryEncoder be = EncoderFactory.get().directBinaryEncoder(baos, null);
+@@ -84,8 +99,6 @@ public GenericRecord reencode(GenericRecord r, Schema readerSchema)
+ 
+         binaryDecoder = DecoderFactory.defaultFactory().createBinaryDecoder(bais, binaryDecoder);
+ 
+-        ReaderWriterSchemaPair pair = new ReaderWriterSchemaPair(r.getSchema(), readerSchema);
+-        GenericDatumReader<GenericRecord> gdr = gdrCache.retrieve(pair);
+         return gdr.read(r, binaryDecoder);
+ 
+       } catch (IOException e) {
+@@ -95,7 +108,6 @@ public GenericRecord reencode(GenericRecord r, Schema readerSchema)
+   }
+ 
+   private List<Object> row;
+-  private SchemaReEncoder reEncoder;
+ 
+   /**
+    * Deserialize an Avro record, recursing into its component fields and
+@@ -127,14 +139,31 @@ public Object deserialize(List<String> columnNames, List<TypeInfo> columnTypes,
+     AvroGenericRecordWritable recordWritable = (AvroGenericRecordWritable) writable;
+     GenericRecord r = recordWritable.getRecord();
+ 
+-    // Check if we're working with an evolved schema
+-    if(!r.getSchema().equals(readerSchema)) {
+-      LOG.warn("Received different schemas.  Have to re-encode: " +
+-              r.getSchema().toString(false));
+-      if(reEncoder == null) {
+-        reEncoder = new SchemaReEncoder();
++   UID recordReaderId = recordWritable.getRecordReaderID();
++   //If the record reader (from which the record is originated) is already seen and valid,
++    //no need to re-encode the record.
++    if(!noEncodingNeeded.contains(recordReaderId)) {
++      SchemaReEncoder reEncoder = null;
++      //Check if the record record is already encoded once. If it does
++      //reuse the encoder.
++      if(reEncoderCache.containsKey(recordReaderId)) {
++        reEncoder = reEncoderCache.get(recordReaderId); //Reuse the re-encoder
++      } else if (!r.getSchema().equals(readerSchema)) { //Evolved schema?
++        //Create and store new encoder in the map for re-use
++        reEncoder = new SchemaReEncoder(r.getSchema(), readerSchema);
++        reEncoderCache.put(recordReaderId, reEncoder);
++      } else{
++        LOG.info("Adding new valid RRID :" +  recordReaderId);
++        noEncodingNeeded.add(recordReaderId);
++      }
++      if(reEncoder != null) {
++        if (!warnedOnce) {
++          LOG.warn("Received different schemas.  Have to re-encode: " +
++              r.getSchema().toString(false) + "\nSIZE" + reEncoderCache + " ID " + recordReaderId);
++          warnedOnce = true;
++        }
++        r = reEncoder.reencode(r);
+       }
+-      r = reEncoder.reencode(r, readerSchema);
+     }
+ 
+     workerBase(row, columnNames, columnTypes, r);
+@@ -288,4 +317,13 @@ private Object deserializeMap(Object datum, Schema mapSchema, MapTypeInfo column
+ 
+     return map;
+   }
++
++  public HashSet<UID> getNoEncodingNeeded() {
++    return noEncodingNeeded;
++  }
++
++  public HashMap<UID, SchemaReEncoder> getReEncoderCache() {
++    return reEncoderCache;
++  }
++
+ }
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/avro/AvroGenericRecordWritable.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/avro/AvroGenericRecordWritable.java
+index 66f0348..8beffd7 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/avro/AvroGenericRecordWritable.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/avro/AvroGenericRecordWritable.java
+@@ -17,6 +17,13 @@
+  */
+ package org.apache.hadoop.hive.serde2.avro;
+ 
++import java.io.DataInput;
++import java.io.DataOutput;
++import java.io.DataOutputStream;
++import java.io.IOException;
++import java.io.InputStream;
++import java.rmi.server.UID;
++
+ import org.apache.avro.Schema;
+ import org.apache.avro.generic.GenericData;
+ import org.apache.avro.generic.GenericDatumReader;
+@@ -28,12 +35,6 @@
+ import org.apache.avro.io.EncoderFactory;
+ import org.apache.hadoop.io.Writable;
+ 
+-import java.io.DataInput;
+-import java.io.DataOutput;
+-import java.io.DataOutputStream;
+-import java.io.IOException;
+-import java.io.InputStream;
+-
+ /**
+  * Wrapper around an Avro GenericRecord.  Necessary because Hive's deserializer
+  * will happily deserialize any object - as long as it's a writable.
+@@ -41,6 +42,10 @@
+ public class AvroGenericRecordWritable implements Writable{
+   GenericRecord record;
+   private BinaryDecoder binaryDecoder;
++  /**
++   * Unique Id determine which record reader created this record
++   */
++  private UID recordReaderID;
+ 
+   // There are two areas of exploration for optimization here.
+   // 1.  We're serializing the schema with every object.  If we assume the schema
+@@ -68,6 +73,7 @@ public void write(DataOutput out) throws IOException {
+     // Write schema since we need it to pull the data out. (see point #1 above)
+     String schemaString = record.getSchema().toString(false);
+     out.writeUTF(schemaString);
++    recordReaderID.write(out);
+ 
+     // Write record to byte buffer
+     GenericDatumWriter<GenericRecord> gdw = new GenericDatumWriter<GenericRecord>();
+@@ -80,9 +86,18 @@ public void write(DataOutput out) throws IOException {
+   @Override
+   public void readFields(DataInput in) throws IOException {
+     Schema schema = Schema.parse(in.readUTF());
++    recordReaderID = UID.read(in);
+     record = new GenericData.Record(schema);
+     binaryDecoder = DecoderFactory.defaultFactory().createBinaryDecoder((InputStream) in, binaryDecoder);
+     GenericDatumReader<GenericRecord> gdr = new GenericDatumReader<GenericRecord>(schema);
+     record = gdr.read(record, binaryDecoder);
+   }
++
++  public UID getRecordReaderID() {
++    return recordReaderID;
++  }
++
++  public void setRecordReaderID(UID recordReaderID) {
++    this.recordReaderID = recordReaderID;
++  }
+ }
+diff --git a/src/serde/src/test/org/apache/hadoop/hive/serde2/avro/TestAvroDeserializer.java b/src/serde/src/test/org/apache/hadoop/hive/serde2/avro/TestAvroDeserializer.java
+index 3828940..198bd24 100644
+--- a/src/serde/src/test/org/apache/hadoop/hive/serde2/avro/TestAvroDeserializer.java
++++ b/src/serde/src/test/org/apache/hadoop/hive/serde2/avro/TestAvroDeserializer.java
+@@ -23,6 +23,7 @@
+ 
+ import java.io.IOException;
+ import java.nio.ByteBuffer;
++import java.rmi.server.UID;
+ import java.util.ArrayList;
+ import java.util.HashMap;
+ import java.util.Hashtable;
+@@ -500,4 +501,64 @@ private void verifyNullableType(GenericData.Record record, Schema s, String fiel
+       assertEquals(expected, soi.getPrimitiveJavaObject(rowElement));
+     }
+   }
++
++  @Test
++  public void verifyCaching() throws SerDeException, IOException {
++    Schema s = Schema.parse(TestAvroObjectInspectorGenerator.RECORD_SCHEMA);
++    GenericData.Record record = new GenericData.Record(s);
++    GenericData.Record innerRecord = new GenericData.Record(s.getField("aRecord").schema());
++    innerRecord.put("int1", 42);
++    innerRecord.put("boolean1", true);
++    innerRecord.put("long1", 42432234234l);
++    record.put("aRecord", innerRecord);
++    assertTrue(GENERIC_DATA.validate(s, record));
++
++    AvroGenericRecordWritable garw = Utils.serializeAndDeserializeRecord(record);
++    UID recordReaderID = new UID();
++    garw.setRecordReaderID(recordReaderID);
++    AvroObjectInspectorGenerator aoig = new AvroObjectInspectorGenerator(s);
++
++    AvroDeserializer de = new AvroDeserializer();
++    ArrayList<Object> row =
++        (ArrayList<Object>) de.deserialize(aoig.getColumnNames(), aoig.getColumnTypes(), garw, s);
++
++    assertEquals(1, de.getNoEncodingNeeded().size());
++    assertEquals(0, de.getReEncoderCache().size());
++
++    // Read the record with the same record reader ID
++    row = (ArrayList<Object>) de.deserialize(aoig.getColumnNames(), aoig.getColumnTypes(), garw, s);
++
++    //Expecting not to change the size of internal structures
++    assertEquals(1, de.getNoEncodingNeeded().size());
++    assertEquals(0, de.getReEncoderCache().size());
++
++    //Read the record with **different** record reader ID
++    garw.setRecordReaderID(new UID()); //New record reader ID
++    row = (ArrayList<Object>) de.deserialize(aoig.getColumnNames(), aoig.getColumnTypes(), garw, s);
++
++    //Expecting to change the size of internal structures
++    assertEquals(2, de.getNoEncodingNeeded().size());
++    assertEquals(0, de.getReEncoderCache().size());
++
++  //Read the record with **different** record reader ID and **evolved** schema
++    Schema evolvedSchema = Schema.parse(s.toString());
++    evolvedSchema.getField("aRecord").schema().addProp("Testing", "meaningless");
++    garw.setRecordReaderID(recordReaderID = new UID()); //New record reader ID
++    row =
++            (ArrayList<Object>)de.deserialize(aoig.getColumnNames(), aoig.getColumnTypes(), garw, evolvedSchema);
++
++    //Expecting to change the size of internal structures
++    assertEquals(2, de.getNoEncodingNeeded().size());
++    assertEquals(1, de.getReEncoderCache().size());
++
++  //Read the record with existing record reader ID and same **evolved** schema
++    garw.setRecordReaderID(recordReaderID); //Reuse record reader ID
++    row =
++            (ArrayList<Object>)de.deserialize(aoig.getColumnNames(), aoig.getColumnTypes(), garw, evolvedSchema);
++
++    //Expecting NOT to change the size of internal structures
++    assertEquals(2, de.getNoEncodingNeeded().size());
++    assertEquals(1, de.getReEncoderCache().size());
++
++  }
+ }
+diff --git a/src/serde/src/test/org/apache/hadoop/hive/serde2/avro/TestGenericAvroRecordWritable.java b/src/serde/src/test/org/apache/hadoop/hive/serde2/avro/TestGenericAvroRecordWritable.java
+index 475f946..a0e5018 100644
+--- a/src/serde/src/test/org/apache/hadoop/hive/serde2/avro/TestGenericAvroRecordWritable.java
++++ b/src/serde/src/test/org/apache/hadoop/hive/serde2/avro/TestGenericAvroRecordWritable.java
+@@ -17,18 +17,19 @@
+  */
+ package org.apache.hadoop.hive.serde2.avro;
+ 
+-import org.apache.avro.Schema;
+-import org.apache.avro.generic.GenericData;
+-import org.apache.avro.generic.GenericRecord;
+-import org.junit.Test;
++import static org.junit.Assert.assertEquals;
+ 
+ import java.io.ByteArrayInputStream;
+ import java.io.ByteArrayOutputStream;
+ import java.io.DataInputStream;
+ import java.io.DataOutputStream;
+ import java.io.IOException;
++import java.rmi.server.UID;
+ 
+-import static org.junit.Assert.assertEquals;
++import org.apache.avro.Schema;
++import org.apache.avro.generic.GenericData;
++import org.apache.avro.generic.GenericRecord;
++import org.junit.Test;
+ 
+ public class TestGenericAvroRecordWritable {
+   private static final String schemaJSON = "{\n" +
+@@ -59,12 +60,14 @@ public void writableContractIsImplementedCorrectly() throws IOException {
+     assertEquals("Doctor", gr.get("last"));
+ 
+     AvroGenericRecordWritable garw = new AvroGenericRecordWritable(gr);
++    garw.setRecordReaderID(new UID());
+ 
+     ByteArrayOutputStream baos = new ByteArrayOutputStream();
+     DataOutputStream daos = new DataOutputStream(baos);
+     garw.write(daos);
+ 
+     AvroGenericRecordWritable garw2 = new AvroGenericRecordWritable(gr);
++    garw2.setRecordReaderID(new UID());
+ 
+     ByteArrayInputStream bais = new ByteArrayInputStream(baos.toByteArray());
+     DataInputStream dais = new DataInputStream(bais);
+diff --git a/src/serde/src/test/org/apache/hadoop/hive/serde2/avro/TestSchemaReEncoder.java b/src/serde/src/test/org/apache/hadoop/hive/serde2/avro/TestSchemaReEncoder.java
+index 9af751b..8dd6109 100644
+--- a/src/serde/src/test/org/apache/hadoop/hive/serde2/avro/TestSchemaReEncoder.java
++++ b/src/serde/src/test/org/apache/hadoop/hive/serde2/avro/TestSchemaReEncoder.java
+@@ -17,15 +17,15 @@
+  */
+ package org.apache.hadoop.hive.serde2.avro;
+ 
++import static org.junit.Assert.assertEquals;
++import static org.junit.Assert.assertTrue;
++
+ import org.apache.avro.Schema;
+ import org.apache.avro.generic.GenericData;
+ import org.apache.avro.generic.GenericRecord;
+ import org.apache.hadoop.hive.serde2.SerDeException;
+ import org.junit.Test;
+ 
+-import static org.junit.Assert.assertEquals;
+-import static org.junit.Assert.assertTrue;
+-
+ public class TestSchemaReEncoder {
+   @Test
+   public void schemasCanAddFields() throws SerDeException {
+@@ -62,8 +62,8 @@ public void schemasCanAddFields() throws SerDeException {
+     GenericRecord record = new GenericData.Record(originalSchema);
+     record.put("text", "it is a far better thing I do, yadda, yadda");
+     assertTrue(GenericData.get().validate(originalSchema, record));
+-    AvroDeserializer.SchemaReEncoder schemaReEncoder = new AvroDeserializer.SchemaReEncoder();
+-    GenericRecord r2 = schemaReEncoder.reencode(record, evolvedSchema);
++    AvroDeserializer.SchemaReEncoder schemaReEncoder = new AvroDeserializer.SchemaReEncoder(record.getSchema(), evolvedSchema);
++    GenericRecord r2 = schemaReEncoder.reencode(record);
+ 
+     assertTrue(GenericData.get().validate(evolvedSchema, r2));
+     assertEquals("Hi!", r2.get("new_kid").toString());
+@@ -104,7 +104,8 @@ public void schemasCanAddFields() throws SerDeException {
+     record.put("a", 19);
+     assertTrue(GenericData.get().validate(originalSchema2, record));
+ 
+-    r2 = schemaReEncoder.reencode(record,  evolvedSchema2);
++    schemaReEncoder = new AvroDeserializer.SchemaReEncoder(record.getSchema(), evolvedSchema2);
++    r2 = schemaReEncoder.reencode(record);
+     assertTrue(GenericData.get().validate(evolvedSchema2, r2));
+     assertEquals(42l, r2.get("b"));
+   }
+diff --git a/src/serde/src/test/org/apache/hadoop/hive/serde2/avro/Utils.java b/src/serde/src/test/org/apache/hadoop/hive/serde2/avro/Utils.java
+index 2b948eb..d5730fa 100644
+--- a/src/serde/src/test/org/apache/hadoop/hive/serde2/avro/Utils.java
++++ b/src/serde/src/test/org/apache/hadoop/hive/serde2/avro/Utils.java
+@@ -17,13 +17,14 @@
+  */
+ package org.apache.hadoop.hive.serde2.avro;
+ 
+-import org.apache.avro.generic.GenericData;
+-
+ import java.io.ByteArrayInputStream;
+ import java.io.ByteArrayOutputStream;
+ import java.io.DataInputStream;
+ import java.io.DataOutputStream;
+ import java.io.IOException;
++import java.rmi.server.UID;
++
++import org.apache.avro.generic.GenericData;
+ 
+ class Utils {
+   // Force Avro to serialize and de-serialize the record to make sure it has a
+@@ -31,6 +32,7 @@
+   public static AvroGenericRecordWritable
+   serializeAndDeserializeRecord(GenericData.Record record) throws IOException {
+     AvroGenericRecordWritable garw = new AvroGenericRecordWritable(record);
++    garw.setRecordReaderID(new UID());
+     ByteArrayOutputStream baos = new ByteArrayOutputStream();
+     DataOutputStream daos = new DataOutputStream(baos);
+     garw.write(daos);
+@@ -39,6 +41,7 @@
+     DataInputStream dais = new DataInputStream(bais);
+ 
+     AvroGenericRecordWritable garw2 = new AvroGenericRecordWritable();
++    garw2.setRecordReaderID(new UID());
+     garw2.readFields(dais);
+     return garw2;
+   }
+-- 
+1.7.0.4
+

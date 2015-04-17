@@ -1,0 +1,24 @@
+From 1cac04b0e739019b9da99fe916e2fe5497c4abb8 Mon Sep 17 00:00:00 2001
+From: Brock Noland <brock@cloudera.com>
+Date: Tue, 13 Aug 2013 08:20:03 -0500
+Subject: [PATCH 114/375] CDH-13345 - Allow impersonation config key as well as doAs
+
+---
+ .../java/org/apache/hadoop/hive/conf/HiveConf.java |    1 +
+ 1 files changed, 1 insertions(+), 0 deletions(-)
+
+diff --git a/src/common/src/java/org/apache/hadoop/hive/conf/HiveConf.java b/src/common/src/java/org/apache/hadoop/hive/conf/HiveConf.java
+index f7b7a12..0658d47 100644
+--- a/src/common/src/java/org/apache/hadoop/hive/conf/HiveConf.java
++++ b/src/common/src/java/org/apache/hadoop/hive/conf/HiveConf.java
+@@ -74,6 +74,7 @@
+     for (ConfVars confVar : ConfVars.values()) {
+       vars.put(confVar.varname, confVar);
+     }
++    Configuration.addDeprecation("hive.server2.enable.impersonation", "hive.server2.enable.doAs");
+   }
+ 
+   /**
+-- 
+1.7.0.4
+

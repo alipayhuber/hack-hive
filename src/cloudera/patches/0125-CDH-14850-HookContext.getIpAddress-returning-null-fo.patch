@@ -1,0 +1,90 @@
+From 10f92c3bd8b64963c204fcaaab7fe8985f658aa7 Mon Sep 17 00:00:00 2001
+From: Prasad Mujumdar <prasadm@cloudera.com>
+Date: Wed, 9 Oct 2013 23:27:48 -0700
+Subject: [PATCH 125/375] CDH-14850: HookContext.getIpAddress returning null for 'CREATE DATABASE' call
+
+---
+ .../apache/hive/service/auth/PlainSaslHelper.java  |    5 +--
+ .../service/server/TestHS2ThreadAllocation.java    |   30 ++++++++++++++++++++
+ 2 files changed, 32 insertions(+), 3 deletions(-)
+
+diff --git a/src/service/src/java/org/apache/hive/service/auth/PlainSaslHelper.java b/src/service/src/java/org/apache/hive/service/auth/PlainSaslHelper.java
+index 15b1675..82b638c 100644
+--- a/src/service/src/java/org/apache/hive/service/auth/PlainSaslHelper.java
++++ b/src/service/src/java/org/apache/hive/service/auth/PlainSaslHelper.java
+@@ -31,7 +31,6 @@
+ import org.apache.hadoop.hive.conf.HiveConf;
+ import org.apache.hive.service.auth.PlainSaslServer.ExternalAuthenticationCallback;
+ import org.apache.hive.service.auth.PlainSaslServer.SaslPlainProvider;
+-import org.apache.hive.service.cli.thrift.TCLIService;
+ import org.apache.hive.service.cli.thrift.TCLIService.Iface;
+ import org.apache.hive.service.cli.thrift.ThriftCLIService;
+ import org.apache.thrift.TProcessor;
+@@ -108,9 +107,9 @@ public SQLPlainProcessorFactory(ThriftCLIService service) {
+ 
+     @Override
+     public TProcessor getProcessor(TTransport trans) {
+-      TProcessor baseProcessor =  new TCLIService.Processor<Iface>(service);
++      TProcessor baseProcessor =  new TSetIpAddressProcessor<Iface>(service);
+       return doAsEnabled ? new TUGIContainingProcessor(baseProcessor, conf) :
+-            new TSetIpAddressProcessor<Iface>(service);
++            baseProcessor;
+     }
+   }
+ 
+diff --git a/src/service/src/test/org/apache/hive/service/server/TestHS2ThreadAllocation.java b/src/service/src/test/org/apache/hive/service/server/TestHS2ThreadAllocation.java
+index 1e903a7..225bf20 100644
+--- a/src/service/src/test/org/apache/hive/service/server/TestHS2ThreadAllocation.java
++++ b/src/service/src/test/org/apache/hive/service/server/TestHS2ThreadAllocation.java
+@@ -30,12 +30,28 @@
+ 
+ import org.apache.hadoop.hive.conf.HiveConf;
+ import org.apache.hadoop.hive.conf.HiveConf.ConfVars;
++import org.apache.hadoop.hive.ql.hooks.ExecuteWithHookContext;
++import org.apache.hadoop.hive.ql.hooks.HookContext;
++import org.apache.hadoop.hive.ql.hooks.HookContext.HookType;
+ import org.apache.hive.jdbc.HiveConnection;
+ import org.junit.AfterClass;
+ import org.junit.BeforeClass;
+ import org.junit.Test;
+ 
+ public class TestHS2ThreadAllocation {
++  // Hook to verify ipaddress
++  public static class IpHookImpl implements ExecuteWithHookContext {
++    public static String userName = "";
++    public static String ipAddress = "";
++    public void run(HookContext hookContext) {
++      if (hookContext.getHookType().equals(HookType.POST_EXEC_HOOK)) {
++        Assert.assertNotNull(hookContext.getIpAddress(), "IP Address is null");
++        ipAddress = hookContext.getIpAddress();
++        Assert.assertNotNull(hookContext.getUserName(), "Username is null");
++        userName = hookContext.getUserName();
++      }
++    }
++  }
+ 
+   private static HiveServer2 hiveServer2;
+   private static final int MAX_THREADS = 10;
+@@ -222,5 +238,19 @@ public void testHS2StabilityOnLargeConnections() throws InterruptedException {
+       Assert.fail("Something went wrong with connection closure");
+     }
+   }
++
++  @Test
++  public void testExecuteStatementWithHook() throws Exception {
++    Properties connProp = new Properties();
++    connProp.setProperty("user", System.getProperty("user.name"));
++    connProp.setProperty("password", "");
++    HiveConnection connection = new HiveConnection("jdbc:hive2://localhost:10000/default", connProp);
++    connection.createStatement().execute("SET hive.exec.post.hooks =  " + IpHookImpl.class.getName());
++    connection.createStatement().execute("show tables");
++    Assert.assertEquals(System.getProperty("user.name"), IpHookImpl.userName);
++    Assert.assertTrue(IpHookImpl.ipAddress.contains("127.0.0.1"));
++    connection.close();
++  }
++
+ }
+ 
+-- 
+1.7.0.4
+

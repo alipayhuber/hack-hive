@@ -1,0 +1,93 @@
+From f73e61b2a46b3a10338ccdfeba94e0c1ab2e5f3f Mon Sep 17 00:00:00 2001
+From: Brock Noland <brock@apache.org>
+Date: Wed, 4 Dec 2013 14:52:14 +0000
+Subject: [PATCH 176/375] HIVE-5855 - Add deprecated methods back to ColumnProjectionUtils (Brock Noland reviewed by Navis)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1547814 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../hadoop/hive/serde2/ColumnProjectionUtils.java  |   28 ++++++++++++++++++
+ .../hive/serde2/TestColumnProjectionUtils.java     |   31 ++++++++++++++++++++
+ 2 files changed, 59 insertions(+), 0 deletions(-)
+
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/ColumnProjectionUtils.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/ColumnProjectionUtils.java
+index fecae56..a118eb0 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/ColumnProjectionUtils.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/ColumnProjectionUtils.java
+@@ -37,6 +37,34 @@
+   private static final boolean READ_ALL_COLUMNS_DEFAULT = true;
+ 
+   /**
++   * @deprecated for backwards compatibility with <= 0.12, use setReadAllColumns
++   */
++  @Deprecated
++  public static void setFullyReadColumns(Configuration conf) {
++    setReadAllColumns(conf);
++  }
++
++  /**
++   * @deprecated for backwards compatibility with <= 0.12, use setReadAllColumns
++   * and appendReadColumns
++   */
++  @Deprecated
++  public static void setReadColumnIDs(Configuration conf, List<Integer> ids) {
++    setReadColumnIDConf(conf, READ_COLUMN_IDS_CONF_STR_DEFAULT);
++    appendReadColumns(conf, ids);
++  }
++
++  /**
++   * @deprecated for backwards compatibility with <= 0.12, use appendReadColumns
++   */
++  @Deprecated
++  public static void appendReadColumnID(Configuration conf, List<Integer> ids) {
++    appendReadColumns(conf, ids);
++  }
++
++
++
++  /**
+    * Sets the <em>READ_ALL_COLUMNS</em> flag and removes any previously
+    * set column ids.
+    */
+diff --git a/src/serde/src/test/org/apache/hadoop/hive/serde2/TestColumnProjectionUtils.java b/src/serde/src/test/org/apache/hadoop/hive/serde2/TestColumnProjectionUtils.java
+index b14c640..ddd4ca3 100644
+--- a/src/serde/src/test/org/apache/hadoop/hive/serde2/TestColumnProjectionUtils.java
++++ b/src/serde/src/test/org/apache/hadoop/hive/serde2/TestColumnProjectionUtils.java
+@@ -83,4 +83,35 @@ public void testReadColumnIds() {
+     assertEquals(columnIds, actual);
+     assertFalse(ColumnProjectionUtils.isReadAllColumns(conf));
+   }
++
++  @Test
++  public void testDeprecatedMethods() {
++    List<Integer> columnIds = new ArrayList<Integer>();
++    List<Integer> actual;
++
++    assertEquals(Collections.EMPTY_LIST, ColumnProjectionUtils.getReadColumnIDs(conf));
++
++    // test that read columns are initially an empty list
++    actual = ColumnProjectionUtils.getReadColumnIDs(conf);
++    assertEquals(Collections.EMPTY_LIST, actual);
++    // setting empty list results in reading none
++    ColumnProjectionUtils.setReadColumnIDs(conf, columnIds);
++    actual = ColumnProjectionUtils.getReadColumnIDs(conf);
++    assertEquals(Collections.EMPTY_LIST, actual);
++    // test set and append methods
++    columnIds.add(1);
++    ColumnProjectionUtils.setReadColumnIDs(conf, Collections.singletonList(1));
++    actual = ColumnProjectionUtils.getReadColumnIDs(conf);
++    Collections.sort(actual);
++    assertEquals(columnIds, actual);
++    columnIds.add(2);
++    ColumnProjectionUtils.appendReadColumnID(conf, Collections.singletonList(2));
++    actual = ColumnProjectionUtils.getReadColumnIDs(conf);
++    Collections.sort(actual);
++    assertEquals(columnIds, actual);
++    // test that setting read column ids set read all columns to false
++    assertFalse(ColumnProjectionUtils.isReadAllColumns(conf));
++    ColumnProjectionUtils.setFullyReadColumns(conf);
++    assertTrue(ColumnProjectionUtils.isReadAllColumns(conf));
++  }
+ }
+-- 
+1.7.0.4
+

@@ -1,0 +1,107 @@
+From 2f36fe7ec31b905f01126ec54c3b630b7ddd0a53 Mon Sep 17 00:00:00 2001
+From: Prasad Mujumdar <prasadm@cloudera.com>
+Date: Tue, 13 May 2014 19:36:12 -0700
+Subject: [PATCH 337/375] CDH-19118: Backport HIVE-6204 and HIVE-5931
+
+---
+ .../hadoop/hive/ql/parse/DDLSemanticAnalyzer.java  |    6 +++---
+ .../apache/hadoop/hive/ql/plan/RoleDDLDesc.java    |   18 ++++++++++++++----
+ .../apache/hadoop/hive/ql/plan/ShowGrantDesc.java  |    8 +++++---
+ 3 files changed, 22 insertions(+), 10 deletions(-)
+
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/DDLSemanticAnalyzer.java b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/DDLSemanticAnalyzer.java
+index ab5778c..980c776 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/DDLSemanticAnalyzer.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/DDLSemanticAnalyzer.java
+@@ -453,7 +453,7 @@ private void analyzeSetShowRole(ASTNode ast) throws SemanticException {
+         ctx.setResFile(new Path(ctx.getLocalTmpFileURI()));
+         rootTasks.add(hiveAuthorizationTaskFactory.createShowCurrentRoleTask(
+         getInputs(), getOutputs(), ctx.getResFile()));
+-        setFetchTask(createFetchTask(RoleDDLDesc.getSchema()));
++        setFetchTask(createFetchTask(RoleDDLDesc.getRoleNameSchema()));
+         break;
+       case 1:
+         rootTasks.add(hiveAuthorizationTaskFactory.createSetRoleTask(
+@@ -525,7 +525,7 @@ private void analyzeShowRoleGrant(ASTNode ast) throws SemanticException {
+         createShowRoleGrantTask(ast, ctx.getResFile(), getInputs(), getOutputs());
+     if(task != null) {
+       rootTasks.add(task);
+-      setFetchTask(createFetchTask(RoleDDLDesc.getSchema()));
++      setFetchTask(createFetchTask(RoleDDLDesc.getRoleShowGrantSchema()));
+     }
+   }
+ 
+@@ -535,7 +535,7 @@ private void analyzeShowRoles(ASTNode ast) throws SemanticException {
+ 
+     if (roleDDLTask != null) {
+       rootTasks.add(roleDDLTask);
+-      setFetchTask(createFetchTask(RoleDDLDesc.getSchema()));
++      setFetchTask(createFetchTask(RoleDDLDesc.getRoleNameSchema()));
+     }
+   }
+ 
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/plan/RoleDDLDesc.java b/src/ql/src/java/org/apache/hadoop/hive/ql/plan/RoleDDLDesc.java
+index fec421d..24717c3 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/plan/RoleDDLDesc.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/plan/RoleDDLDesc.java
+@@ -40,12 +40,22 @@
+   private String roleOwnerName;
+ 
+   /**
+-   * thrift ddl for the result of show role.
++   * thrift ddl for the result of show roles.
+    */
+-  private static String schema = "role#string";
++  private static final String roleNameSchema = "role#string";
+ 
+-  public static String getSchema() {
+-    return schema;
++  /**
++   * thrift ddl for the result of show role grant principalName
++   */
++  private static final String roleShowGrantSchema = "role,grant_option,grant_time,grantor#"
++      + "string:boolean:bigint:string";
++
++  public static String getRoleNameSchema() {
++    return roleNameSchema;
++  }
++
++  public static String getRoleShowGrantSchema() {
++    return roleShowGrantSchema;
+   }
+ 
+   public static enum RoleOperation {
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/plan/ShowGrantDesc.java b/src/ql/src/java/org/apache/hadoop/hive/ql/plan/ShowGrantDesc.java
+index de59ec3..aa88153 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/plan/ShowGrantDesc.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/plan/ShowGrantDesc.java
+@@ -33,7 +33,10 @@
+   /**
+    * thrift ddl for the result of show grant.
+    */
+-  private static final String schema = "property,value#string:string";
++  private static final String tabularSchema =
++      "database,table,partition,column,principal_name,principal_type,privilege," +
++      "grant_option,grant_time,grantor#" +
++      "string:string:string:string:string:string:string:boolean:bigint:string";
+ 
+   public ShowGrantDesc(){
+   }
+@@ -47,7 +50,7 @@ public ShowGrantDesc(String resFile, PrincipalDesc principalDesc,
+   }
+ 
+   public static String getSchema() {
+-    return schema;
++    return tabularSchema;
+   }
+ 
+   @Explain(displayName="principal desc")
+@@ -83,5 +86,4 @@ public void setResFile(String resFile) {
+   public void setColumns(List<String> columns) {
+     this.columns = columns;
+   }
+-  
+ }
+-- 
+1.7.0.4
+

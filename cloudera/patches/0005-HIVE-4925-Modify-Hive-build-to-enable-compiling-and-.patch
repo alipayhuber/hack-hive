@@ -1,0 +1,110 @@
+From fb2b7ece9e4ff093cc3bb3c775b88fd674ad6661 Mon Sep 17 00:00:00 2001
+From: Ashutosh Chauhan <hashutosh@apache.org>
+Date: Mon, 9 Sep 2013 15:20:23 +0000
+Subject: [PATCH 005/375] HIVE-4925 : Modify Hive build to enable compiling and running Hive with JDK7 (Xuefu Zhang via Ashutosh Chauhan)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1521157 13f79535-47bb-0310-9956-ffa450edef68
+---
+ build-common.xml                          |    4 ----
+ build.properties                          |    1 -
+ hcatalog/build.properties                 |    1 -
+ hcatalog/storage-handlers/hbase/build.xml |    9 ++++-----
+ shims/build.xml                           |    2 --
+ 5 files changed, 4 insertions(+), 13 deletions(-)
+
+diff --git a/src/build-common.xml b/src/build-common.xml
+index 940f4e9..46ca9e9 100644
+--- a/src/build-common.xml
++++ b/src/build-common.xml
+@@ -298,8 +298,6 @@
+      destdir="${test.build.classes}"
+      debug="${javac.debug}"
+      optimize="${javac.optimize}"
+-     target="${javac.version}"
+-     source="${javac.version}"
+      deprecation="${javac.deprecation}"
+      includeantruntime="false">
+       <compilerarg line="${javac.args} ${javac.args.warnings}" />
+@@ -312,8 +310,6 @@
+      destdir="${test.build.classes}"
+      debug="${javac.debug}"
+      optimize="${javac.optimize}"
+-     target="${javac.version}"
+-     source="${javac.version}"
+      deprecation="${javac.deprecation}"
+      includeantruntime="false">
+       <compilerarg line="${javac.args} ${javac.args.warnings}" />
+diff --git a/src/build.properties b/src/build.properties
+index 008d1bb..e58a709 100644
+--- a/src/build.properties
++++ b/src/build.properties
+@@ -21,7 +21,6 @@ hcatalog.version=${version}
+ year=2012
+ 
+ javac.debug=on
+-javac.version=1.6
+ javac.optimize=on
+ javac.deprecation=off
+ javac.args=
+diff --git a/src/hcatalog/build.properties b/src/hcatalog/build.properties
+index 634edb0..522aade 100644
+--- a/src/hcatalog/build.properties
++++ b/src/hcatalog/build.properties
+@@ -63,7 +63,6 @@ excludes=
+ javac.debug=on
+ javac.optimize=on
+ javac.deprecation=off
+-javac.version=1.6
+ javac.args=
+ javac.args.warnings=
+ 
+diff --git a/src/hcatalog/storage-handlers/hbase/build.xml b/src/hcatalog/storage-handlers/hbase/build.xml
+index 46ff91a..6053692 100644
+--- a/src/hcatalog/storage-handlers/hbase/build.xml
++++ b/src/hcatalog/storage-handlers/hbase/build.xml
+@@ -52,7 +52,6 @@
+     <property name="javac.debug" value="on" />
+     <property name="javac.optimize" value="on" />
+     <property name="javac.deprecation" value="off" />
+-    <property name="javac.version" value="1.6" />
+     <property name="javac.args" value="" />
+ 
+     <!-- test properties -->
+@@ -91,8 +90,8 @@
+     <target name="compile-src" depends="init">
+         <javac encoding="${build.encoding}" srcdir="${src.dir}:${basedir}/src/gen-java:${basedir}/src/resources" excludes="${excludes}"
+                includes="**/*.java" destdir="${build.classes}" debug="${javac.debug}"
+-               optimize="${javac.optimize}" target="${javac.version}"
+-               source="${javac.version}" deprecation="${javac.deprecation}"
++               optimize="${javac.optimize}"
++               deprecation="${javac.deprecation}"
+                includeantruntime="false">
+             <compilerarg line="${javac.args}"/>
+             <classpath refid="compile.class.path"/>
+@@ -118,8 +117,8 @@
+     <target name="compile-test" depends="jar">
+         <javac encoding="${build.encoding}" srcdir="${test.src.dir}" excludes="${excludes}"
+                includes="**/*.java" destdir="${test.build.classes}" debug="${javac.debug}"
+-               optimize="${javac.optimize}" target="${javac.version}"
+-               source="${javac.version}" deprecation="${javac.deprecation}"
++               optimize="${javac.optimize}"
++               deprecation="${javac.deprecation}"
+                includeantruntime="false">
+             <compilerarg line="${javac.args}"/>
+             <classpath refid="test.class.path" />
+diff --git a/src/shims/build.xml b/src/shims/build.xml
+index 529e846..cbfba5a 100644
+--- a/src/shims/build.xml
++++ b/src/shims/build.xml
+@@ -100,8 +100,6 @@ to call at top-level: ant deploy-contrib compile-core-test
+          destdir="${test.build.classes}"
+          debug="${javac.debug}"
+          optimize="${javac.optimize}"
+-         target="${javac.version}"
+-         source="${javac.version}"
+          deprecation="${javac.deprecation}"
+          includeantruntime="false">
+           <compilerarg line="${javac.args} ${javac.args.warnings}" />
+-- 
+1.7.0.4
+

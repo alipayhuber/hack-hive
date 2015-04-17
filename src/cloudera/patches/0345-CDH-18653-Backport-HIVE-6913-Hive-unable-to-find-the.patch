@@ -1,0 +1,138 @@
+From 1443220cfc3a6ad77bb5379f8384ba89d13b0ea5 Mon Sep 17 00:00:00 2001
+From: Xuefu Zhang <xuefu@apache.org>
+Date: Fri, 18 Apr 2014 02:19:41 +0000
+Subject: [PATCH 345/375] CDH-18653:Backport HIVE-6913 - Hive unable to find the hashtable file during complex multi-staged map join
+
+---
+ .../hadoop/hive/ql/exec/HashTableSinkOperator.java |    4 +++-
+ .../hadoop/hive/ql/exec/MapJoinOperator.java       |    8 ++++++--
+ .../org/apache/hadoop/hive/ql/exec/Operator.java   |    3 +++
+ .../hadoop/hive/ql/exec/mr/MapredLocalTask.java    |    9 +++++++--
+ .../org/apache/hadoop/hive/ql/plan/PlanUtils.java  |    2 +-
+ 5 files changed, 20 insertions(+), 6 deletions(-)
+
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/HashTableSinkOperator.java b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/HashTableSinkOperator.java
+index aa8f19c..056f7f7 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/HashTableSinkOperator.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/HashTableSinkOperator.java
+@@ -264,7 +264,9 @@ private boolean hasFilter(int alias) {
+   @Override
+   public void closeOp(boolean abort) throws HiveException {
+     try {
+-      if (mapJoinTables != null) {
++	  if (mapJoinTables == null) {
++	    LOG.debug("mapJoinTables is null");
++	  } else {
+         // get tmp file URI
+         String tmpURI = this.getExecContext().getLocalWork().getTmpFileURI();
+         LOG.info("Temp URI for side table: " + tmpURI);
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/MapJoinOperator.java b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/MapJoinOperator.java
+index 153b8ea..0f871da 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/MapJoinOperator.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/MapJoinOperator.java
+@@ -161,6 +161,8 @@ private void loadHashTable() throws HiveException {
+         }
+       }
+     } catch (Exception e) {
++      String msg = "Unxpected exception: " + e.getMessage();
++      LOG.error(msg, e);    	
+       throw new HiveException(e);
+     }
+   }
+@@ -226,8 +228,10 @@ public void processOp(Object row, int tag) throws HiveException {
+           storage[pos] = null;
+         }
+       }
+-    } catch (SerDeException e) {
+-      throw new HiveException(e);
++    } catch (Exception e) {
++      String msg = "Unxpected exception: " + e.getMessage();
++      LOG.error(msg, e);
++      throw new HiveException(msg, e);
+     }
+   }
+ 
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/Operator.java b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/Operator.java
+index 8c74645..cadf2e2 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/Operator.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/Operator.java
+@@ -565,6 +565,7 @@ protected boolean allInitializedParentsAreClosed() {
+         if(parent==null){
+           continue;
+         }
++        LOG.debug("allInitializedParentsAreClosed? parent.state = " + parent.state);
+         if (!(parent.state == State.CLOSE || parent.state == State.UNINIT)) {
+           return false;
+         }
+@@ -584,6 +585,7 @@ public void close(boolean abort) throws HiveException {
+ 
+     // check if all parents are finished
+     if (!allInitializedParentsAreClosed()) {
++      LOG.debug("Not all parent operators are closed. Not closing.");
+       return;
+     }
+ 
+@@ -610,6 +612,7 @@ public void close(boolean abort) throws HiveException {
+       }
+ 
+       for (Operator<? extends OperatorDesc> op : childOperators) {
++        LOG.debug("Closing child = " + op);
+         op.close(abort);
+       }
+ 
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/mr/MapredLocalTask.java b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/mr/MapredLocalTask.java
+index 1c5b8ed..ba85c8f 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/mr/MapredLocalTask.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/mr/MapredLocalTask.java
+@@ -339,14 +339,15 @@ private void startForward(boolean inputFileChangeSenstive, String bigTableBucket
+         setUpFetchOpContext(fetchOp, alias, bigTableBucket);
+       }
+ 
++      // get the root operator
++      Operator<? extends OperatorDesc> forwardOp = work.getAliasToWork().get(alias);
+       if (fetchOp.isEmptyTable()) {
+         //generate empty hashtable for empty table
+         this.generateDummyHashTable(alias, bigTableBucket);
++        forwardOp.close(false);
+         continue;
+       }
+ 
+-      // get the root operator
+-      Operator<? extends OperatorDesc> forwardOp = work.getAliasToWork().get(alias);
+       // walk through the operator tree
+       while (true) {
+         InspectableObject row = fetchOp.getNextRow();
+@@ -371,6 +372,9 @@ private void startForward(boolean inputFileChangeSenstive, String bigTableBucket
+ 
+   private void initializeOperators(Map<FetchOperator, JobConf> fetchOpJobConfMap)
+       throws HiveException {
++    for (Map.Entry<String, Operator<? extends OperatorDesc>> entry : work.getAliasToWork().entrySet()) {
++      LOG.debug("initializeOperators: " +  entry.getKey() + ", children = "  + entry.getValue().getChildOperators());
++    }
+     // this mapper operator is used to initialize all the operators
+     for (Map.Entry<String, FetchWork> entry : work.getAliasToFetchWork().entrySet()) {
+       JobConf jobClone = new JobConf(job);
+@@ -412,6 +416,7 @@ private void initializeOperators(Map<FetchOperator, JobConf> fetchOpJobConfMap)
+ 
+   private void generateDummyHashTable(String alias, String bigBucketFileName)
+       throws HiveException,IOException {
++    LOG.debug("generating dummy for " + alias);
+     // find the (byte)tag for the map join(HashTableSinkOperator)
+     Operator<? extends OperatorDesc> parentOp = work.getAliasToWork().get(alias);
+     Operator<? extends OperatorDesc> childOp = parentOp.getChildOperators().get(0);
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/plan/PlanUtils.java b/src/ql/src/java/org/apache/hadoop/hive/ql/plan/PlanUtils.java
+index cdd8b9c..a33b473 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/plan/PlanUtils.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/plan/PlanUtils.java
+@@ -83,7 +83,7 @@
+     FIELD, JEXL
+   };
+ 
+-  public static long getCountForMapJoinDumpFilePrefix() {
++  public static synchronized long getCountForMapJoinDumpFilePrefix() {
+     return countForMapJoinDumpFilePrefix++;
+   }
+ 
+-- 
+1.7.0.4
+

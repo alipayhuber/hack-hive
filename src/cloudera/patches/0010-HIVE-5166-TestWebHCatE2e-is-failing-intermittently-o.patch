@@ -1,0 +1,55 @@
+From 078ee92af1f7ed6c5de553d0ca53a74ac10490d4 Mon Sep 17 00:00:00 2001
+From: Ashutosh Chauhan <hashutosh@apache.org>
+Date: Wed, 18 Sep 2013 15:09:20 +0000
+Subject: [PATCH 010/375] HIVE-5166 : TestWebHCatE2e is failing intermittently on trunk (Eugene Koifman via Ashutosh Chauhan)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1524441 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../hive/hcatalog/templeton/TestWebHCatE2e.java    |   17 ++++++++++++++---
+ 1 files changed, 14 insertions(+), 3 deletions(-)
+
+diff --git a/src/hcatalog/webhcat/svr/src/test/java/org/apache/hive/hcatalog/templeton/TestWebHCatE2e.java b/src/hcatalog/webhcat/svr/src/test/java/org/apache/hive/hcatalog/templeton/TestWebHCatE2e.java
+index 9df4421..e6fb5ee 100644
+--- a/src/hcatalog/webhcat/svr/src/test/java/org/apache/hive/hcatalog/templeton/TestWebHCatE2e.java
++++ b/src/hcatalog/webhcat/svr/src/test/java/org/apache/hive/hcatalog/templeton/TestWebHCatE2e.java
+@@ -26,6 +26,7 @@
+ import org.apache.commons.httpclient.methods.GetMethod;
+ import org.apache.commons.httpclient.methods.PutMethod;
+ import org.apache.commons.httpclient.methods.StringRequestEntity;
++import org.apache.hadoop.hive.metastore.MetaStoreUtils;
+ import org.apache.hadoop.hive.ql.ErrorMsg;
+ import org.junit.AfterClass;
+ import org.junit.BeforeClass;
+@@ -57,7 +58,7 @@
+ public class TestWebHCatE2e {
+   private static final Logger LOG =
+       LoggerFactory.getLogger(TestWebHCatE2e.class);
+-  private static final String templetonBaseUrl =
++  private static String templetonBaseUrl =
+       "http://localhost:50111/templeton/v1";
+   private static final String username= "johndoe";
+   private static final String ERROR_CODE = "errorCode";
+@@ -65,8 +66,18 @@
+   private static final String charSet = "UTF-8";
+   @BeforeClass
+   public static void startHebHcatInMem() {
+-    templetonServer = new Main(new String[] {"-D" + AppConfig.UNIT_TEST_MODE + "=true"});
+-    LOG.info("Starting Main");
++    int webhcatPort = 50111;
++    try {
++      //in case concurrent tests are running on the same machine
++      webhcatPort = MetaStoreUtils.findFreePort();
++    }
++    catch (IOException ex) {
++      LOG.warn("Unable to find free port; using default: " + webhcatPort);
++    }
++    templetonBaseUrl = templetonBaseUrl.replace("50111", Integer.toString(webhcatPort));
++    templetonServer = new Main(new String[] {"-D" + 
++            AppConfig.UNIT_TEST_MODE + "=true", "-D" + AppConfig.PORT + "=" + webhcatPort});
++    LOG.info("Starting Main; WebHCat using port: " + webhcatPort);
+     templetonServer.run();
+     LOG.info("Main started");
+   }
+-- 
+1.7.0.4
+

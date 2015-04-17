@@ -1,0 +1,44 @@
+From 183ebf989ee883c2035172e9b1cd8202250de941 Mon Sep 17 00:00:00 2001
+From: Brock Noland <brock@apache.org>
+Date: Sat, 12 Oct 2013 15:54:24 +0000
+Subject: [PATCH 030/375] HIVE-5513 - Set the short version directly via build script (Prasad Mujumdar via Brock Noland)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1531550 13f79535-47bb-0310-9956-ffa450edef68
+---
+ build.properties |    3 ++-
+ common/build.xml |    5 -----
+ 2 files changed, 2 insertions(+), 6 deletions(-)
+
+diff --git a/src/build.properties b/src/build.properties
+index b1e745b..d551c8b 100644
+--- a/src/build.properties
++++ b/src/build.properties
+@@ -16,7 +16,8 @@
+ 
+ Name=Hive
+ name=hive
+-version=0.12.0
++shortversion=0.12.0
++version=${shortversion}-SNAPSHOT
+ hcatalog.version=${version}
+ year=2012
+ 
+diff --git a/src/common/build.xml b/src/common/build.xml
+index bb595dc..5c5bcf6 100755
+--- a/src/common/build.xml
++++ b/src/common/build.xml
+@@ -30,11 +30,6 @@ to call at top-level: ant deploy-contrib compile-core-test
+ 
+   <target name="compile" depends="init, setup, ivy-retrieve">
+     <echo message="Project: ${ant.project.name}"/>
+-    <!-- Restrict short version to just major.minor.change numbers -->
+-    <propertyregex property="shortversion"
+-      input="${version}" regexp="^([0-9]+\.[0-9]+\.[0-9]+)"
+-      select="\1" defaultValue="${version}"
+-    />
+     <exec executable="bash" failonerror="true">
+       <arg value="${basedir}/src/scripts/saveVersion.sh"/>
+       <arg value="${version}"/>
+-- 
+1.7.0.4
+

@@ -1,0 +1,44 @@
+From 8cb2d875070d08f50203dd66318fb7ce57cafc36 Mon Sep 17 00:00:00 2001
+From: xzhang <xzhang@xzdt.(none)>
+Date: Tue, 20 May 2014 10:21:56 -0700
+Subject: [PATCH 340/375] CDH-19267: loading decimal data from text table to parquet messes up scale and precision (update test)
+
+---
+ .../results/clientpositive/parquet_decimal.q.out   |    4 ++--
+ .../results/clientpositive/parquet_decimal1.q.out  |    4 ++--
+ 2 files changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/src/ql/src/test/results/clientpositive/parquet_decimal.q.out b/src/ql/src/test/results/clientpositive/parquet_decimal.q.out
+index 34ad94d..4c9fef6 100644
+--- a/src/ql/src/test/results/clientpositive/parquet_decimal.q.out
++++ b/src/ql/src/test/results/clientpositive/parquet_decimal.q.out
+@@ -55,9 +55,9 @@ Mary	4.33
+ Cluck	5.96
+ Tom	12.25
+ Mary	33.33
+-Tom	0.19
++Tom	19
+ Beck	3.15
+-Beck	7.99
++Beck	79.9
+ PREHOOK: query: TRUNCATE TABLE parq_dec
+ PREHOOK: type: TRUNCATETABLE
+ PREHOOK: Output: default@parq_dec
+diff --git a/src/ql/src/test/results/clientpositive/parquet_decimal1.q.out b/src/ql/src/test/results/clientpositive/parquet_decimal1.q.out
+index ae1a430..fe30676 100644
+--- a/src/ql/src/test/results/clientpositive/parquet_decimal1.q.out
++++ b/src/ql/src/test/results/clientpositive/parquet_decimal1.q.out
+@@ -65,8 +65,8 @@ POSTHOOK: Input: default@parq_dec_comp
+ POSTHOOK: Lineage: parq_dec_comp.arr SIMPLE [(dec_comp)dec_comp.FieldSchema(name:arr, type:array<decimal(5,2)>, comment:null), ]
+ POSTHOOK: Lineage: parq_dec_comp.m SIMPLE [(dec_comp)dec_comp.FieldSchema(name:m, type:map<string,decimal(5,2)>, comment:null), ]
+ POSTHOOK: Lineage: parq_dec_comp.s SIMPLE [(dec_comp)dec_comp.FieldSchema(name:s, type:struct<i:int,d:decimal(5,2)>, comment:null), ]
+-[3.14,6.28,0.73]	{"k2":29.39,"k1":92.77}	{"i":5,"d":9.03}
+-[1.24,1.33,0.34]	{"k4":29.09,"k2":2.79}	{"i":11,"d":0.03}
++[3.14,6.28,7.3]	{"k2":29.39,"k1":92.77}	{"i":5,"d":9.03}
++[12.4,1.33,0.34]	{"k4":29.09,"k2":2.79}	{"i":11,"d":0.03}
+ PREHOOK: query: DROP TABLE dec_comp
+ PREHOOK: type: DROPTABLE
+ PREHOOK: Input: default@dec_comp
+-- 
+1.7.0.4
+

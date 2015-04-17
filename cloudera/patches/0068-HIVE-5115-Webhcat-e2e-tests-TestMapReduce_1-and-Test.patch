@@ -1,0 +1,51 @@
+From 6acb55e0b637f4c10b033150d6a59bee756de584 Mon Sep 17 00:00:00 2001
+From: Thejas Madhavan Nair <thejas@apache.org>
+Date: Fri, 4 Oct 2013 22:09:41 +0000
+Subject: [PATCH 068/375] HIVE-5115 : Webhcat e2e tests TestMapReduce_1 and TestHeartbeat_2 require changes for Hadoop 2 (Deepesh Khandelwal via Thejas Nair)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1529328 13f79535-47bb-0310-9956-ffa450edef68
+---
+ hcatalog/src/test/e2e/templeton/README.txt         |    8 ++++----
+ .../test/e2e/templeton/tests/jobsubmission2.conf   |    2 +-
+ 2 files changed, 5 insertions(+), 5 deletions(-)
+
+diff --git a/src/hcatalog/src/test/e2e/templeton/README.txt b/src/hcatalog/src/test/e2e/templeton/README.txt
+index 2b5125e..5ff306f 100644
+--- a/src/hcatalog/src/test/e2e/templeton/README.txt
++++ b/src/hcatalog/src/test/e2e/templeton/README.txt
+@@ -87,15 +87,15 @@ Tips:
+ 3. Copy contents of src/test/e2e/templeton/inpdir to hdfs
+ (e.g. ./bin/hadoop fs -put ~/dev/hive/hcatalog/src/test/e2e/templeton/inpdir/ webhcate2e)
+ 
+-4. You will need to two jars in the same HDFS directory as the contents of inpdir.  piggybank.jar, which can
+-be obtained from Pig.  The second is the hadoop-examples.jar, which can be obtained from your Hadoop distribution.
+-This should be called hexamples.jar when it is uploaded to HDFS.
++4. You will need to copy three jars in the same HDFS directory as the contents of inpdir.  piggybank.jar, which can
++be obtained from Pig and the other two are obtained from your Hadoop distribution.
++For Hadoop 1.x you would need to upload hadoop-examples.jar twice to HDFS one as hclient.jar and other as hexamples.jar.
++For Hadoop 2.x you would need to upload hadoop-mapreduce-client-jobclient.jar to HDFS as hclient.jar and hadoop-mapreduce-examples.jar to HDFS as hexamples.jar. 
+ Also see http://hive.apache.org/docs/hcat_r0.5.0/rest_server_install.html#Hadoop+Distributed+Cache for notes on
+ additional JAR files to copy to HDFS.
+ 
+ 5. Make sure TEMPLETON_HOME evnironment variable is set
+ 
+-
+ 6. hadoop/conf/core-site.xml should have items described in
+ http://hive.apache.org/docs/hcat_r0.5.0/rest_server_install.html#Permissions
+ 
+diff --git a/src/hcatalog/src/test/e2e/templeton/tests/jobsubmission2.conf b/src/hcatalog/src/test/e2e/templeton/tests/jobsubmission2.conf
+index 0e16b0c..d0f0aa3 100644
+--- a/src/hcatalog/src/test/e2e/templeton/tests/jobsubmission2.conf
++++ b/src/hcatalog/src/test/e2e/templeton/tests/jobsubmission2.conf
+@@ -46,7 +46,7 @@ $cfg =
+      'method' => 'POST',
+      'url' => ':TEMPLETON_URL:/templeton/v1/mapreduce/jar',
+      'post_options' => ['user.name=:UNAME:','arg=-mt', 'arg=642000',
+-                             'jar=:INPDIR_HDFS:/hexamples.jar', 'class=sleep', 'statusdir=/tmp' ],
++                             'jar=:INPDIR_HDFS:/hclient.jar', 'class=sleep', 'statusdir=/tmp' ],
+      'json_field_substr_match' => { 'id' => '\d+'},
+      'status_code' => 200,
+      'check_job_created' => 1,
+-- 
+1.7.0.4
+

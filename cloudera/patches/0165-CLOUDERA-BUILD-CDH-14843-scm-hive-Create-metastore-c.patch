@@ -1,0 +1,215 @@
+From aed12cebf5cc32c0a87f2806658e99980c907bd5 Mon Sep 17 00:00:00 2001
+From: Prasad Mujumdar <prasadm@cloudera.com>
+Date: Tue, 8 Oct 2013 19:06:04 -0700
+Subject: [PATCH 165/375] CLOUDERA-BUILD: CDH-14843: [scm/hive] Create metastore command failed
+
+This commit has both commits of the same name in cdh5-0.11.0 squashed.
+---
+ .../org/apache/hive/beeline/HiveSchemaHelper.java  |   29 ++++++++++++
+ .../org/apache/hive/beeline/HiveSchemaTool.java    |   19 ++++++++
+ .../org/apache/hive/beeline/TestSchemaTool.java    |   49 ++++++++++++++++++++
+ 3 files changed, 97 insertions(+), 0 deletions(-)
+
+diff --git a/src/beeline/src/java/org/apache/hive/beeline/HiveSchemaHelper.java b/src/beeline/src/java/org/apache/hive/beeline/HiveSchemaHelper.java
+index 5dda36c..774f7c7 100644
+--- a/src/beeline/src/java/org/apache/hive/beeline/HiveSchemaHelper.java
++++ b/src/beeline/src/java/org/apache/hive/beeline/HiveSchemaHelper.java
+@@ -79,6 +79,12 @@
+      * @return
+      */
+     public boolean needsQuotedIdentifier();
++
++    /***
++     * Set DB specific options if any
++     * @param dbOps
++     */
++    public void setDbOpts(String dbOps);
+   }
+ 
+ 
+@@ -88,6 +94,7 @@
+    *
+    */
+   private static abstract class AbstractCommandParser implements NestedScriptParser {
++    private String dbOpts = null;
+ 
+     @Override
+     public boolean isPartialCommand(String dbCommand) throws IllegalArgumentException{
+@@ -126,6 +133,15 @@ public String cleanseCommand(String dbCommand) {
+     public boolean needsQuotedIdentifier() {
+       return false;
+     }
++
++    @Override
++    public void setDbOpts(String dbOpts) {
++      this.dbOpts = dbOpts;
++    }
++
++    protected String getDbOpts() {
++      return dbOpts;
++    }
+   }
+ 
+ 
+@@ -210,6 +226,8 @@ public String cleanseCommand(String dbCommand) {
+ 
+   // Postgres specific parser
+   public static class PostgresCommandParser extends AbstractCommandParser {
++    public static String POSTGRES_STRING_COMMAND_FILTER = "SET standard_conforming_strings";
++    public static String POSTGRES_SKIP_STANDARD_STRING = "postgres.filter.81";
+     private static String POSTGRES_NESTING_TOKEN = "\\i";
+ 
+     @Override
+@@ -231,6 +249,17 @@ public boolean isNestedScript(String dbCommand) {
+     public boolean needsQuotedIdentifier() {
+       return true;
+     }
++
++    @Override
++    public boolean isNonExecCommand(String dbCommand) {
++      // Skip "standard_conforming_strings" command which is not supported in older postgres
++      if (POSTGRES_SKIP_STANDARD_STRING.equalsIgnoreCase(getDbOpts())) {
++        if (dbCommand.startsWith(POSTGRES_STRING_COMMAND_FILTER)) {
++          return true;
++        }
++      }
++      return super.isNonExecCommand(dbCommand);
++    }
+   }
+ 
+   //Oracle specific parser
+diff --git a/src/beeline/src/java/org/apache/hive/beeline/HiveSchemaTool.java b/src/beeline/src/java/org/apache/hive/beeline/HiveSchemaTool.java
+index 1b8e315..0be435b 100644
+--- a/src/beeline/src/java/org/apache/hive/beeline/HiveSchemaTool.java
++++ b/src/beeline/src/java/org/apache/hive/beeline/HiveSchemaTool.java
+@@ -55,6 +55,7 @@
+   private String passWord = null;
+   private boolean dryRun = false;
+   private boolean verbose = false;
++  private String dbOpts = null;
+   private final HiveConf hiveConf;
+   private final String dbType;
+   private final MetaStoreSchemaInfo metaStoreSchemaInfo;
+@@ -95,6 +96,14 @@ public void setVerbose(boolean verbose) {
+     this.verbose = verbose;
+   }
+ 
++  public String getDbOpts() {
++    return dbOpts;
++  }
++
++  public void setDbOpts(String dbOpts) {
++    this.dbOpts = dbOpts;
++  }
++
+   private static void printAndExit(Options cmdLineOptions) {
+     HelpFormatter formatter = new HelpFormatter();
+     formatter.printHelp("schemaTool", cmdLineOptions);
+@@ -335,6 +344,7 @@ public static String buildCommand(NestedScriptParser dbCommandParser,
+   private void runBeeLine(String scriptDir, String scriptFile) throws IOException {
+     NestedScriptParser dbCommandParser =
+         HiveSchemaHelper.getDbCommandParser(dbType);
++    dbCommandParser.setDbOpts(getDbOpts());
+     // expand the nested script
+     String sqlCommands = buildCommand(dbCommandParser, scriptDir, scriptFile);
+     File tmpFile = File.createTempFile("schematool", ".sql");
+@@ -417,6 +427,10 @@ private static void initOptions(Options cmdLineOptions) {
+     Option dbTypeOpt = OptionBuilder.withArgName("databaseType")
+                 .hasArgs().withDescription("Metastore database type")
+                 .create("dbType");
++    Option dbOpts = OptionBuilder.withArgName("databaseOpts")
++                .hasArgs().withDescription("Backend DB specific options")
++                .create("dbOpts");
++
+     Option dryRunOpt = new Option("dryRun", "list SQL scripts (no execute)");
+     Option verboseOpt = new Option("verbose", "only print SQL statements");
+ 
+@@ -426,6 +440,7 @@ private static void initOptions(Options cmdLineOptions) {
+     cmdLineOptions.addOption(passwdOpt);
+     cmdLineOptions.addOption(dbTypeOpt);
+     cmdLineOptions.addOption(verboseOpt);
++    cmdLineOptions.addOption(dbOpts);
+     cmdLineOptions.addOptionGroup(optGroup);
+   }
+ 
+@@ -481,6 +496,10 @@ public static void main(String[] args) {
+       if (line.hasOption("verbose")) {
+         schemaTool.setVerbose(true);
+       }
++      if (line.hasOption("dbOpts")) {
++        schemaTool.setDbOpts(line.getOptionValue("dbOpts"));
++      }
++
+ 
+       if (line.hasOption("info")) {
+         schemaTool.showInfo();
+diff --git a/src/itests/hive-unit/src/test/java/org/apache/hive/beeline/TestSchemaTool.java b/src/itests/hive-unit/src/test/java/org/apache/hive/beeline/TestSchemaTool.java
+index 71c7756..55ec43e 100644
+--- a/src/itests/hive-unit/src/test/java/org/apache/hive/beeline/TestSchemaTool.java
++++ b/src/itests/hive-unit/src/test/java/org/apache/hive/beeline/TestSchemaTool.java
+@@ -33,6 +33,7 @@
+ import org.apache.hadoop.hive.metastore.MetaStoreSchemaInfo;
+ import org.apache.hive.beeline.HiveSchemaHelper;
+ import org.apache.hive.beeline.HiveSchemaHelper.NestedScriptParser;
++import org.apache.hive.beeline.HiveSchemaHelper.PostgresCommandParser;
+ import org.apache.hive.beeline.HiveSchemaTool;
+ 
+ public class TestSchemaTool extends TestCase {
+@@ -368,6 +369,54 @@ public void testNestedScriptsForOracle() throws Exception {
+     assertTrue(flattenedSql.contains(parentTab));
+   }
+ 
++  /**
++   * Test script formatting
++   * @throws Exception
++   */
++  public void testPostgresFilter() throws Exception {
++    String testScript[] = {
++        "-- this is a comment",
++      "DROP TABLE IF EXISTS fooTab;",
++      HiveSchemaHelper.PostgresCommandParser.POSTGRES_STRING_COMMAND_FILTER + ";",
++      "CREATE TABLE fooTab(id INTEGER);",
++      "DROP TABLE footab;",
++      "-- ending comment"
++    };
++
++    String resultScriptwithFilter[] = {
++      "DROP TABLE IF EXISTS fooTab",
++      HiveSchemaHelper.PostgresCommandParser.POSTGRES_STRING_COMMAND_FILTER,
++      "CREATE TABLE fooTab(id INTEGER)",
++      "DROP TABLE footab",
++    };
++
++    String resultScriptwithoutFilter[] = {
++        "DROP TABLE IF EXISTS fooTab",
++        "CREATE TABLE fooTab(id INTEGER)",
++        "DROP TABLE footab",
++      };
++
++    String expectedSQL = StringUtils.join(resultScriptwithFilter, System.getProperty("line.separator")) +
++        System.getProperty("line.separator");
++    File testScriptFile = generateTestScript(testScript);
++    String flattenedSql = HiveSchemaTool.buildCommand(
++        HiveSchemaHelper.getDbCommandParser("postgres"),
++        testScriptFile.getParentFile().getPath(), testScriptFile.getName());
++    assertEquals(expectedSQL, flattenedSql);
++
++    System.setProperty(HiveSchemaHelper.PostgresCommandParser.POSTGRES_SKIP_STANDARD_STRING, "true");
++    NestedScriptParser postgresParser = HiveSchemaHelper.getDbCommandParser("postgres");
++    postgresParser.setDbOpts(PostgresCommandParser.POSTGRES_SKIP_STANDARD_STRING);
++    expectedSQL = StringUtils.join(resultScriptwithoutFilter, System.getProperty("line.separator")) +
++        System.getProperty("line.separator");
++    testScriptFile = generateTestScript(testScript);
++    flattenedSql = HiveSchemaTool.buildCommand(
++        postgresParser,
++        testScriptFile.getParentFile().getPath(), testScriptFile.getName());
++    assertEquals(expectedSQL, flattenedSql);
++
++  }
++
+   private File generateTestScript(String [] stmts) throws IOException {
+     File testScriptFile = File.createTempFile("schematest", ".sql");
+     testScriptFile.deleteOnExit();
+-- 
+1.7.0.4
+

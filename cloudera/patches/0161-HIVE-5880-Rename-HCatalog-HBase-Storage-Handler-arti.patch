@@ -1,0 +1,54 @@
+From a8ce410240f43d27556944365c6d223ab0fabc91 Mon Sep 17 00:00:00 2001
+From: Brock Noland <brock@apache.org>
+Date: Mon, 2 Dec 2013 15:48:35 +0000
+Subject: [PATCH 161/375] HIVE-5880 - Rename HCatalog HBase Storage Handler artifact id (Brock Noland reviewed by Prasad Mujumdar)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1547069 13f79535-47bb-0310-9956-ffa450edef68
+---
+ hcatalog/storage-handlers/hbase/pom.xml |    2 +-
+ itests/hcatalog-unit/pom.xml            |    2 +-
+ packaging/pom.xml                       |    2 +-
+ 3 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/src/hcatalog/storage-handlers/hbase/pom.xml b/src/hcatalog/storage-handlers/hbase/pom.xml
+index 27ac445..15ff173 100644
+--- a/src/hcatalog/storage-handlers/hbase/pom.xml
++++ b/src/hcatalog/storage-handlers/hbase/pom.xml
+@@ -29,7 +29,7 @@
+   <relativePath>../../pom.xml</relativePath>
+   </parent>
+ 
+-  <artifactId>hive-hbase-storage-handler</artifactId>
++  <artifactId>hive-hcatalog-hbase-storage-handler</artifactId>
+   <packaging>jar</packaging>
+   <name>Hive HCatalog HBase Storage Handler</name>
+ 
+diff --git a/src/itests/hcatalog-unit/pom.xml b/src/itests/hcatalog-unit/pom.xml
+index 05b0d26..b465ef9 100644
+--- a/src/itests/hcatalog-unit/pom.xml
++++ b/src/itests/hcatalog-unit/pom.xml
+@@ -55,7 +55,7 @@
+     </dependency>
+     <dependency>
+       <groupId>org.apache.hive.hcatalog</groupId>
+-      <artifactId>hive-hbase-storage-handler</artifactId>
++      <artifactId>hive-hcatalog-hbase-storage-handler</artifactId>
+       <version>${project.version}</version>
+       <classifier>tests</classifier>
+       <scope>test</scope>
+diff --git a/src/packaging/pom.xml b/src/packaging/pom.xml
+index db5ee08..404b411 100644
+--- a/src/packaging/pom.xml
++++ b/src/packaging/pom.xml
+@@ -133,7 +133,7 @@
+     </dependency>
+     <dependency>
+       <groupId>org.apache.hive.hcatalog</groupId>
+-      <artifactId>hive-hbase-storage-handler</artifactId>
++      <artifactId>hive-hcatalog-hbase-storage-handler</artifactId>
+       <version>${project.version}</version>
+     </dependency>
+     <dependency>
+-- 
+1.7.0.4
+

@@ -1,0 +1,316 @@
+From 080f1a542022343ca04e7176b25e8c11f9061ee1 Mon Sep 17 00:00:00 2001
+From: Brock Noland <brock@apache.org>
+Date: Fri, 20 Sep 2013 16:07:16 +0000
+Subject: [PATCH 041/375] HIVE-4568 - Beeline needs to support resolving variables (Xuefu Zhang reviewed by Thejas M Nair)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1525046 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../src/java/org/apache/hive/beeline/BeeLine.java  |   14 ++++-
+ .../org/apache/hive/beeline/BeeLine.properties     |    4 +
+ .../java/org/apache/hive/beeline/BeeLineOpts.java  |   12 ++++
+ .../apache/hive/beeline/DatabaseConnection.java    |   32 ++++++++++-
+ .../hive/beeline/src/test/TestBeeLineWithArgs.java |   62 +++++++++++++++-----
+ 5 files changed, 108 insertions(+), 16 deletions(-)
+
+diff --git a/src/beeline/src/java/org/apache/hive/beeline/BeeLine.java b/src/beeline/src/java/org/apache/hive/beeline/BeeLine.java
+index e5ad9ab..df05fd2 100644
+--- a/src/beeline/src/java/org/apache/hive/beeline/BeeLine.java
++++ b/src/beeline/src/java/org/apache/hive/beeline/BeeLine.java
+@@ -96,7 +96,7 @@
+ public class BeeLine {
+   private static final ResourceBundle resourceBundle =
+       ResourceBundle.getBundle(BeeLine.class.getName());
+-  private BeeLineSignalHandler signalHandler = null;
++  private final BeeLineSignalHandler signalHandler = null;
+   private static final String separator = System.getProperty("line.separator");
+   private boolean exit = false;
+   private final DatabaseConnections connections = new DatabaseConnections();
+@@ -125,6 +125,8 @@
+   private static final int ERRNO_ARGS = 1;
+   private static final int ERRNO_OTHER = 2;
+ 
++  private static final String HIVE_VAR_PREFIX = "--hivevar";
++
+   private final Map<Object, Object> formats = map(new Object[] {
+       "vertical", new VerticalOutputFormat(this),
+       "table", new TableOutputFormat(this),
+@@ -504,6 +506,16 @@ boolean initArgs(String[] args) {
+         return false;
+       }
+ 
++      // Parse hive variables
++      if (args[i].equals(HIVE_VAR_PREFIX)) {
++        String[] parts = split(args[++i], "=");
++        if (parts.length != 2) {
++          return false;
++        }
++        getOpts().getHiveVariables().put(parts[0], parts[1]);
++        continue;
++      }
++
+       // -- arguments are treated as properties
+       if (args[i].startsWith("--")) {
+         String[] parts = split(args[i].substring(2), "=");
+diff --git a/src/beeline/src/java/org/apache/hive/beeline/BeeLine.properties b/src/beeline/src/java/org/apache/hive/beeline/BeeLine.properties
+index b6650cf..6c386ae 100644
+--- a/src/beeline/src/java/org/apache/hive/beeline/BeeLine.properties
++++ b/src/beeline/src/java/org/apache/hive/beeline/BeeLine.properties
+@@ -143,6 +143,10 @@ cmd-usage: Usage: java org.apache.hive.cli.beeline.BeeLine \n \
+ \  -d <driver class>               the driver class to use\n \
+ \  -e <query>                      query that should be executed\n \
+ \  -f <file>                       script file that should be executed\n \
++\  --hivevar name=value            hive variable name and value\n \
++\                                  This is Hive specific settings in which variables\n \
++\                                  can be set at session level and referenced in Hive\n \
++\                                  commands or queries.\n \
+ \  --color=[true/false]            control whether color is used for display\n \
+ \  --showHeader=[true/false]       show column names in query results\n \
+ \  --headerInterval=ROWS;          the interval between which heades are displayed\n \
+diff --git a/src/beeline/src/java/org/apache/hive/beeline/BeeLineOpts.java b/src/beeline/src/java/org/apache/hive/beeline/BeeLineOpts.java
+index 6581e35..881a197 100644
+--- a/src/beeline/src/java/org/apache/hive/beeline/BeeLineOpts.java
++++ b/src/beeline/src/java/org/apache/hive/beeline/BeeLineOpts.java
+@@ -31,8 +31,10 @@
+ import java.lang.reflect.InvocationTargetException;
+ import java.lang.reflect.Method;
+ import java.util.Arrays;
++import java.util.HashMap;
+ import java.util.LinkedList;
+ import java.util.List;
++import java.util.Map;
+ import java.util.Properties;
+ import java.util.TreeSet;
+ 
+@@ -81,6 +83,8 @@
+ 
+   private String scriptFile = null;
+ 
++  private Map<String, String> hiveVariables = new HashMap<String, String>();
++
+   public BeeLineOpts(BeeLine beeLine, Properties props) {
+     this.beeLine = beeLine;
+     if (terminal.getTerminalWidth() > 0) {
+@@ -432,4 +436,12 @@ public void setAllowMultiLineCommand(boolean allowMultiLineCommand) {
+   }
+ 
+ 
++  public Map<String, String> getHiveVariables() {
++    return hiveVariables;
++  }
++
++  public void setHiveVariables(Map<String, String> hiveVariables) {
++    this.hiveVariables = hiveVariables;
++  }
++
+ }
+diff --git a/src/beeline/src/java/org/apache/hive/beeline/DatabaseConnection.java b/src/beeline/src/java/org/apache/hive/beeline/DatabaseConnection.java
+index c70003d..1de5829 100644
+--- a/src/beeline/src/java/org/apache/hive/beeline/DatabaseConnection.java
++++ b/src/beeline/src/java/org/apache/hive/beeline/DatabaseConnection.java
+@@ -28,8 +28,10 @@
+ import java.sql.DriverManager;
+ import java.sql.ResultSet;
+ import java.sql.SQLException;
++import java.util.Iterator;
+ import java.util.LinkedList;
+ import java.util.List;
++import java.util.Map;
+ import java.util.Set;
+ import java.util.TreeSet;
+ 
+@@ -52,9 +54,37 @@ public DatabaseConnection(BeeLine beeLine, String driver, String url,
+       String username, String password) throws SQLException {
+     this.beeLine = beeLine;
+     this.driver = driver;
+-    this.url = url;
+     this.username = username;
+     this.password = password;
++    this.url = appendHiveVariables(beeLine, url);
++  }
++
++/**
++ * Append hive variables specified on the command line to the connection url
++ * (after #). They will be set later on the session on the server side.
++ */
++  private static String appendHiveVariables(BeeLine beeLine, String url) {
++    StringBuilder sb = new StringBuilder( url );
++    Map<String, String> hiveVars = beeLine.getOpts().getHiveVariables();
++    if (hiveVars.size() > 0) {
++      if (url.indexOf("#") == -1) {
++        sb.append("#");
++      } else {
++        sb.append("&");
++      }
++      Set<Map.Entry<String, String>> vars = hiveVars.entrySet();
++      Iterator<Map.Entry<String, String>> it = vars.iterator();
++      while (it.hasNext()) {
++        Map.Entry<String, String> var = it.next();
++        sb.append(var.getKey());
++        sb.append("=");
++        sb.append(var.getValue());
++        if (it.hasNext()) {
++          sb.append("&");
++        }
++      }
++    }
++    return sb.toString();
+   }
+ 
+ 
+diff --git a/src/beeline/src/test/org/apache/hive/beeline/src/test/TestBeeLineWithArgs.java b/src/beeline/src/test/org/apache/hive/beeline/src/test/TestBeeLineWithArgs.java
+index 4280449..e3c6a72 100644
+--- a/src/beeline/src/test/org/apache/hive/beeline/src/test/TestBeeLineWithArgs.java
++++ b/src/beeline/src/test/org/apache/hive/beeline/src/test/TestBeeLineWithArgs.java
+@@ -23,6 +23,8 @@
+ import java.io.FileOutputStream;
+ import java.io.PrintStream;
+ import java.io.UnsupportedEncodingException;
++import java.util.ArrayList;
++import java.util.List;
+ 
+ import org.apache.hadoop.hive.conf.HiveConf;
+ import org.apache.hive.beeline.BeeLine;
+@@ -38,14 +40,19 @@
+  */
+ //public class TestBeeLineWithArgs extends TestCase {
+ public class TestBeeLineWithArgs {
+-
+   // Default location of HiveServer2
+-  final static String BASE_JDBC_URL = BeeLine.BEELINE_DEFAULT_JDBC_URL + "localhost:10000";
+-  //set JDBC_URL to something else in test case, if it needs to be customized
+-  String JDBC_URL = BASE_JDBC_URL;
++  final private static String JDBC_URL = BeeLine.BEELINE_DEFAULT_JDBC_URL + "localhost:10000";
+ 
+   private static HiveServer2 hiveServer2;
+ 
++  private List<String> getBaseArgs(String jdbcUrl) {
++    List<String> argList = new ArrayList<String>(8);
++    argList.add("-d");
++    argList.add(BeeLine.BEELINE_DEFAULT_JDBC_DRIVER);
++    argList.add("-u");
++    argList.add(jdbcUrl);
++    return argList;
++  }
+   /**
+    * Start up a local Hive Server 2 for these tests
+    */
+@@ -83,13 +90,13 @@ public static void postTests() {
+    * @throws Any exception while executing
+    * @return The stderr and stdout from running the script
+    */
+-  private String testCommandLineScript(String scriptFileName) throws Throwable {
+-    String[] args = {"-d", BeeLine.BEELINE_DEFAULT_JDBC_DRIVER, "-u", JDBC_URL, "-f", scriptFileName};
++  private String testCommandLineScript(List<String> argList) throws Throwable {
+     BeeLine beeLine = new BeeLine();
+     ByteArrayOutputStream os = new ByteArrayOutputStream();
+     PrintStream beelineOutputStream = new PrintStream(os);
+     beeLine.setOutputStream(beelineOutputStream);
+     beeLine.setErrorStream(beelineOutputStream);
++    String[] args = argList.toArray(new String[argList.size()]);
+     beeLine.begin(args, null);
+     String output = os.toString("UTF8");
+ 
+@@ -106,7 +113,8 @@ private String testCommandLineScript(String scriptFileName) throws Throwable {
+    * @param shouldMatch true if the pattern should be found, false if it should not
+    * @throws Exception on command execution error
+    */
+-  private void testScriptFile(String testName, String scriptText, String expectedPattern, boolean shouldMatch) throws Throwable {
++  private void testScriptFile(String testName, String scriptText, String expectedPattern,
++      boolean shouldMatch, List<String> argList) throws Throwable {
+ 
+     long startTime = System.currentTimeMillis();
+     System.out.println(">>> STARTED " + testName);
+@@ -118,9 +126,12 @@ private void testScriptFile(String testName, String scriptText, String expectedP
+     os.print(scriptText);
+     os.close();
+ 
++    argList.add("-f");
++    argList.add(scriptFile.getAbsolutePath());
++
+     if(shouldMatch) {
+       try {
+-        String output = testCommandLineScript(scriptFile.getAbsolutePath());
++        String output = testCommandLineScript(argList);
+         long elapsedTime = (System.currentTimeMillis() - startTime)/1000;
+         String time = "(" + elapsedTime + "s)";
+         if (output.contains(expectedPattern)) {
+@@ -136,7 +147,7 @@ private void testScriptFile(String testName, String scriptText, String expectedP
+       }
+     } else {
+       try {
+-        String output = testCommandLineScript(scriptFile.getAbsolutePath());
++        String output = testCommandLineScript(argList);
+         long elapsedTime = (System.currentTimeMillis() - startTime)/1000;
+         String time = "(" + elapsedTime + "s)";
+         if (output.contains(expectedPattern)) {
+@@ -166,7 +177,25 @@ public void testPositiveScriptFile() throws Throwable {
+     final String TEST_NAME = "testPositiveScriptFile";
+     final String SCRIPT_TEXT = "show databases;\n";
+     final String EXPECTED_PATTERN = " default ";
+-    testScriptFile(TEST_NAME, SCRIPT_TEXT, EXPECTED_PATTERN, true);
++    List<String> argList = getBaseArgs(JDBC_URL);
++    testScriptFile(TEST_NAME, SCRIPT_TEXT, EXPECTED_PATTERN, true, argList);
++  }
++
++  /**
++   * Test Beeline -hivevar option. User can specify --hivevar name=value on Beeline command line.
++   * In the script, user should be able to use it in the form of ${name}, which will be substituted with
++   * the value.
++   * @throws Throwable
++   */
++  @Test
++  public void testBeelineCommandLineHiveVariable() throws Throwable {
++    List<String> argList = getBaseArgs(JDBC_URL);
++    argList.add("--hivevar");
++    argList.add("DUMMY_TBL=dummy");
++    final String TEST_NAME = "testHiveCommandLineHiveVariable";
++    final String SCRIPT_TEXT = "create table ${DUMMY_TBL} (d int);\nshow tables;\n";
++    final String EXPECTED_PATTERN = "dummy";
++    testScriptFile(TEST_NAME, SCRIPT_TEXT, EXPECTED_PATTERN, true, argList);
+   }
+ 
+   /**
+@@ -176,10 +205,11 @@ public void testPositiveScriptFile() throws Throwable {
+    */
+   @Test
+   public void testBreakOnErrorScriptFile() throws Throwable {
++    List<String> argList = getBaseArgs(JDBC_URL);
+     final String TEST_NAME = "testBreakOnErrorScriptFile";
+     final String SCRIPT_TEXT = "select * from abcdefg01;\nshow databases;\n";
+     final String EXPECTED_PATTERN = " default ";
+-    testScriptFile(TEST_NAME, SCRIPT_TEXT, EXPECTED_PATTERN, false);
++    testScriptFile(TEST_NAME, SCRIPT_TEXT, EXPECTED_PATTERN, false, argList);
+   }
+ 
+   /**
+@@ -198,8 +228,12 @@ public void testNegativeScriptFile() throws Throwable {
+     File scriptFile = File.createTempFile("beelinenegative", "temp");
+     scriptFile.delete();
+ 
++    List<String> argList = getBaseArgs(JDBC_URL);
++    argList.add("-f");
++    argList.add(scriptFile.getAbsolutePath());
++
+     try {
+-        String output = testCommandLineScript(scriptFile.getAbsolutePath());
++        String output = testCommandLineScript(argList);
+       long elapsedTime = (System.currentTimeMillis() - startTime)/1000;
+       String time = "(" + elapsedTime + "s)";
+       if (output.contains(EXPECTED_PATTERN)) {
+@@ -243,11 +277,11 @@ public void testNPE() throws UnsupportedEncodingException {
+ 
+   @Test
+   public void testHiveVarSubstitution() throws Throwable {
+-    JDBC_URL = BASE_JDBC_URL + "#D_TBL=dummy_t";
++    List<String> argList = getBaseArgs(JDBC_URL + "#D_TBL=dummy_t");
+     final String TEST_NAME = "testHiveVarSubstitution";
+     final String SCRIPT_TEXT = "create table ${D_TBL} (d int);\nshow tables;\n";
+     final String EXPECTED_PATTERN = "dummy_t";
+-    testScriptFile(TEST_NAME, SCRIPT_TEXT, EXPECTED_PATTERN, true);
++    testScriptFile(TEST_NAME, SCRIPT_TEXT, EXPECTED_PATTERN, true, argList);
+   }
+ 
+ }
+-- 
+1.7.0.4
+

@@ -1,0 +1,29 @@
+From 02218cab75304116d001f795c925a94734b84ae0 Mon Sep 17 00:00:00 2001
+From: Brock Noland <brock@apache.org>
+Date: Sat, 12 Oct 2013 15:54:24 +0000
+Subject: [PATCH 081/375] HIVE-5513 - Set the short version directly via build script (Prasad Mujumdar via Brock Noland)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1531550 13f79535-47bb-0310-9956-ffa450edef68
+---
+ common/build.xml |    5 -----
+ 1 files changed, 0 insertions(+), 5 deletions(-)
+
+diff --git a/src/common/build.xml b/src/common/build.xml
+index 1d42451..22684b0 100755
+--- a/src/common/build.xml
++++ b/src/common/build.xml
+@@ -30,11 +30,6 @@ to call at top-level: ant deploy-contrib compile-core-test
+ 
+   <target name="compile" depends="init, setup, ivy-retrieve">
+     <echo message="Project: ${ant.project.name}"/>
+-    <!-- Restrict short version to just major.minor.change numbers -->
+-    <propertyregex property="shortversion"
+-      input="${version}" regexp="^([0-9]+\.[0-9]+\.[0-9]+)"
+-      select="\1" defaultValue="${version}"
+-    />
+     <exec executable="bash" failonerror="true">
+       <arg value="${basedir}/src/scripts/saveVersion.sh"/>
+       <arg value="${version}"/>
+-- 
+1.7.0.4
+

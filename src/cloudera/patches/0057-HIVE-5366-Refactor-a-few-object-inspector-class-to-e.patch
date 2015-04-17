@@ -1,0 +1,181 @@
+From dada454c6857c4dc40227f0b52a42f6bf0f3f2a4 Mon Sep 17 00:00:00 2001
+From: Ashutosh Chauhan <hashutosh@apache.org>
+Date: Thu, 26 Sep 2013 16:56:12 +0000
+Subject: [PATCH 057/375] HIVE-5366 : Refactor a few object inspector class to eliminate redundant information (Xuefu Zhang via Ashutosh Chauhan)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1526603 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../primitive/LazyHiveVarcharObjectInspector.java  |   10 +++++-----
+ .../AbstractPrimitiveObjectInspector.java          |    6 +++---
+ .../primitive/JavaHiveVarcharObjectInspector.java  |   11 +++++------
+ .../WritableHiveVarcharObjectInspector.java        |   16 ++++++----------
+ 4 files changed, 19 insertions(+), 24 deletions(-)
+
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/lazy/objectinspector/primitive/LazyHiveVarcharObjectInspector.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/lazy/objectinspector/primitive/LazyHiveVarcharObjectInspector.java
+index dde9b96..f72cc03 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/lazy/objectinspector/primitive/LazyHiveVarcharObjectInspector.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/lazy/objectinspector/primitive/LazyHiveVarcharObjectInspector.java
+@@ -22,11 +22,9 @@
+ import org.apache.hadoop.hive.serde2.io.HiveVarcharWritable;
+ import org.apache.hadoop.hive.serde2.lazy.LazyHiveVarchar;
+ import org.apache.hadoop.hive.serde2.objectinspector.primitive.HiveVarcharObjectInspector;
+-import org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorUtils;
+ import org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorUtils.PrimitiveTypeEntry;
+-import org.apache.hadoop.hive.serde2.typeinfo.BaseTypeParams;
+-import org.apache.hadoop.hive.serde2.typeinfo.VarcharTypeParams;
+ import org.apache.hadoop.hive.serde2.typeinfo.ParameterizedPrimitiveTypeUtils;
++import org.apache.hadoop.hive.serde2.typeinfo.VarcharTypeParams;
+ 
+ public class LazyHiveVarcharObjectInspector
+     extends AbstractPrimitiveLazyObjectInspector<HiveVarcharWritable>
+@@ -58,14 +56,16 @@ public HiveVarchar getPrimitiveJavaObject(Object o) {
+     }
+ 
+     HiveVarchar ret = ((LazyHiveVarchar) o).getWritableObject().getHiveVarchar();
++    VarcharTypeParams typeParams = (VarcharTypeParams)getTypeParams();
+     if (!ParameterizedPrimitiveTypeUtils.doesPrimitiveMatchTypeParams(
+-        ret, (VarcharTypeParams) typeParams)) {
+-      HiveVarchar newValue = new HiveVarchar(ret, ((VarcharTypeParams) typeParams).length);
++        ret, typeParams)) {
++      HiveVarchar newValue = new HiveVarchar(ret, typeParams.length);
+       return newValue;
+     }
+     return ret;
+   }
+ 
++  @Override
+   public String toString() {
+     return getTypeName();
+   }
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/AbstractPrimitiveObjectInspector.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/AbstractPrimitiveObjectInspector.java
+index 482b92e..af4109b 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/AbstractPrimitiveObjectInspector.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/AbstractPrimitiveObjectInspector.java
+@@ -29,7 +29,6 @@
+     PrimitiveObjectInspector {
+ 
+   protected PrimitiveTypeEntry typeEntry;
+-  protected BaseTypeParams typeParams;
+ 
+   protected AbstractPrimitiveObjectInspector() {
+     super();
+@@ -85,14 +84,15 @@ public String getTypeName() {
+   }
+ 
+   public BaseTypeParams getTypeParams() {
+-    return typeParams;
++    return typeEntry.typeParams;
+   }
+ 
+   public void setTypeParams(BaseTypeParams newParams) {
++    BaseTypeParams typeParams = typeEntry.typeParams;
+     if (typeParams != null && !typeEntry.isParameterized()) {
+       throw new UnsupportedOperationException(
+           "Attempting to add type parameters " + typeParams + " to type " + getTypeName());
+     }
+-    this.typeParams = newParams;
++    typeEntry.typeParams = newParams;
+   }
+ }
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/JavaHiveVarcharObjectInspector.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/JavaHiveVarcharObjectInspector.java
+index c260d06..aece508 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/JavaHiveVarcharObjectInspector.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/JavaHiveVarcharObjectInspector.java
+@@ -18,11 +18,8 @@
+ package org.apache.hadoop.hive.serde2.objectinspector.primitive;
+ 
+ import org.apache.hadoop.hive.common.type.HiveVarchar;
+-import org.apache.hadoop.hive.common.type.HiveDecimal;
+ import org.apache.hadoop.hive.serde2.io.HiveVarcharWritable;
+-import org.apache.hadoop.hive.serde2.objectinspector.PrimitiveObjectInspector.PrimitiveCategory;
+ import org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorUtils.PrimitiveTypeEntry;
+-import org.apache.hadoop.hive.serde2.typeinfo.BaseTypeParams;
+ import org.apache.hadoop.hive.serde2.typeinfo.ParameterizedPrimitiveTypeUtils;
+ import org.apache.hadoop.hive.serde2.typeinfo.VarcharTypeParams;
+ 
+@@ -38,13 +35,14 @@ public JavaHiveVarcharObjectInspector(PrimitiveTypeEntry typeEntry) {
+     }
+   }
+ 
++  @Override
+   public HiveVarchar getPrimitiveJavaObject(Object o) {
+     if (o == null) {
+       return null;
+     }
+     HiveVarchar value = (HiveVarchar)o;
+     if (ParameterizedPrimitiveTypeUtils.doesPrimitiveMatchTypeParams(
+-        value, (VarcharTypeParams) typeParams)) {
++        value, (VarcharTypeParams) getTypeParams())) {
+       return value;
+     }
+     // value needs to be converted to match the type params (length, etc).
+@@ -74,7 +72,7 @@ private HiveVarcharWritable getWritableWithParams(HiveVarchar val) {
+   public Object set(Object o, HiveVarchar value) {
+     HiveVarchar setValue = (HiveVarchar)o;
+     if (ParameterizedPrimitiveTypeUtils.doesPrimitiveMatchTypeParams(
+-        value, (VarcharTypeParams) typeParams)) {
++        value, (VarcharTypeParams) getTypeParams())) {
+       setValue.setValue(value);
+     } else {
+       // Otherwise value may be too long, convert to appropriate value based on params
+@@ -98,6 +96,7 @@ public Object create(HiveVarchar value) {
+   }
+ 
+   public int getMaxLength() {
+-    return typeParams != null ? ((VarcharTypeParams) typeParams).length : -1;
++    VarcharTypeParams typeParams = (VarcharTypeParams)getTypeParams();
++    return typeParams != null ? typeParams.length : -1;
+   }
+ }
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableHiveVarcharObjectInspector.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableHiveVarcharObjectInspector.java
+index a8b5a94..e1394c6 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableHiveVarcharObjectInspector.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableHiveVarcharObjectInspector.java
+@@ -21,11 +21,9 @@
+ import org.apache.commons.logging.LogFactory;
+ import org.apache.hadoop.hive.common.type.HiveVarchar;
+ import org.apache.hadoop.hive.serde2.io.HiveVarcharWritable;
+-import org.apache.hadoop.hive.serde2.objectinspector.PrimitiveObjectInspector.PrimitiveCategory;
+ import org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorUtils.PrimitiveTypeEntry;
+-import org.apache.hadoop.hive.serde2.typeinfo.BaseTypeParams;
+-import org.apache.hadoop.hive.serde2.typeinfo.VarcharTypeParams;
+ import org.apache.hadoop.hive.serde2.typeinfo.ParameterizedPrimitiveTypeUtils;
++import org.apache.hadoop.hive.serde2.typeinfo.VarcharTypeParams;
+ 
+ public class WritableHiveVarcharObjectInspector
+     extends AbstractPrimitiveWritableObjectInspector
+@@ -55,6 +53,7 @@ public HiveVarchar getPrimitiveJavaObject(Object o) {
+     return getPrimitiveWithParams(writable);
+   }
+ 
++  @Override
+   public HiveVarcharWritable getPrimitiveWritableObject(Object o) {
+     // check input object's length, if it doesn't match
+     // then output new writable with correct params.
+@@ -83,12 +82,7 @@ private HiveVarcharWritable getWritableWithParams(HiveVarcharWritable val) {
+ 
+   private boolean doesWritableMatchTypeParams(HiveVarcharWritable writable) {
+     return ParameterizedPrimitiveTypeUtils.doesWritableMatchTypeParams(
+-        writable, (VarcharTypeParams) typeParams);
+-  }
+-
+-  private boolean doesPrimitiveMatchTypeParams(HiveVarchar value) {
+-    return ParameterizedPrimitiveTypeUtils.doesPrimitiveMatchTypeParams(
+-        value, (VarcharTypeParams) typeParams);
++        writable, (VarcharTypeParams)getTypeParams());
+   }
+ 
+   @Override
+@@ -126,6 +120,8 @@ public Object create(HiveVarchar value) {
+   }
+ 
+   public int getMaxLength() {
+-    return typeParams != null ? ((VarcharTypeParams) typeParams).length : -1;
++    VarcharTypeParams typeParams = (VarcharTypeParams)getTypeParams();
++    return typeParams != null ? typeParams.length : -1;
+   }
++
+ }
+-- 
+1.7.0.4
+

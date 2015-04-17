@@ -1,0 +1,71 @@
+From 7a0a6df9cb9d3cb4f1fb25fcf8357116de662e30 Mon Sep 17 00:00:00 2001
+From: Prasad Mujumdar <prasadm@cloudera.com>
+Date: Fri, 31 Jan 2014 00:31:31 -0800
+Subject: [PATCH 263/375] CDH-17142: GetLog() RPC doesn't return the exec logs for async queries
+
+---
+ .../apache/hive/jdbc/miniHS2/TestHiveServer2.java  |   19 +++++++++++++++++++
+ .../hive/service/cli/operation/SQLOperation.java   |    7 +++++++
+ 2 files changed, 26 insertions(+), 0 deletions(-)
+
+diff --git a/src/itests/hive-unit/src/test/java/org/apache/hive/jdbc/miniHS2/TestHiveServer2.java b/src/itests/hive-unit/src/test/java/org/apache/hive/jdbc/miniHS2/TestHiveServer2.java
+index eb08628..0bce90f 100644
+--- a/src/itests/hive-unit/src/test/java/org/apache/hive/jdbc/miniHS2/TestHiveServer2.java
++++ b/src/itests/hive-unit/src/test/java/org/apache/hive/jdbc/miniHS2/TestHiveServer2.java
+@@ -19,6 +19,7 @@
+ package org.apache.hive.jdbc.miniHS2;
+ 
+ import static org.junit.Assert.assertFalse;
++import static org.junit.Assert.assertTrue;
+ 
+ import java.io.IOException;
+ import java.util.HashMap;
+@@ -66,4 +67,22 @@ public void testConnection() throws Exception {
+     RowSet rowSet = serviceClient.fetchResults(opHandle);
+     assertFalse(rowSet.getSize() == 0);
+   }
++
++  @Test
++  public void testAsyncGetLog() throws Exception {
++    String tabName = "testTab1";
++    CLIServiceClient serviceClient = miniHS2.getServiceClient();
++    SessionHandle sessHandle = serviceClient.openSession("foo", "bar");
++    serviceClient.executeStatement(sessHandle,
++        "DROP TABLE IF EXISTS " + tabName, confOverlay);
++    serviceClient.executeStatement(sessHandle, "CREATE TABLE " + tabName +
++        " (under_col INT, value STRING)", confOverlay);
++    String queryStr = "select * from " + tabName;
++    // run async query
++    OperationHandle opHandle =
++        serviceClient.executeStatementAsync(sessHandle, queryStr, confOverlay);
++    String logStr = serviceClient.getLog(opHandle);
++    assertTrue("Operation Log looks incorrect", logStr.contains("Starting command: " + queryStr));
++
++  }
+ }
+diff --git a/src/service/src/java/org/apache/hive/service/cli/operation/SQLOperation.java b/src/service/src/java/org/apache/hive/service/cli/operation/SQLOperation.java
+index 592fa41..6461f27 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/operation/SQLOperation.java
++++ b/src/service/src/java/org/apache/hive/service/cli/operation/SQLOperation.java
+@@ -169,11 +169,18 @@ public void run() throws HiveSQLException {
+         @Override
+         public void run() {
+           SessionState.setCurrentSessionState(ss);
++          getParentSession().getSessionManager().
++              getLogManager().unregisterCurrentThread();
+           try {
++            getParentSession().getSessionManager().
++                getLogManager().registerCurrentThread(getHandle());
+             runInternal(getConfigForOperation());
+           } catch (HiveSQLException e) {
+             setOperationException(e);
+             LOG.error("Error: ", e);
++          } finally {
++            getParentSession().getSessionManager().
++                getLogManager().unregisterCurrentThread();
+           }
+         }
+       };
+-- 
+1.7.0.4
+

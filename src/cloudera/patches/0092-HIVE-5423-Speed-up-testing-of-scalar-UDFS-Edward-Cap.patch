@@ -1,0 +1,385 @@
+From fcbb53519ec9bacd3fe11950e9c4c68299a4b586 Mon Sep 17 00:00:00 2001
+From: Brock Noland <brock@apache.org>
+Date: Mon, 14 Oct 2013 21:22:12 +0000
+Subject: [PATCH 092/375] HIVE-5423 - Speed up testing of scalar UDFS (Edward Capriolo via Brock Noland)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1532103 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../hadoop/hive/ql/testutil/BaseScalarUdfTest.java |   76 +++++++++++++++++++
+ .../hadoop/hive/ql/testutil/DataBuilder.java       |   62 +++++++++++++++
+ .../hadoop/hive/ql/testutil/OperatorTestUtils.java |   79 ++++++++++++++++++++
+ .../apache/hadoop/hive/ql/udf/TestUDFRound.java    |   61 +++++++++++++++
+ .../hive/ql/udf/generic/TestGenericUDFConcat.java  |   54 +++++++++++++
+ 5 files changed, 332 insertions(+), 0 deletions(-)
+ create mode 100644 ql/src/test/org/apache/hadoop/hive/ql/testutil/BaseScalarUdfTest.java
+ create mode 100644 ql/src/test/org/apache/hadoop/hive/ql/testutil/DataBuilder.java
+ create mode 100644 ql/src/test/org/apache/hadoop/hive/ql/testutil/OperatorTestUtils.java
+ create mode 100644 ql/src/test/org/apache/hadoop/hive/ql/udf/TestUDFRound.java
+ create mode 100644 ql/src/test/org/apache/hadoop/hive/ql/udf/generic/TestGenericUDFConcat.java
+
+diff --git a/src/ql/src/test/org/apache/hadoop/hive/ql/testutil/BaseScalarUdfTest.java b/src/ql/src/test/org/apache/hadoop/hive/ql/testutil/BaseScalarUdfTest.java
+new file mode 100644
+index 0000000..5524444
+--- /dev/null
++++ b/src/ql/src/test/org/apache/hadoop/hive/ql/testutil/BaseScalarUdfTest.java
+@@ -0,0 +1,76 @@
++package org.apache.hadoop.hive.ql.testutil;
++
++import java.util.List;
++
++import junit.framework.TestCase;
++
++import org.apache.hadoop.hive.ql.exec.CollectOperator;
++import org.apache.hadoop.hive.ql.exec.Operator;
++import org.apache.hadoop.hive.ql.exec.OperatorFactory;
++import org.apache.hadoop.hive.ql.exec.UDFArgumentException;
++import org.apache.hadoop.hive.ql.metadata.HiveException;
++import org.apache.hadoop.hive.ql.plan.CollectDesc;
++import org.apache.hadoop.hive.ql.plan.ExprNodeDesc;
++import org.apache.hadoop.hive.ql.plan.SelectDesc;
++import org.apache.hadoop.hive.serde2.objectinspector.InspectableObject;
++import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspector;
++import org.apache.hadoop.mapred.JobConf;
++import org.junit.Ignore;
++
++/**
++ *
++ * Provides a base environment for testing scalar UDF's. Users should extend this class
++ * and override the abstract methods. It is highly suggested to test with multiple rows
++ * of input because UDFS are stateful in some cases, null, and boundary conditions.
++ *
++ */
++@SuppressWarnings("deprecation")
++@Ignore
++public abstract class BaseScalarUdfTest extends TestCase {
++
++  /**
++   * The data from this method will be fed through the
++   * select operator. It is considered the source data
++   * for the test.
++   * @return The source table that will be fed through the operator tree
++   */
++  public abstract InspectableObject [] getBaseTable();
++
++  /**
++   * The data returned from this UDF will be compared to the results
++   * of the test. The DataBuilder class can be used to construct
++   * the result.
++   * @return The data that will be compared to the results
++   */
++  public abstract InspectableObject [] getExpectedResult();
++
++  /**
++   * Implementors of this method create an expression list. This list
++   * transforms the source data into the final output. The DataBuilder
++   * class can be used to construct the result.
++   * @return A list of expressions
++   * @throws UDFArgumentException if the UDF has been formulated incorrectly
++   */
++  public abstract List<ExprNodeDesc> getExpressionList() throws UDFArgumentException;
++
++  /**
++   * This method drives the test. It takes the data from getBaseTable() and
++   * feeds it through a SELECT operator with a COLLECT operator after. Each
++   * row that is produced by the collect operator is compared to getExpectedResult()
++   * and if every row is the expected result the method completes without asserting.
++   * @throws HiveException
++   */
++  public final void testUdf() throws HiveException {
++    InspectableObject [] data = getBaseTable();
++    List<ExprNodeDesc> expressionList = getExpressionList();
++    SelectDesc selectCtx = new SelectDesc(expressionList,
++        OperatorTestUtils.createOutputColumnNames(expressionList));
++    Operator<SelectDesc> op = OperatorFactory.get(SelectDesc.class);
++    op.setConf(selectCtx);
++    CollectDesc cd = new CollectDesc(Integer.valueOf(10));
++    CollectOperator cdop = (CollectOperator) OperatorFactory.getAndMakeChild(cd, op);
++    op.initialize(new JobConf(OperatorTestUtils.class), new ObjectInspector[] {data[0].oi});
++    OperatorTestUtils.assertResults(op, cdop, data, getExpectedResult());
++  }
++
++}
+\ No newline at end of file
+diff --git a/src/ql/src/test/org/apache/hadoop/hive/ql/testutil/DataBuilder.java b/src/ql/src/test/org/apache/hadoop/hive/ql/testutil/DataBuilder.java
+new file mode 100644
+index 0000000..3b0fa3b
+--- /dev/null
++++ b/src/ql/src/test/org/apache/hadoop/hive/ql/testutil/DataBuilder.java
+@@ -0,0 +1,62 @@
++package org.apache.hadoop.hive.ql.testutil;
++
++import java.util.ArrayList;
++import java.util.Arrays;
++import java.util.List;
++
++import org.apache.hadoop.hive.serde2.objectinspector.InspectableObject;
++import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspector;
++import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspectorFactory;
++
++/**
++ *
++ * DataBuilder used to build InspectableObject arrays that are used
++ * as part of testing.
++ *
++ */
++public class DataBuilder {
++
++  private final List<String> columnNames;
++  private final List<ObjectInspector> columnTypes;
++  private final List<List<Object>> rows;
++
++  public DataBuilder(){
++    columnNames = new ArrayList<String>();
++    columnTypes = new ArrayList<ObjectInspector>();
++    rows = new ArrayList<List<Object>>();
++  }
++
++  public void setColumnNames(String ... names){
++    for (String name: names){
++      columnNames.add(name);
++    }
++  }
++
++  public void setColumnTypes(ObjectInspector ... types){
++    for (ObjectInspector type: types){
++      columnTypes.add(type);
++    }
++  }
++
++  public void addRow(Object ... columns){
++    List<Object> objects = Arrays.asList(columns);
++    rows.add(objects);
++  }
++
++  /**
++   * returns the InspectableObject array the builder methods
++   * helped to assemble.
++   * @return InspectableObject array (objects that have data coupled with
++   * and object inspector )
++   */
++  public InspectableObject[] createRows(){
++    InspectableObject[] toReturn = new InspectableObject[this.rows.size()];
++    for (int i=0; i<toReturn.length;i++){
++      toReturn[i] = new InspectableObject();
++      toReturn[i].o = rows.get(i);
++      toReturn[i].oi = ObjectInspectorFactory.getStandardStructObjectInspector(
++          this.columnNames, this.columnTypes);
++    }
++    return toReturn;
++  }
++}
+diff --git a/src/ql/src/test/org/apache/hadoop/hive/ql/testutil/OperatorTestUtils.java b/src/ql/src/test/org/apache/hadoop/hive/ql/testutil/OperatorTestUtils.java
+new file mode 100644
+index 0000000..f857765
+--- /dev/null
++++ b/src/ql/src/test/org/apache/hadoop/hive/ql/testutil/OperatorTestUtils.java
+@@ -0,0 +1,79 @@
++package org.apache.hadoop.hive.ql.testutil;
++
++import java.util.ArrayList;
++import java.util.List;
++
++import junit.framework.Assert;
++
++import org.apache.hadoop.hive.ql.exec.CollectOperator;
++import org.apache.hadoop.hive.ql.exec.Operator;
++import org.apache.hadoop.hive.ql.metadata.HiveException;
++import org.apache.hadoop.hive.ql.plan.ExprNodeColumnDesc;
++import org.apache.hadoop.hive.ql.plan.ExprNodeDesc;
++import org.apache.hadoop.hive.ql.plan.SelectDesc;
++import org.apache.hadoop.hive.serde2.objectinspector.InspectableObject;
++import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspectorUtils;
++import org.apache.hadoop.hive.serde2.objectinspector.StructField;
++import org.apache.hadoop.hive.serde2.objectinspector.StructObjectInspector;
++import org.apache.hadoop.hive.serde2.typeinfo.TypeInfoFactory;
++
++public class OperatorTestUtils {
++
++  public static ExprNodeColumnDesc getStringColumn(String columnName) {
++    return new ExprNodeColumnDesc(TypeInfoFactory.stringTypeInfo, columnName, "", false);
++  }
++
++  /**
++   *
++   * @param expressionList
++   * @return A list of columns named _colX where x is a number
++   */
++  public static List<String> createOutputColumnNames(List<ExprNodeDesc> expressionList){
++    List<String> outputCols = new ArrayList<String>();
++    for (int i = 0; i < expressionList.size(); i++) {
++      outputCols.add("_col" + i);
++    }
++    return outputCols;
++  }
++
++  /**
++   * Given a select operator and a collectOperator feed the sourceData into the operator
++   * tree and assert that each row matches the expectedResult
++   * @param selectOp
++   * @param collectOp
++   * @param sourceData
++   * @param expected
++   * @throws HiveException
++   */
++  public static void assertResults(Operator<SelectDesc> selectOp, CollectOperator collectOp,
++      InspectableObject [] sourceData, InspectableObject [] expected) throws HiveException {
++    InspectableObject resultRef = new InspectableObject();
++    for (int i = 0; i < sourceData.length; i++) {
++      selectOp.process(sourceData[i].o, 0);
++      collectOp.retrieve(resultRef);
++      StructObjectInspector expectedOi = (StructObjectInspector) expected[i].oi;
++      List<? extends StructField> expectedFields = expectedOi.getAllStructFieldRefs();
++      StructObjectInspector destinationOi = (StructObjectInspector) resultRef.oi;
++      List<? extends StructField> destinationFields = destinationOi.getAllStructFieldRefs();
++      Assert.assertEquals("Source and destination have differing numbers of fields ", expectedFields.size(), destinationFields.size());
++      for (StructField field : expectedFields){
++        StructField dest = expectedOi.getStructFieldRef(field.getFieldName());
++        Assert.assertNotNull("Cound not find column named "+field.getFieldName(), dest);
++        Assert.assertEquals(field.getFieldObjectInspector(), dest.getFieldObjectInspector());
++        Assert.assertEquals("comparing " +
++            expectedOi.getStructFieldData(expected[i].o, field)+" "+
++            field.getFieldObjectInspector().getClass().getSimpleName()+" to "+
++            destinationOi.getStructFieldData(resultRef.o, dest) + " " +
++            dest.getFieldObjectInspector().getClass().getSimpleName(), 0,
++            ObjectInspectorUtils.compare(
++            expectedOi.getStructFieldData(expected[i].o, field), field.getFieldObjectInspector(),
++            destinationOi.getStructFieldData(resultRef.o, dest), dest.getFieldObjectInspector()
++            )
++        );
++      }
++
++    }
++    selectOp.close(false);
++  }
++
++}
+diff --git a/src/ql/src/test/org/apache/hadoop/hive/ql/udf/TestUDFRound.java b/src/ql/src/test/org/apache/hadoop/hive/ql/udf/TestUDFRound.java
+new file mode 100644
+index 0000000..f3b463d
+--- /dev/null
++++ b/src/ql/src/test/org/apache/hadoop/hive/ql/udf/TestUDFRound.java
+@@ -0,0 +1,61 @@
++package org.apache.hadoop.hive.ql.udf;
++
++import java.util.ArrayList;
++import java.util.List;
++
++import org.apache.hadoop.hive.ql.exec.UDFArgumentException;
++import org.apache.hadoop.hive.ql.parse.TypeCheckProcFactory;
++import org.apache.hadoop.hive.ql.plan.ExprNodeDesc;
++import org.apache.hadoop.hive.ql.testutil.DataBuilder;
++import org.apache.hadoop.hive.ql.testutil.OperatorTestUtils;
++import org.apache.hadoop.hive.ql.testutil.BaseScalarUdfTest;
++import org.apache.hadoop.hive.serde2.io.DoubleWritable;
++import org.apache.hadoop.hive.serde2.objectinspector.InspectableObject;
++import org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorFactory;
++import org.apache.hadoop.io.IntWritable;
++
++public class TestUDFRound extends BaseScalarUdfTest {
++
++  @Override
++  public InspectableObject[] getBaseTable() {
++    DataBuilder db = new DataBuilder();
++    db.setColumnNames("a", "b", "c");
++    db.setColumnTypes(
++        PrimitiveObjectInspectorFactory.javaStringObjectInspector,
++        PrimitiveObjectInspectorFactory.javaIntObjectInspector,
++        PrimitiveObjectInspectorFactory.javaDoubleObjectInspector);
++    db.addRow("one", 1, new Double("1.1"));
++    db.addRow( null, null, null);
++    db.addRow("two", 2,  new Double("2.1"));
++    return db.createRows();
++  }
++
++  @Override
++  public InspectableObject[] getExpectedResult() {
++    DataBuilder db = new DataBuilder();
++    db.setColumnNames("_col1", "_col2", "_col3");
++    db.setColumnTypes(PrimitiveObjectInspectorFactory.javaStringObjectInspector,
++        PrimitiveObjectInspectorFactory.writableIntObjectInspector,
++        PrimitiveObjectInspectorFactory.writableDoubleObjectInspector);
++    db.addRow(null, new IntWritable(1), new DoubleWritable(1.0));
++    db.addRow(null, null, null);
++    db.addRow(null, new IntWritable(2), new DoubleWritable(2.0));
++    return db.createRows();
++  }
++
++  @Override
++  public List<ExprNodeDesc> getExpressionList() throws UDFArgumentException {
++    ExprNodeDesc expr1 = OperatorTestUtils.getStringColumn("a");
++    ExprNodeDesc expr2 = OperatorTestUtils.getStringColumn("b");
++    ExprNodeDesc expr3 = OperatorTestUtils.getStringColumn("c");
++    ExprNodeDesc r1 = TypeCheckProcFactory.DefaultExprProcessor.getFuncExprNodeDesc("round", expr1);
++    ExprNodeDesc r2 = TypeCheckProcFactory.DefaultExprProcessor.getFuncExprNodeDesc("round", expr2);
++    ExprNodeDesc r3 = TypeCheckProcFactory.DefaultExprProcessor.getFuncExprNodeDesc("round", expr3);
++    List<ExprNodeDesc> earr = new ArrayList<ExprNodeDesc>();
++    earr.add(r1);
++    earr.add(r2);
++    earr.add(r3);
++    return earr;
++  }
++
++}
+diff --git a/src/ql/src/test/org/apache/hadoop/hive/ql/udf/generic/TestGenericUDFConcat.java b/src/ql/src/test/org/apache/hadoop/hive/ql/udf/generic/TestGenericUDFConcat.java
+new file mode 100644
+index 0000000..19ab37f
+--- /dev/null
++++ b/src/ql/src/test/org/apache/hadoop/hive/ql/udf/generic/TestGenericUDFConcat.java
+@@ -0,0 +1,54 @@
++package org.apache.hadoop.hive.ql.udf.generic;
++
++import java.util.ArrayList;
++import java.util.List;
++
++import org.apache.hadoop.hive.ql.exec.UDFArgumentException;
++import org.apache.hadoop.hive.ql.parse.TypeCheckProcFactory;
++import org.apache.hadoop.hive.ql.plan.ExprNodeDesc;
++import org.apache.hadoop.hive.ql.testutil.DataBuilder;
++import org.apache.hadoop.hive.ql.testutil.OperatorTestUtils;
++import org.apache.hadoop.hive.ql.testutil.BaseScalarUdfTest;
++import org.apache.hadoop.hive.serde2.objectinspector.InspectableObject;
++import org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorFactory;
++
++public class TestGenericUDFConcat extends BaseScalarUdfTest {
++
++  @Override
++  public InspectableObject[] getBaseTable() {
++    DataBuilder db = new DataBuilder();
++    db.setColumnNames("a", "b", "c");
++    db.setColumnTypes(
++        PrimitiveObjectInspectorFactory.javaStringObjectInspector,
++        PrimitiveObjectInspectorFactory.javaStringObjectInspector,
++        PrimitiveObjectInspectorFactory.javaStringObjectInspector);
++    db.addRow("one", "two", "three");
++    db.addRow("four","two", "three");
++    db.addRow( null, "two", "three");
++    return db.createRows();
++  }
++
++  @Override
++  public InspectableObject[] getExpectedResult() {
++    DataBuilder db = new DataBuilder();
++    db.setColumnNames("_col1", "_col2");
++    db.setColumnTypes(PrimitiveObjectInspectorFactory.javaStringObjectInspector,
++        PrimitiveObjectInspectorFactory.javaStringObjectInspector);
++    db.addRow("one", "onetwo");
++    db.addRow("four", "fourtwo");
++    db.addRow(null, null);
++    return db.createRows();
++  }
++
++  @Override
++  public List<ExprNodeDesc> getExpressionList() throws UDFArgumentException {
++    ExprNodeDesc expr1 = OperatorTestUtils.getStringColumn("a");
++    ExprNodeDesc expr2 = OperatorTestUtils.getStringColumn("b");
++    ExprNodeDesc exprDesc2 = TypeCheckProcFactory.DefaultExprProcessor.getFuncExprNodeDesc("concat", expr1, expr2);
++    List<ExprNodeDesc> earr = new ArrayList<ExprNodeDesc>();
++    earr.add(expr1);
++    earr.add(exprDesc2);
++    return earr;
++  }
++
++}
+-- 
+1.7.0.4
+

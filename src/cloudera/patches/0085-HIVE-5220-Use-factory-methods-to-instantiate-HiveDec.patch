@@ -1,0 +1,914 @@
+From 5a4dd3c3a93c3c8788a5011c2d3f6e897a30c656 Mon Sep 17 00:00:00 2001
+From: Ashutosh Chauhan <hashutosh@apache.org>
+Date: Mon, 14 Oct 2013 02:54:33 +0000
+Subject: [PATCH 085/375] HIVE-5220 : Use factory methods to instantiate HiveDecimal instead of constructors (Xuefu Zhang via Ashutosh Chauhan)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1531781 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../hadoop/hive/common/type/HiveDecimal.java       |   77 ++++++++++----------
+ .../hive/ql/io/orc/ColumnStatisticsImpl.java       |   12 +--
+ .../hadoop/hive/ql/io/orc/RecordReaderImpl.java    |    3 +-
+ .../org/apache/hadoop/hive/ql/udf/UDFOPMinus.java  |    8 +-
+ .../org/apache/hadoop/hive/ql/udf/UDFOPMod.java    |    6 +-
+ .../apache/hadoop/hive/ql/udf/UDFOPMultiply.java   |    7 +-
+ .../org/apache/hadoop/hive/ql/udf/UDFOPPlus.java   |   12 ++--
+ .../org/apache/hadoop/hive/ql/udf/UDFPosMod.java   |    6 +-
+ .../org/apache/hadoop/hive/ql/udf/UDFPower.java    |   16 +++--
+ .../org/apache/hadoop/hive/ql/udf/UDFRound.java    |    7 +-
+ .../hive/ql/udf/generic/GenericUDAFAverage.java    |   18 +----
+ .../hadoop/hive/ql/udf/generic/GenericUDAFSum.java |    8 +--
+ .../apache/hadoop/hive/ql/io/orc/TestOrcFile.java  |   26 ++++----
+ .../hadoop/hive/ql/udf/TestGenericUDFAbs.java      |    4 +-
+ .../org/apache/hadoop/hive/serde2/RegexSerDe.java  |    5 +-
+ .../serde2/binarysortable/BinarySortableSerDe.java |    2 +-
+ .../hadoop/hive/serde2/io/HiveDecimalWritable.java |    2 +-
+ .../hadoop/hive/serde2/lazy/LazyHiveDecimal.java   |   17 +++--
+ .../primitive/JavaHiveDecimalObjectInspector.java  |   20 ++---
+ .../PrimitiveObjectInspectorConverter.java         |    7 +--
+ .../primitive/PrimitiveObjectInspectorUtils.java   |   18 +++---
+ .../WritableHiveDecimalObjectInspector.java        |   12 +++
+ .../binarysortable/TestBinarySortableSerDe.java    |    2 +-
+ .../hive/serde2/io/TestTimestampWritable.java      |    4 +-
+ .../TestObjectInspectorConverters.java             |    2 +-
+ 25 files changed, 148 insertions(+), 153 deletions(-)
+
+diff --git a/src/common/src/java/org/apache/hadoop/hive/common/type/HiveDecimal.java b/src/common/src/java/org/apache/hadoop/hive/common/type/HiveDecimal.java
+index e5a35cd..cae8db6 100644
+--- a/src/common/src/java/org/apache/hadoop/hive/common/type/HiveDecimal.java
++++ b/src/common/src/java/org/apache/hadoop/hive/common/type/HiveDecimal.java
+@@ -43,44 +43,47 @@
+ 
+   private BigDecimal bd = BigDecimal.ZERO;
+ 
+-  public HiveDecimal(BigDecimal b) {
+-    this(b, false);
++  private HiveDecimal(BigDecimal bd) {
++    this.bd = bd;
+   }
+ 
+-  public HiveDecimal(BigDecimal b, boolean allowRounding) {
+-    bd = this.normalize(b, MAX_PRECISION, allowRounding);
+-    if (bd == null) {
+-      throw new NumberFormatException("Assignment would result in truncation");
+-    }
++  public static HiveDecimal create(BigDecimal b) {
++    return create(b, false);
+   }
+ 
+-  public HiveDecimal(BigInteger unscaled, int scale) {
+-    bd = this.normalize(new BigDecimal(unscaled, scale), MAX_PRECISION, false);
+-    if (bd == null) {
+-      throw new NumberFormatException("Assignment would result in truncation");
+-    }
++  public static HiveDecimal create(BigDecimal b, boolean allowRounding) {
++    BigDecimal bd = normalize(b, HiveDecimal.MAX_PRECISION, allowRounding);
++    return bd == null ? null : new HiveDecimal(bd);
+   }
+ 
+-  public HiveDecimal(String dec) {
+-    bd = this.normalize(new BigDecimal(dec), MAX_PRECISION, false);
+-    if (bd == null) {
+-      throw new NumberFormatException("Assignment would result in truncation");
+-    }
++  public static HiveDecimal create(BigInteger unscaled, int scale) {
++    BigDecimal bd = normalize(new BigDecimal(unscaled, scale), HiveDecimal.MAX_PRECISION, false);
++    return bd == null ? null : new HiveDecimal(bd);
+   }
+ 
+-  public HiveDecimal(BigInteger bi) {
+-    bd = this.normalize(new BigDecimal(bi), MAX_PRECISION, false);
+-    if (bd == null) {
+-      throw new NumberFormatException("Assignment would result in truncation");
++  public static HiveDecimal create(String dec) {
++    BigDecimal bd;
++    try {
++      bd = new BigDecimal(dec);
++    } catch (NumberFormatException ex) {
++      return null;
+     }
++
++    bd = normalize(bd, HiveDecimal.MAX_PRECISION, false);
++    return bd == null ? null : new HiveDecimal(bd);
++  }
++
++  public static HiveDecimal create(BigInteger bi) {
++    BigDecimal bd = normalize(new BigDecimal(bi), HiveDecimal.MAX_PRECISION, false);
++    return bd == null ? null : new HiveDecimal(bd);
+   }
+ 
+-  public HiveDecimal(int i) {
+-    bd = new BigDecimal(i);
++  public static HiveDecimal create(int i) {
++    return new HiveDecimal(new BigDecimal(i));
+   }
+ 
+-  public HiveDecimal(long l) {
+-    bd = new BigDecimal(l);
++  public static HiveDecimal create(long l) {
++    return new HiveDecimal(new BigDecimal(l));
+   }
+ 
+   @Override
+@@ -147,15 +150,15 @@ public byte byteValue() {
+   }
+ 
+   public HiveDecimal setScale(int adjustedScale, int rm) {
+-    return new HiveDecimal(bd.setScale(adjustedScale, rm));
++    return create(bd.setScale(adjustedScale, rm));
+   }
+ 
+   public HiveDecimal subtract(HiveDecimal dec) {
+-    return new HiveDecimal(bd.subtract(dec.bd));
++    return create(bd.subtract(dec.bd));
+   }
+ 
+   public HiveDecimal multiply(HiveDecimal dec) {
+-    return new HiveDecimal(bd.multiply(dec.bd));
++    return create(bd.multiply(dec.bd));
+   }
+ 
+   public BigInteger unscaledValue() {
+@@ -163,34 +166,34 @@ public BigInteger unscaledValue() {
+   }
+ 
+   public HiveDecimal scaleByPowerOfTen(int n) {
+-    return new HiveDecimal(bd.scaleByPowerOfTen(n));
++    return create(bd.scaleByPowerOfTen(n));
+   }
+ 
+   public HiveDecimal abs() {
+-    return new HiveDecimal(bd.abs());
++    return create(bd.abs());
+   }
+ 
+   public HiveDecimal negate() {
+-    return new HiveDecimal(bd.negate());
++    return create(bd.negate());
+   }
+ 
+   public HiveDecimal add(HiveDecimal dec) {
+-    return new HiveDecimal(bd.add(dec.bd));
++    return create(bd.add(dec.bd));
+   }
+ 
+   public HiveDecimal pow(int n) {
+-    return new HiveDecimal(bd.pow(n));
++    return create(bd.pow(n));
+   }
+ 
+   public HiveDecimal remainder(HiveDecimal dec) {
+-    return new HiveDecimal(bd.remainder(dec.bd));
++    return create(bd.remainder(dec.bd));
+   }
+ 
+   public HiveDecimal divide(HiveDecimal dec) {
+-    return new HiveDecimal(bd.divide(dec.bd, MAX_PRECISION, RoundingMode.HALF_UP), true);
++    return create(bd.divide(dec.bd, MAX_PRECISION, RoundingMode.HALF_UP), true);
+   }
+ 
+-  private BigDecimal trim(BigDecimal d) {
++  private static BigDecimal trim(BigDecimal d) {
+     if (d.compareTo(BigDecimal.ZERO) == 0) {
+       // Special case for 0, because java doesn't strip zeros correctly on that number.
+       d = BigDecimal.ZERO;
+@@ -204,7 +207,7 @@ private BigDecimal trim(BigDecimal d) {
+     return d;
+   }
+ 
+-  private BigDecimal normalize(BigDecimal d, int precision, boolean allowRounding) {
++  private static BigDecimal normalize(BigDecimal d, int precision, boolean allowRounding) {
+     if (d == null) {
+       return null;
+     }
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/io/orc/ColumnStatisticsImpl.java b/src/ql/src/java/org/apache/hadoop/hive/ql/io/orc/ColumnStatisticsImpl.java
+index 6268617..15c6f25 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/io/orc/ColumnStatisticsImpl.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/io/orc/ColumnStatisticsImpl.java
+@@ -435,13 +435,13 @@ public String toString() {
+       super(stats);
+       OrcProto.DecimalStatistics dec = stats.getDecimalStatistics();
+       if (dec.hasMaximum()) {
+-        maximum = new HiveDecimal(dec.getMaximum());
++        maximum = HiveDecimal.create(dec.getMaximum());
+       }
+       if (dec.hasMinimum()) {
+-        minimum = new HiveDecimal(dec.getMinimum());
++        minimum = HiveDecimal.create(dec.getMinimum());
+       }
+       if (dec.hasSum()) {
+-        sum = new HiveDecimal(dec.getSum());
++        sum = HiveDecimal.create(dec.getSum());
+       } else {
+         sum = null;
+       }
+@@ -466,11 +466,7 @@ void updateDecimal(HiveDecimal value) {
+         maximum = value;
+       }
+       if (sum != null) {
+-        try {
+-          sum = sum.add(value);
+-        } catch (NumberFormatException nfe) {
+-          sum = null;
+-        }
++        sum = sum.add(value);
+       }
+     }
+ 
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/io/orc/RecordReaderImpl.java b/src/ql/src/java/org/apache/hadoop/hive/ql/io/orc/RecordReaderImpl.java
+index 5beb48e..f3d621e 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/io/orc/RecordReaderImpl.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/io/orc/RecordReaderImpl.java
+@@ -819,7 +819,7 @@ void seek(PositionProvider[] index) throws IOException {
+     Object next(Object previous) throws IOException {
+       super.next(previous);
+       if (valuePresent) {
+-        return new HiveDecimal(SerializationUtils.readBigInteger(valueStream),
++        return HiveDecimal.create(SerializationUtils.readBigInteger(valueStream),
+             (int) scaleStream.next());
+       }
+       return null;
+@@ -1307,6 +1307,7 @@ Object next(Object previous) throws IOException {
+       return result;
+     }
+ 
++
+     @Override
+     void checkEncoding(OrcProto.ColumnEncoding encoding) throws IOException {
+       if ((encoding.getKind() != OrcProto.ColumnEncoding.Kind.DIRECT) &&
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/udf/UDFOPMinus.java b/src/ql/src/java/org/apache/hadoop/hive/ql/udf/UDFOPMinus.java
+index a61d10c..c4579f6 100755
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/udf/UDFOPMinus.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/udf/UDFOPMinus.java
+@@ -18,6 +18,7 @@
+ 
+ package org.apache.hadoop.hive.ql.udf;
+ 
++import org.apache.hadoop.hive.common.type.HiveDecimal;
+ import org.apache.hadoop.hive.ql.exec.Description;
+ import org.apache.hadoop.hive.serde2.io.ByteWritable;
+ import org.apache.hadoop.hive.serde2.io.DoubleWritable;
+@@ -111,17 +112,16 @@ public DoubleWritable evaluate(DoubleWritable a, DoubleWritable b) {
+ 
+   @Override
+   public HiveDecimalWritable evaluate(HiveDecimalWritable a, HiveDecimalWritable b) {
+-
+     if ((a == null) || (b == null)) {
+       return null;
+     }
+ 
+-    try {
+-      decimalWritable.set(a.getHiveDecimal().subtract(b.getHiveDecimal()));
+-    } catch (NumberFormatException e) {
++    HiveDecimal dec = a.getHiveDecimal().subtract(b.getHiveDecimal());
++    if (dec == null) {
+       return null;
+     }
+ 
++    decimalWritable.set(dec);
+     return decimalWritable;
+   }
+ }
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/udf/UDFOPMod.java b/src/ql/src/java/org/apache/hadoop/hive/ql/udf/UDFOPMod.java
+index 0ed69e9..bfa2da5 100755
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/udf/UDFOPMod.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/udf/UDFOPMod.java
+@@ -123,12 +123,12 @@ public HiveDecimalWritable evaluate(HiveDecimalWritable a, HiveDecimalWritable b
+       return null;
+     }
+ 
+-    try {
+-      decimalWritable.set(av.remainder(bv));
+-    } catch(NumberFormatException e) {
++    HiveDecimal dec = av.remainder(bv);
++    if (dec == null) {
+       return null;
+     }
+ 
++    decimalWritable.set(dec);
+     return decimalWritable;
+   }
+ }
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/udf/UDFOPMultiply.java b/src/ql/src/java/org/apache/hadoop/hive/ql/udf/UDFOPMultiply.java
+index 4a0393e..0daaec5 100755
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/udf/UDFOPMultiply.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/udf/UDFOPMultiply.java
+@@ -18,6 +18,7 @@
+ 
+ package org.apache.hadoop.hive.ql.udf;
+ 
++import org.apache.hadoop.hive.common.type.HiveDecimal;
+ import org.apache.hadoop.hive.ql.exec.Description;
+ import org.apache.hadoop.hive.serde2.io.ByteWritable;
+ import org.apache.hadoop.hive.serde2.io.DoubleWritable;
+@@ -115,12 +116,12 @@ public HiveDecimalWritable evaluate(HiveDecimalWritable a, HiveDecimalWritable b
+       return null;
+     }
+ 
+-    try {
+-      decimalWritable.set(a.getHiveDecimal().multiply(b.getHiveDecimal()));
+-    } catch (NumberFormatException e) {
++    HiveDecimal dec = a.getHiveDecimal().multiply(b.getHiveDecimal());
++    if (dec == null) {
+       return null;
+     }
+ 
++    decimalWritable.set(dec);
+     return decimalWritable;
+   }
+ }
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/udf/UDFOPPlus.java b/src/ql/src/java/org/apache/hadoop/hive/ql/udf/UDFOPPlus.java
+index 1e9e1aa..49c66cb 100755
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/udf/UDFOPPlus.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/udf/UDFOPPlus.java
+@@ -18,6 +18,7 @@
+ 
+ package org.apache.hadoop.hive.ql.udf;
+ 
++import org.apache.hadoop.hive.common.type.HiveDecimal;
+ import org.apache.hadoop.hive.ql.exec.Description;
+ import org.apache.hadoop.hive.serde2.io.ByteWritable;
+ import org.apache.hadoop.hive.serde2.io.DoubleWritable;
+@@ -120,11 +121,12 @@ public HiveDecimalWritable evaluate(HiveDecimalWritable a, HiveDecimalWritable b
+       return null;
+     }
+ 
+-    try {
+-      decimalWritable.set(a.getHiveDecimal().add(b.getHiveDecimal()));
+-    } catch(NumberFormatException e) {
+-      return null;
+-    }
++      HiveDecimal dec = a.getHiveDecimal().add(b.getHiveDecimal());
++      if (dec == null) {
++        return null;
++      }
++
++      decimalWritable.set(dec);
+     return decimalWritable;
+   }
+ 
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/udf/UDFPosMod.java b/src/ql/src/java/org/apache/hadoop/hive/ql/udf/UDFPosMod.java
+index 614a5bc..49651ef 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/udf/UDFPosMod.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/udf/UDFPosMod.java
+@@ -124,12 +124,12 @@ public HiveDecimalWritable evaluate(HiveDecimalWritable a, HiveDecimalWritable b
+       return null;
+     }
+ 
+-    try {
+-      decimalWritable.set(av.remainder(bv).add(bv).remainder(bv));
+-    } catch (NumberFormatException e) {
++    HiveDecimal dec = av.remainder(bv).add(bv).remainder(bv);
++    if (dec == null) {
+       return null;
+     }
+ 
++    decimalWritable.set(dec);
+     return decimalWritable;
+   }
+ }
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/udf/UDFPower.java b/src/ql/src/java/org/apache/hadoop/hive/ql/udf/UDFPower.java
+index a462116..afee8f8 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/udf/UDFPower.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/udf/UDFPower.java
+@@ -18,6 +18,7 @@
+ 
+ package org.apache.hadoop.hive.ql.udf;
+ 
++import org.apache.hadoop.hive.common.type.HiveDecimal;
+ import org.apache.hadoop.hive.ql.exec.Description;
+ import org.apache.hadoop.hive.ql.exec.UDF;
+ import org.apache.hadoop.hive.serde2.io.DoubleWritable;
+@@ -69,14 +70,15 @@ public DoubleWritable evaluate(DoubleWritable a, IntWritable b) {
+   public HiveDecimalWritable evaluate(HiveDecimalWritable a, IntWritable b) {
+     if (a == null || b == null) {
+       return null;
+-    } else {
+-      try {
+-        resultHiveDecimal.set(a.getHiveDecimal().pow(b.get()));
+-      } catch (NumberFormatException e) {
+-        return null;
+-      }
+-      return resultHiveDecimal;
+     }
++
++    HiveDecimal dec = a.getHiveDecimal().pow(b.get());
++    if (dec == null) {
++      return null;
++    }
++
++    resultHiveDecimal.set(dec);
++    return resultHiveDecimal;
+   }
+ 
+ }
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/udf/UDFRound.java b/src/ql/src/java/org/apache/hadoop/hive/ql/udf/UDFRound.java
+index 57e3f2d..cfe4d84 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/udf/UDFRound.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/udf/UDFRound.java
+@@ -79,12 +79,13 @@ private HiveDecimalWritable evaluate(HiveDecimalWritable n, int i) {
+     if (n == null) {
+       return null;
+     }
++
+     HiveDecimal bd = n.getHiveDecimal();
+-    try {
+-      bd = n.getHiveDecimal().setScale(i, HiveDecimal.ROUND_HALF_UP);
+-    } catch (NumberFormatException e) {
++    bd = n.getHiveDecimal().setScale(i, HiveDecimal.ROUND_HALF_UP);
++    if (bd == null) {
+       return null;
+     }
++
+     decimalWritable.set(bd);
+     return decimalWritable;
+   }
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDAFAverage.java b/src/ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDAFAverage.java
+index 6caef3f..fc9eedb 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDAFAverage.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDAFAverage.java
+@@ -173,11 +173,7 @@ protected void doIterate(AverageAggregationBuffer<HiveDecimal> aggregation,
+       HiveDecimal value = PrimitiveObjectInspectorUtils.getHiveDecimal(parameter, oi);
+       aggregation.count++;
+       if (aggregation.sum != null) {
+-        try {
+-          aggregation.sum = aggregation.sum.add(value);
+-        } catch (NumberFormatException e) {
+-          aggregation.sum = null;
+-        }
++        aggregation.sum = aggregation.sum.add(value);
+       }
+     }
+ 
+@@ -190,11 +186,7 @@ protected void doMerge(AverageAggregationBuffer<HiveDecimal> aggregation, Long p
+       }
+       aggregation.count += partialCount;
+       if (aggregation.sum != null) {
+-        try {
+-          aggregation.sum = aggregation.sum.add(value);
+-        } catch (NumberFormatException e) {
+-          aggregation.sum = null;
+-        }
++        aggregation.sum = aggregation.sum.add(value);
+       }
+     }
+ 
+@@ -217,11 +209,7 @@ protected Object doTerminate(AverageAggregationBuffer<HiveDecimal> aggregation) 
+         return null;
+       } else {
+         HiveDecimalWritable result = new HiveDecimalWritable(HiveDecimal.ZERO);
+-        try {
+-          result.set(aggregation.sum.divide(new HiveDecimal(aggregation.count)));
+-        } catch (NumberFormatException e) {
+-          result = null;
+-        }
++        result.set(aggregation.sum.divide(HiveDecimal.create(aggregation.count)));
+         return result;
+       }
+     }
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDAFSum.java b/src/ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDAFSum.java
+index d44df6f..69d9087 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDAFSum.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDAFSum.java
+@@ -151,13 +151,7 @@ public void merge(AggregationBuffer agg, Object partial) throws HiveException {
+         }
+ 
+         myagg.empty = false;
+-
+-        try {
+-          myagg.sum = myagg.sum.add(
+-            PrimitiveObjectInspectorUtils.getHiveDecimal(partial, inputOI));
+-        } catch (NumberFormatException e) {
+-          myagg.sum = null;
+-        }
++        myagg.sum = myagg.sum.add(PrimitiveObjectInspectorUtils.getHiveDecimal(partial, inputOI));
+       }
+     }
+ 
+diff --git a/src/ql/src/test/org/apache/hadoop/hive/ql/io/orc/TestOrcFile.java b/src/ql/src/test/org/apache/hadoop/hive/ql/io/orc/TestOrcFile.java
+index e670d39..959e747 100644
+--- a/src/ql/src/test/org/apache/hadoop/hive/ql/io/orc/TestOrcFile.java
++++ b/src/ql/src/test/org/apache/hadoop/hive/ql/io/orc/TestOrcFile.java
+@@ -423,7 +423,7 @@ public void testReadFormat_0_11() throws Exception {
+     assertEquals(Timestamp.valueOf("2000-03-12 15:00:00"),
+         tso.getPrimitiveJavaObject(readerInspector.getStructFieldData(row,
+             fields.get(12))));
+-    assertEquals(new HiveDecimal("12345678.6547456"),
++    assertEquals(HiveDecimal.create("12345678.6547456"),
+         dco.getPrimitiveJavaObject(readerInspector.getStructFieldData(row,
+             fields.get(13))));
+ 
+@@ -505,7 +505,7 @@ public void testReadFormat_0_11() throws Exception {
+     assertEquals(Timestamp.valueOf("2000-03-12 15:00:01"),
+         tso.getPrimitiveJavaObject(readerInspector.getStructFieldData(row,
+             fields.get(12))));
+-    assertEquals(new HiveDecimal("12345678.6547457"),
++    assertEquals(HiveDecimal.create("12345678.6547457"),
+         dco.getPrimitiveJavaObject(readerInspector.getStructFieldData(row,
+             fields.get(13))));
+ 
+@@ -938,7 +938,7 @@ public void testUnionAndTimestamp() throws Exception {
+     synchronized (TestOrcFile.class) {
+       inspector = OrcStruct.createObjectInspector(0, types);
+     }
+-    HiveDecimal maxValue = new HiveDecimal("100000000000000000000");
++    HiveDecimal maxValue = HiveDecimal.create("100000000000000000000");
+     Writer writer = OrcFile.createWriter(testFilePath,
+                                          OrcFile.writerOptions(conf)
+                                          .inspector(inspector)
+@@ -950,13 +950,13 @@ public void testUnionAndTimestamp() throws Exception {
+     OrcUnion union = new OrcUnion();
+     row.setFieldValue(1, union);
+     row.setFieldValue(0, Timestamp.valueOf("2000-03-12 15:00:00"));
+-    HiveDecimal value = new HiveDecimal("12345678.6547456");
++    HiveDecimal value = HiveDecimal.create("12345678.6547456");
+     row.setFieldValue(2, value);
+     union.set((byte) 0, new IntWritable(42));
+     writer.addRow(row);
+     row.setFieldValue(0, Timestamp.valueOf("2000-03-20 12:00:00.123456789"));
+     union.set((byte) 1, new Text("hello"));
+-    value = new HiveDecimal("-5643.234");
++    value = HiveDecimal.create("-5643.234");
+     row.setFieldValue(2, value);
+     writer.addRow(row);
+     row.setFieldValue(0, null);
+@@ -970,7 +970,7 @@ public void testUnionAndTimestamp() throws Exception {
+     writer.addRow(row);
+     union.set((byte) 0, new IntWritable(200000));
+     row.setFieldValue(0, Timestamp.valueOf("1900-01-01 00:00:00"));
+-    value = new HiveDecimal("100000000000000000000");
++    value = HiveDecimal.create("100000000000000000000");
+     row.setFieldValue(2, value);
+     writer.addRow(row);
+     Random rand = new Random(42);
+@@ -981,7 +981,7 @@ public void testUnionAndTimestamp() throws Exception {
+       } else {
+         union.set((byte) 1, new Text(new Integer(i*i).toString()));
+       }
+-      value = new HiveDecimal(new BigInteger(118, rand),
++      value = HiveDecimal.create(new BigInteger(118, rand),
+           rand.nextInt(36));
+       row.setFieldValue(2, value);
+       if (maxValue.compareTo(value) < 0) {
+@@ -1009,7 +1009,7 @@ public void testUnionAndTimestamp() throws Exception {
+     DecimalColumnStatistics stats =
+         (DecimalColumnStatistics) reader.getStatistics()[5];
+     assertEquals(303, stats.getNumberOfValues());
+-    assertEquals(new HiveDecimal("-5643.234"), stats.getMinimum());
++    assertEquals(HiveDecimal.create("-5643.234"), stats.getMinimum());
+     assertEquals(maxValue, stats.getMaximum());
+     assertEquals(null, stats.getSum());
+     int stripeCount = 0;
+@@ -1044,14 +1044,14 @@ public void testUnionAndTimestamp() throws Exception {
+     union = (OrcUnion) row.getFieldValue(1);
+     assertEquals(0, union.getTag());
+     assertEquals(new IntWritable(42), union.getObject());
+-    assertEquals(new HiveDecimal("12345678.6547456"), row.getFieldValue(2));
++    assertEquals(HiveDecimal.create("12345678.6547456"), row.getFieldValue(2));
+     row = (OrcStruct) rows.next(row);
+     assertEquals(2, rows.getRowNumber());
+     assertEquals(Timestamp.valueOf("2000-03-20 12:00:00.123456789"),
+         row.getFieldValue(0));
+     assertEquals(1, union.getTag());
+     assertEquals(new Text("hello"), union.getObject());
+-    assertEquals(new HiveDecimal("-5643.234"), row.getFieldValue(2));
++    assertEquals(HiveDecimal.create("-5643.234"), row.getFieldValue(2));
+     row = (OrcStruct) rows.next(row);
+     assertEquals(null, row.getFieldValue(0));
+     assertEquals(null, row.getFieldValue(1));
+@@ -1071,7 +1071,7 @@ public void testUnionAndTimestamp() throws Exception {
+     assertEquals(Timestamp.valueOf("1900-01-01 00:00:00"),
+         row.getFieldValue(0));
+     assertEquals(new IntWritable(200000), union.getObject());
+-    assertEquals(new HiveDecimal("100000000000000000000"),
++    assertEquals(HiveDecimal.create("100000000000000000000"),
+                  row.getFieldValue(2));
+     rand = new Random(42);
+     for(int i=1900; i < 2200; ++i) {
+@@ -1085,7 +1085,7 @@ public void testUnionAndTimestamp() throws Exception {
+         assertEquals(1, union.getTag());
+         assertEquals(new Text(new Integer(i*i).toString()), union.getObject());
+       }
+-      assertEquals(new HiveDecimal(new BigInteger(118, rand),
++      assertEquals(HiveDecimal.create(new BigInteger(118, rand),
+                                    rand.nextInt(36)), row.getFieldValue(2));
+     }
+     for(int i=0; i < 5000; ++i) {
+@@ -1107,7 +1107,7 @@ public void testUnionAndTimestamp() throws Exception {
+         row.getFieldValue(0));
+     assertEquals(1, union.getTag());
+     assertEquals(new Text("hello"), union.getObject());
+-    assertEquals(new HiveDecimal("-5643.234"), row.getFieldValue(2));
++    assertEquals(HiveDecimal.create("-5643.234"), row.getFieldValue(2));
+     rows.close();
+   }
+ 
+diff --git a/src/ql/src/test/org/apache/hadoop/hive/ql/udf/TestGenericUDFAbs.java b/src/ql/src/test/org/apache/hadoop/hive/ql/udf/TestGenericUDFAbs.java
+index 2de4499..e2a3c6f 100644
+--- a/src/ql/src/test/org/apache/hadoop/hive/ql/udf/TestGenericUDFAbs.java
++++ b/src/ql/src/test/org/apache/hadoop/hive/ql/udf/TestGenericUDFAbs.java
+@@ -121,7 +121,7 @@ public void testHiveDecimal() throws HiveException {
+     ObjectInspector[] arguments = {valueOI};
+ 
+     udf.initialize(arguments);
+-    DeferredObject valueObj = new DeferredJavaObject(new HiveDecimalWritable(new HiveDecimal(
++    DeferredObject valueObj = new DeferredJavaObject(new HiveDecimalWritable(HiveDecimal.create(
+         "107.123456789")));
+     DeferredObject[] args = {valueObj};
+     HiveDecimalWritable output = (HiveDecimalWritable) udf.evaluate(args);
+@@ -129,7 +129,7 @@ public void testHiveDecimal() throws HiveException {
+     assertEquals("abs() test for HiveDecimal failed ", 107.123456789, output.getHiveDecimal()
+         .doubleValue());
+ 
+-    valueObj = new DeferredJavaObject(new HiveDecimalWritable(new HiveDecimal("-107.123456789")));
++    valueObj = new DeferredJavaObject(new HiveDecimalWritable(HiveDecimal.create("-107.123456789")));
+     args[0] = valueObj;
+     output = (HiveDecimalWritable) udf.evaluate(args);
+ 
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/RegexSerDe.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/RegexSerDe.java
+index add5bdf..f2ddc73 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/RegexSerDe.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/RegexSerDe.java
+@@ -126,7 +126,7 @@ public void initialize(Configuration conf, Properties tbl)
+       TypeInfo typeInfo = columnTypes.get(c);
+       if (typeInfo instanceof PrimitiveTypeInfo) {
+         PrimitiveTypeInfo pti = (PrimitiveTypeInfo) columnTypes.get(c);
+-        AbstractPrimitiveJavaObjectInspector oi = 
++        AbstractPrimitiveJavaObjectInspector oi =
+             PrimitiveObjectInspectorFactory.getPrimitiveJavaObjectInspector(pti);
+         columnOIs.add(oi);
+       } else {
+@@ -232,8 +232,7 @@ public Object deserialize(Writable blob) throws SerDeException {
+           d = Date.valueOf(t);
+           row.set(c, d);
+         } else if (typeName.equals(serdeConstants.DECIMAL_TYPE_NAME)) {
+-          HiveDecimal bd;
+-          bd = new HiveDecimal(t);
++          HiveDecimal bd = HiveDecimal.create(t);
+           row.set(c, bd);
+         } else if (typeInfo instanceof VarcharTypeInfo) {
+           HiveVarchar hv = new HiveVarchar(t, ((VarcharTypeInfo)typeInfo).getLength());
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/binarysortable/BinarySortableSerDe.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/binarysortable/BinarySortableSerDe.java
+index 5b18c8f..df85961 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/binarysortable/BinarySortableSerDe.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/binarysortable/BinarySortableSerDe.java
+@@ -405,7 +405,7 @@ static Object deserialize(InputByteBuffer buffer, TypeInfo type,
+ 
+         String digits = new String(decimalBuffer, 0, length, decimalCharSet);
+         BigInteger bi = new BigInteger(digits);
+-        HiveDecimal bd = new HiveDecimal(bi).scaleByPowerOfTen(factor-length);
++        HiveDecimal bd = HiveDecimal.create(bi).scaleByPowerOfTen(factor-length);
+ 
+         if (!positive) {
+           bd = bd.negate();
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/io/HiveDecimalWritable.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/io/HiveDecimalWritable.java
+index 81500a8..acab539 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/io/HiveDecimalWritable.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/io/HiveDecimalWritable.java
+@@ -81,7 +81,7 @@ public void setFromBytes(byte[] bytes, int offset, int length) {
+   }
+ 
+   public HiveDecimal getHiveDecimal() {
+-    return new HiveDecimal(new BigInteger(internalStorage), scale);
++    return HiveDecimal.create(new BigInteger(internalStorage), scale);
+   }
+ 
+   @Override
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/lazy/LazyHiveDecimal.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/lazy/LazyHiveDecimal.java
+index 08f251c..3be28dd 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/lazy/LazyHiveDecimal.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/lazy/LazyHiveDecimal.java
+@@ -52,15 +52,20 @@ public void init(ByteArrayRef bytes, int start, int length) {
+     String byteData = null;
+     try {
+       byteData = Text.decode(bytes.getData(), start, length);
+-      data.set(new HiveDecimal(byteData));
+-      isNull = false;
+-    } catch (NumberFormatException e) {
+-      isNull = true;
+-      LOG.debug("Data not in the HiveDecimal data type range so converted to null. Given data is :"
+-          + byteData, e);
+     } catch (CharacterCodingException e) {
+       isNull = true;
+       LOG.debug("Data not in the HiveDecimal data type range so converted to null.", e);
++      return;
++    }
++
++    HiveDecimal dec = HiveDecimal.create(byteData);
++    if (dec != null) {
++      data.set(dec);
++      isNull = false;
++    } else {
++      LOG.debug("Data not in the HiveDecimal data type range so converted to null. Given data is :"
++          + byteData);
++      isNull = true;
+     }
+   }
+ 
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/JavaHiveDecimalObjectInspector.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/JavaHiveDecimalObjectInspector.java
+index 92e47fa..113445e 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/JavaHiveDecimalObjectInspector.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/JavaHiveDecimalObjectInspector.java
+@@ -38,12 +38,12 @@ public HiveDecimalWritable getPrimitiveWritableObject(Object o) {
+     }
+ 
+     if (o instanceof String) {
+-      try {
+-        o = new HiveDecimal((String)o);
+-      } catch(NumberFormatException e) {
++      o = HiveDecimal.create((String)o);
++      if (o == null) {
+         return null;
+       }
+     }
++
+     return new HiveDecimalWritable((HiveDecimal) o);
+   }
+ 
+@@ -54,7 +54,7 @@ public HiveDecimal getPrimitiveJavaObject(Object o) {
+ 
+   @Override
+   public Object set(Object o, byte[] bytes, int scale) {
+-    return new HiveDecimal(new BigInteger(bytes), scale);
++    return HiveDecimal.create(new BigInteger(bytes), scale);
+   }
+ 
+   @Override
+@@ -69,20 +69,16 @@ public Object set(Object o, HiveDecimalWritable t) {
+ 
+   @Override
+   public Object create(byte[] bytes, int scale) {
+-    try {
+-      return new HiveDecimal(new BigInteger(bytes), scale);
+-    } catch (NumberFormatException e) {
+-      return null;
+-    }
++    return HiveDecimal.create(new BigInteger(bytes), scale);
+   }
+ 
+   @Override
+   public Object create(HiveDecimal t) {
+-    try {
+-      return t == null ? null : new HiveDecimal(t.unscaledValue(), t.scale());
+-    } catch(NumberFormatException e) {
++    if (t == null) {
+       return null;
+     }
++
++    return HiveDecimal.create(t.unscaledValue(), t.scale());
+   }
+ 
+ }
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/PrimitiveObjectInspectorConverter.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/PrimitiveObjectInspectorConverter.java
+index 5b3756f..50de06a 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/PrimitiveObjectInspectorConverter.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/PrimitiveObjectInspectorConverter.java
+@@ -301,12 +301,7 @@ public Object convert(Object input) {
+         return null;
+       }
+ 
+-      try {
+-        return outputOI.set(r, PrimitiveObjectInspectorUtils.getHiveDecimal(input,
+-            inputOI));
+-      } catch (NumberFormatException e) {
+-        return null;
+-      }
++      return outputOI.set(r, PrimitiveObjectInspectorUtils.getHiveDecimal(input, inputOI));
+     }
+   }
+ 
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/PrimitiveObjectInspectorUtils.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/PrimitiveObjectInspectorUtils.java
+index 9a93740..ef614b3 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/PrimitiveObjectInspectorUtils.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/PrimitiveObjectInspectorUtils.java
+@@ -882,35 +882,35 @@ public static HiveDecimal getHiveDecimal(Object o, PrimitiveObjectInspector oi) 
+         HiveDecimal.ONE : HiveDecimal.ZERO;
+       break;
+     case BYTE:
+-      result = new HiveDecimal(((ByteObjectInspector) oi).get(o));
++      result = HiveDecimal.create(((ByteObjectInspector) oi).get(o));
+       break;
+     case SHORT:
+-      result = new HiveDecimal(((ShortObjectInspector) oi).get(o));
++      result = HiveDecimal.create(((ShortObjectInspector) oi).get(o));
+       break;
+     case INT:
+-      result = new HiveDecimal(((IntObjectInspector) oi).get(o));
++      result = HiveDecimal.create(((IntObjectInspector) oi).get(o));
+       break;
+     case LONG:
+-      result = new HiveDecimal(((LongObjectInspector) oi).get(o));
++      result = HiveDecimal.create(((LongObjectInspector) oi).get(o));
+       break;
+     case FLOAT:
+       Float f = ((FloatObjectInspector) oi).get(o);
+-      result = new HiveDecimal(f.toString());
++      result = HiveDecimal.create(f.toString());
+       break;
+     case DOUBLE:
+       Double d = ((DoubleObjectInspector) oi).get(o);
+-      result = new HiveDecimal(d.toString());
++      result = HiveDecimal.create(d.toString());
+       break;
+     case STRING:
+-      result = new HiveDecimal(((StringObjectInspector) oi).getPrimitiveJavaObject(o));
++      result = HiveDecimal.create(((StringObjectInspector) oi).getPrimitiveJavaObject(o));
+       break;
+     case VARCHAR:
+-      result = new HiveDecimal(getString(o, oi));
++      result = HiveDecimal.create(getString(o, oi));
+       break;
+     case TIMESTAMP:
+       Double ts = ((TimestampObjectInspector) oi).getPrimitiveWritableObject(o)
+         .getDouble();
+-      result = new HiveDecimal(ts.toString());
++      result = HiveDecimal.create(ts.toString());
+       break;
+     case DECIMAL:
+       result = ((HiveDecimalObjectInspector) oi).getPrimitiveJavaObject(o);
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableHiveDecimalObjectInspector.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableHiveDecimalObjectInspector.java
+index d3fc6ea..dc9c8fb 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableHiveDecimalObjectInspector.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableHiveDecimalObjectInspector.java
+@@ -53,12 +53,20 @@ public Object set(Object o, byte[] bytes, int scale) {
+ 
+   @Override
+   public Object set(Object o, HiveDecimal t) {
++    if (t == null) {
++      return null;
++    }
++
+     ((HiveDecimalWritable) o).set(t);
+     return o;
+   }
+ 
+   @Override
+   public Object set(Object o, HiveDecimalWritable t) {
++    if (t == null) {
++      return null;
++    }
++
+     ((HiveDecimalWritable) o).set(t);
+     return o;
+   }
+@@ -70,6 +78,10 @@ public Object create(byte[] bytes, int scale) {
+ 
+   @Override
+   public Object create(HiveDecimal t) {
++    if (t == null) {
++      return null;
++    }
++
+     return new HiveDecimalWritable(t);
+   }
+ 
+diff --git a/src/serde/src/test/org/apache/hadoop/hive/serde2/binarysortable/TestBinarySortableSerDe.java b/src/serde/src/test/org/apache/hadoop/hive/serde2/binarysortable/TestBinarySortableSerDe.java
+index 82feeec..e512f42 100644
+--- a/src/serde/src/test/org/apache/hadoop/hive/serde2/binarysortable/TestBinarySortableSerDe.java
++++ b/src/serde/src/test/org/apache/hadoop/hive/serde2/binarysortable/TestBinarySortableSerDe.java
+@@ -150,7 +150,7 @@ public static HiveDecimal getRandHiveDecimal(Random r) {
+       sb.append(getRandString(r, DECIMAL_CHARS, l2));
+     }
+ 
+-    HiveDecimal bd = new HiveDecimal(sb.toString());
++    HiveDecimal bd = HiveDecimal.create(sb.toString());
+     return bd;
+   }
+ 
+diff --git a/src/serde/src/test/org/apache/hadoop/hive/serde2/io/TestTimestampWritable.java b/src/serde/src/test/org/apache/hadoop/hive/serde2/io/TestTimestampWritable.java
+index e54c105..0e7b418 100644
+--- a/src/serde/src/test/org/apache/hadoop/hive/serde2/io/TestTimestampWritable.java
++++ b/src/serde/src/test/org/apache/hadoop/hive/serde2/io/TestTimestampWritable.java
+@@ -315,7 +315,7 @@ public void testToFromDouble() {
+         // decimalToTimestamp should be consistent with doubleToTimestamp for this level of
+         // precision.
+         assertEquals(ts, TimestampWritable.decimalToTimestamp(
+-            new HiveDecimal(BigDecimal.valueOf(asDouble))));
++            HiveDecimal.create(BigDecimal.valueOf(asDouble))));
+       }
+     }
+   }
+@@ -323,7 +323,7 @@ public void testToFromDouble() {
+   private static HiveDecimal timestampToDecimal(Timestamp ts) {
+     BigDecimal d = new BigDecimal(getSeconds(ts));
+     d = d.add(new BigDecimal(ts.getNanos()).divide(new BigDecimal(BILLION)));
+-    return new HiveDecimal(d);
++    return HiveDecimal.create(d);
+   }
+ 
+   public void testDecimalToTimestampRandomly() {
+diff --git a/src/serde/src/test/org/apache/hadoop/hive/serde2/objectinspector/TestObjectInspectorConverters.java b/src/serde/src/test/org/apache/hadoop/hive/serde2/objectinspector/TestObjectInspectorConverters.java
+index 5e546c5..1185283 100644
+--- a/src/serde/src/test/org/apache/hadoop/hive/serde2/objectinspector/TestObjectInspectorConverters.java
++++ b/src/serde/src/test/org/apache/hadoop/hive/serde2/objectinspector/TestObjectInspectorConverters.java
+@@ -149,7 +149,7 @@ public void testObjectInspectorConverters() throws Throwable {
+           PrimitiveObjectInspectorFactory.javaHiveDecimalObjectInspector,
+           PrimitiveObjectInspectorFactory.writableStringObjectInspector);
+       assertEquals("TextConverter", new Text("100.001"), textConverter
+-	  .convert(new HiveDecimal("100.001")));
++	  .convert(HiveDecimal.create("100.001")));
+       assertEquals("TextConverter", null, textConverter.convert(null));
+ 
+       // Binary
+-- 
+1.7.0.4
+

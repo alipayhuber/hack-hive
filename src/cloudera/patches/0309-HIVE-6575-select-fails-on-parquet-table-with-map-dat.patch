@@ -1,0 +1,73 @@
+From 5597ade9f994e1d1b9e151c615cb4a8e209c26d2 Mon Sep 17 00:00:00 2001
+From: Xuefu Zhang <xuefu@apache.org>
+Date: Wed, 12 Mar 2014 17:47:30 +0000
+Subject: [PATCH 309/375] HIVE-6575: select * fails on parquet table with map datatype (Szehon via Xuefu)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1576832 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../parquet/serde/AbstractParquetMapInspector.java |   38 +++++++++++++-------
+ 1 files changed, 25 insertions(+), 13 deletions(-)
+
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/io/parquet/serde/AbstractParquetMapInspector.java b/src/ql/src/java/org/apache/hadoop/hive/ql/io/parquet/serde/AbstractParquetMapInspector.java
+index 1d72747..53f175c 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/io/parquet/serde/AbstractParquetMapInspector.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/io/parquet/serde/AbstractParquetMapInspector.java
+@@ -134,30 +134,42 @@ public Object clear(Object map) {
+   }
+ 
+   @Override
++  public int hashCode() {
++    final int prime = 31;
++    int result = 1;
++    result = prime * result
++        + ((keyInspector == null) ? 0 : keyInspector.hashCode());
++    result = prime * result
++        + ((valueInspector == null) ? 0 : valueInspector.hashCode());
++    return result;
++  }
++
++  @Override
+   public boolean equals(Object obj) {
++    if (this == obj) {
++      return true;
++    }
+     if (obj == null) {
+       return false;
+     }
+     if (getClass() != obj.getClass()) {
+       return false;
+     }
+-    final StandardParquetHiveMapInspector other = (StandardParquetHiveMapInspector) obj;
+-    if (this.keyInspector != other.keyInspector &&
+-        (this.keyInspector == null || !this.keyInspector.equals(other.keyInspector))) {
++    final AbstractParquetMapInspector other = (AbstractParquetMapInspector) obj;
++    if (keyInspector == null) {
++      if (other.keyInspector != null) {
++        return false;
++      }
++    } else if (!keyInspector.equals(other.keyInspector)) {
+       return false;
+     }
+-    if (this.valueInspector != other.valueInspector &&
+-        (this.valueInspector == null || !this.valueInspector.equals(other.valueInspector))) {
++    if (valueInspector == null) {
++      if (other.valueInspector != null) {
++        return false;
++      }
++    } else if (!valueInspector.equals(other.valueInspector)) {
+       return false;
+     }
+     return true;
+   }
+-
+-  @Override
+-  public int hashCode() {
+-    int hash = 7;
+-    hash = 59 * hash + (this.keyInspector != null ? this.keyInspector.hashCode() : 0);
+-    hash = 59 * hash + (this.valueInspector != null ? this.valueInspector.hashCode() : 0);
+-    return hash;
+-  }
+ }
+-- 
+1.7.0.4
+

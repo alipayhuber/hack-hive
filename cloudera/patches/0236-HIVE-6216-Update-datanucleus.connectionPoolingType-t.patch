@@ -1,0 +1,28 @@
+From ea3f5fb3101d39ace848a9d49ee1e2183738108d Mon Sep 17 00:00:00 2001
+From: Ashutosh Chauhan <hashutosh@apache.org>
+Date: Thu, 16 Jan 2014 22:11:24 +0000
+Subject: [PATCH 236/375] HIVE-6216 : Update datanucleus.connectionPoolingType to BoneCP in hive-default.xml.template (Vaibhav Gumashta via Ashutosh Chauhan)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1558934 13f79535-47bb-0310-9956-ffa450edef68
+---
+ conf/hive-default.xml.template |    4 ++--
+ 1 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/src/conf/hive-default.xml.template b/src/conf/hive-default.xml.template
+index 522dd04..ed74444 100644
+--- a/src/conf/hive-default.xml.template
++++ b/src/conf/hive-default.xml.template
+@@ -177,8 +177,8 @@
+ 
+ <property>
+   <name>datanucleus.connectionPoolingType</name>
+-  <value>DBCP</value>
+-  <description>Uses a DBCP connection pool for JDBC metastore</description>
++  <value>BoneCP</value>
++  <description>Uses a BoneCP connection pool for JDBC metastore</description>
+ </property>
+ 
+ <property>
+-- 
+1.7.0.4
+

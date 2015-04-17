@@ -1,0 +1,27 @@
+From a657ef38bc21d02dedcdbdc9d695171a0e0c291e Mon Sep 17 00:00:00 2001
+From: Xuefu Zhang <xuefu@apache.org>
+Date: Wed, 26 Feb 2014 00:16:44 +0000
+Subject: [PATCH 286/375] HIVE-6456: Implement Parquet schema evolution (Brock via Xuefu)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1571877 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../io/parquet/read/DataWritableReadSupport.java   |    3 +++
+ 1 files changed, 3 insertions(+), 0 deletions(-)
+
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/io/parquet/read/DataWritableReadSupport.java b/src/ql/src/java/org/apache/hadoop/hive/ql/io/parquet/read/DataWritableReadSupport.java
+index 9087307..94c780a 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/io/parquet/read/DataWritableReadSupport.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/io/parquet/read/DataWritableReadSupport.java
+@@ -80,6 +80,9 @@
+         // listColumns contains partition columns which are metadata only
+         if (fileSchema.containsField(col)) {
+           typeListTable.add(fileSchema.getType(col));
++        } else {
++          // below allows schema evolution
++          typeListTable.add(new PrimitiveType(Repetition.OPTIONAL, PrimitiveTypeName.BINARY, col));
+         }
+       }
+       MessageType tableSchema = new MessageType(TABLE_SCHEMA, typeListTable);
+-- 
+1.7.0.4
+

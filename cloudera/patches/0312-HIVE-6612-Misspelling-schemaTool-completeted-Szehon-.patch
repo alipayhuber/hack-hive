@@ -1,0 +1,26 @@
+From ecaac8e1cd2d0cbd6865971228f35d2d4e6b2e84 Mon Sep 17 00:00:00 2001
+From: Ashutosh Chauhan <hashutosh@apache.org>
+Date: Wed, 19 Mar 2014 15:48:55 +0000
+Subject: [PATCH 312/375] HIVE-6612 : Misspelling schemaTool completeted (Szehon Ho via Ashutosh Chauhan)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1579268 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../org/apache/hive/beeline/HiveSchemaTool.java    |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+
+diff --git a/src/beeline/src/java/org/apache/hive/beeline/HiveSchemaTool.java b/src/beeline/src/java/org/apache/hive/beeline/HiveSchemaTool.java
+index 0be435b..3934251 100644
+--- a/src/beeline/src/java/org/apache/hive/beeline/HiveSchemaTool.java
++++ b/src/beeline/src/java/org/apache/hive/beeline/HiveSchemaTool.java
+@@ -525,7 +525,7 @@ public static void main(String[] args) {
+       System.err.println("*** schemaTool failed ***");
+       System.exit(1);
+     }
+-    System.out.println("schemaTool completeted");
++    System.out.println("schemaTool completed");
+ 
+   }
+ }
+-- 
+1.7.0.4
+

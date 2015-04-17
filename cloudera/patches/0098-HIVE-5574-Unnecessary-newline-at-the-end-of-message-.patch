@@ -1,0 +1,291 @@
+From 5d86819c9b78ac0dd0a19378a7ab7e50f7fb90ae Mon Sep 17 00:00:00 2001
+From: Ashutosh Chauhan <hashutosh@apache.org>
+Date: Mon, 21 Oct 2013 15:06:59 +0000
+Subject: [PATCH 098/375] HIVE-5574 : Unnecessary newline at the end of message of ParserException (Navis via Ashutosh Chauhan)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1534203 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../hadoop/hive/ql/parse/ParseException.java       |    4 +++-
+ .../alter_partition_coltype_2columns.q.out         |    1 -
+ .../alter_partition_coltype_invalidtype.q.out      |    1 -
+ .../results/clientnegative/archive_partspec3.q.out |    1 -
+ .../results/clientnegative/clusterbyorderby.q.out  |    1 -
+ .../results/clientnegative/column_rename3.q.out    |    1 -
+ .../columnstats_partlvl_multiple_part_clause.q.out |    1 -
+ .../clientnegative/create_or_replace_view6.q.out   |    1 -
+ .../clientnegative/invalid_create_tbl2.q.out       |    1 -
+ .../clientnegative/invalid_select_expression.q.out |    1 -
+ .../results/clientnegative/invalid_tbl_name.q.out  |    1 -
+ .../results/clientnegative/lateral_view_join.q.out |    1 -
+ .../ptf_negative_DistributeByOrderBy.q.out         |    1 -
+ .../ptf_negative_PartitionBySortBy.q.out           |    1 -
+ .../clientnegative/ptf_window_boundaries.q.out     |    1 -
+ .../clientnegative/ptf_window_boundaries2.q.out    |    1 -
+ .../clientnegative/select_charliteral.q.out        |    1 -
+ .../results/clientnegative/select_udtf_alias.q.out |    1 -
+ .../clientnegative/set_table_property.q.out        |    1 -
+ .../results/clientnegative/show_columns2.q.out     |    1 -
+ .../results/clientnegative/show_tables_bad1.q.out  |    1 -
+ .../results/clientnegative/show_tables_bad2.q.out  |    1 -
+ .../test/results/clientnegative/uniquejoin3.q.out  |    1 -
+ ql/src/test/results/compiler/errors/garbage.q.out  |    2 +-
+ .../compiler/errors/invalid_create_table.q.out     |    2 +-
+ .../results/compiler/errors/invalid_select.q.out   |    2 +-
+ .../compiler/errors/macro_reserved_word.q.out      |    2 +-
+ .../compiler/errors/missing_overwrite.q.out        |    2 +-
+ .../results/compiler/errors/quoted_string.q.out    |    2 +-
+ .../results/compiler/errors/wrong_distinct2.q.out  |    2 +-
+ 30 files changed, 10 insertions(+), 30 deletions(-)
+
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/ParseException.java b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/ParseException.java
+index 66d194b..8a14a21 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/ParseException.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/ParseException.java
+@@ -39,8 +39,10 @@ public String getMessage() {
+ 
+     StringBuilder sb = new StringBuilder();
+     for (ParseError err : errors) {
++      if (sb.length() > 0) {
++        sb.append('\n');
++      }
+       sb.append(err.getMessage());
+-      sb.append("\n");
+     }
+ 
+     return sb.toString();
+diff --git a/src/ql/src/test/results/clientnegative/alter_partition_coltype_2columns.q.out b/src/ql/src/test/results/clientnegative/alter_partition_coltype_2columns.q.out
+index 8b3bf18..e1f9a27 100644
+--- a/src/ql/src/test/results/clientnegative/alter_partition_coltype_2columns.q.out
++++ b/src/ql/src/test/results/clientnegative/alter_partition_coltype_2columns.q.out
+@@ -34,4 +34,3 @@ ts                  	string              	None
+ dt                  	string              	None                
+ ts                  	string              	None                
+ FAILED: ParseException line 4:50 mismatched input ',' expecting ) near 'int' in alter table partition statement
+-
+diff --git a/src/ql/src/test/results/clientnegative/alter_partition_coltype_invalidtype.q.out b/src/ql/src/test/results/clientnegative/alter_partition_coltype_invalidtype.q.out
+index 3794d41..a6deaee 100644
+--- a/src/ql/src/test/results/clientnegative/alter_partition_coltype_invalidtype.q.out
++++ b/src/ql/src/test/results/clientnegative/alter_partition_coltype_invalidtype.q.out
+@@ -34,4 +34,3 @@ ts                  	string              	None
+ dt                  	string              	None                
+ ts                  	string              	None                
+ FAILED: ParseException line 4:47 cannot recognize input near 'time' ')' '<EOF>' in column type
+-
+diff --git a/src/ql/src/test/results/clientnegative/archive_partspec3.q.out b/src/ql/src/test/results/clientnegative/archive_partspec3.q.out
+index 8f408dd..c85e9a2 100644
+--- a/src/ql/src/test/results/clientnegative/archive_partspec3.q.out
++++ b/src/ql/src/test/results/clientnegative/archive_partspec3.q.out
+@@ -24,4 +24,3 @@ POSTHOOK: Output: default@srcpart_archived@ds=2008-04-08/hr=12
+ POSTHOOK: Lineage: srcpart_archived PARTITION(ds=2008-04-08,hr=12).key SIMPLE [(srcpart)srcpart.FieldSchema(name:key, type:string, comment:default), ]
+ POSTHOOK: Lineage: srcpart_archived PARTITION(ds=2008-04-08,hr=12).value SIMPLE [(srcpart)srcpart.FieldSchema(name:value, type:string, comment:default), ]
+ FAILED: ParseException line 3:48 cannot recognize input near ')' '<EOF>' '<EOF>' in archive statement
+-
+diff --git a/src/ql/src/test/results/clientnegative/clusterbyorderby.q.out b/src/ql/src/test/results/clientnegative/clusterbyorderby.q.out
+index 8ea6c6c..5545809 100644
+--- a/src/ql/src/test/results/clientnegative/clusterbyorderby.q.out
++++ b/src/ql/src/test/results/clientnegative/clusterbyorderby.q.out
+@@ -1,2 +1 @@
+ FAILED: ParseException line 5:0 missing EOF at 'ORDER' near 'tkey'
+-
+diff --git a/src/ql/src/test/results/clientnegative/column_rename3.q.out b/src/ql/src/test/results/clientnegative/column_rename3.q.out
+index a581d84..6d521f5 100644
+--- a/src/ql/src/test/results/clientnegative/column_rename3.q.out
++++ b/src/ql/src/test/results/clientnegative/column_rename3.q.out
+@@ -1,2 +1 @@
+ FAILED: ParseException line 1:30 cannot recognize input near '<EOF>' '<EOF>' '<EOF>' in column type
+-
+diff --git a/src/ql/src/test/results/clientnegative/columnstats_partlvl_multiple_part_clause.q.out b/src/ql/src/test/results/clientnegative/columnstats_partlvl_multiple_part_clause.q.out
+index 808ff29..1bda7fa 100644
+--- a/src/ql/src/test/results/clientnegative/columnstats_partlvl_multiple_part_clause.q.out
++++ b/src/ql/src/test/results/clientnegative/columnstats_partlvl_multiple_part_clause.q.out
+@@ -52,4 +52,3 @@ POSTHOOK: type: LOAD
+ POSTHOOK: Output: default@employee_part
+ POSTHOOK: Output: default@employee_part@employeesalary=3000.0/country=UK
+ FAILED: ParseException line 5:79 mismatched input 'partition' expecting KW_COMPUTE near ')' in analyze statement
+-
+diff --git a/src/ql/src/test/results/clientnegative/create_or_replace_view6.q.out b/src/ql/src/test/results/clientnegative/create_or_replace_view6.q.out
+index d873403..447dc2f 100644
+--- a/src/ql/src/test/results/clientnegative/create_or_replace_view6.q.out
++++ b/src/ql/src/test/results/clientnegative/create_or_replace_view6.q.out
+@@ -12,4 +12,3 @@ POSTHOOK: query: create view v partitioned on (ds, hr) as select * from srcpart
+ POSTHOOK: type: CREATEVIEW
+ POSTHOOK: Output: default@v
+ FAILED: ParseException line 2:52 cannot recognize input near 'blah' '<EOF>' '<EOF>' in select clause
+-
+diff --git a/src/ql/src/test/results/clientnegative/invalid_create_tbl2.q.out b/src/ql/src/test/results/clientnegative/invalid_create_tbl2.q.out
+index 9269e2e..e366162 100644
+--- a/src/ql/src/test/results/clientnegative/invalid_create_tbl2.q.out
++++ b/src/ql/src/test/results/clientnegative/invalid_create_tbl2.q.out
+@@ -1,2 +1 @@
+ FAILED: ParseException line 1:7 cannot recognize input near 'create' 'tabl' 'tmp_zshao_22' in ddl statement
+-
+diff --git a/src/ql/src/test/results/clientnegative/invalid_select_expression.q.out b/src/ql/src/test/results/clientnegative/invalid_select_expression.q.out
+index a30b90f..63a682a 100644
+--- a/src/ql/src/test/results/clientnegative/invalid_select_expression.q.out
++++ b/src/ql/src/test/results/clientnegative/invalid_select_expression.q.out
+@@ -1,2 +1 @@
+ FAILED: ParseException line 1:32 cannot recognize input near '.' 'foo' '<EOF>' in expression specification
+-
+diff --git a/src/ql/src/test/results/clientnegative/invalid_tbl_name.q.out b/src/ql/src/test/results/clientnegative/invalid_tbl_name.q.out
+index 4ea8928..cbf213e 100644
+--- a/src/ql/src/test/results/clientnegative/invalid_tbl_name.q.out
++++ b/src/ql/src/test/results/clientnegative/invalid_tbl_name.q.out
+@@ -1,2 +1 @@
+ FAILED: ParseException line 1:20 cannot recognize input near 'invalid' '-' 'name' in table name
+-
+diff --git a/src/ql/src/test/results/clientnegative/lateral_view_join.q.out b/src/ql/src/test/results/clientnegative/lateral_view_join.q.out
+index 7b34cfa..8ad1386 100644
+--- a/src/ql/src/test/results/clientnegative/lateral_view_join.q.out
++++ b/src/ql/src/test/results/clientnegative/lateral_view_join.q.out
+@@ -1,2 +1 @@
+ FAILED: ParseException line 1:62 missing EOF at 'myTable' near 'AS'
+-
+diff --git a/src/ql/src/test/results/clientnegative/ptf_negative_DistributeByOrderBy.q.out b/src/ql/src/test/results/clientnegative/ptf_negative_DistributeByOrderBy.q.out
+index 7baf8f2..d73a0fa 100644
+--- a/src/ql/src/test/results/clientnegative/ptf_negative_DistributeByOrderBy.q.out
++++ b/src/ql/src/test/results/clientnegative/ptf_negative_DistributeByOrderBy.q.out
+@@ -28,4 +28,3 @@ POSTHOOK: query: CREATE TABLE part(
+ POSTHOOK: type: CREATETABLE
+ POSTHOOK: Output: default@part
+ FAILED: ParseException line 5:46 missing ) at 'order' near 'p_mfgr' in table name
+-
+diff --git a/src/ql/src/test/results/clientnegative/ptf_negative_PartitionBySortBy.q.out b/src/ql/src/test/results/clientnegative/ptf_negative_PartitionBySortBy.q.out
+index 837db20..48139f0 100644
+--- a/src/ql/src/test/results/clientnegative/ptf_negative_PartitionBySortBy.q.out
++++ b/src/ql/src/test/results/clientnegative/ptf_negative_PartitionBySortBy.q.out
+@@ -28,4 +28,3 @@ POSTHOOK: query: CREATE TABLE part(
+ POSTHOOK: type: CREATETABLE
+ POSTHOOK: Output: default@part
+ FAILED: ParseException line 5:45 missing ) at 'sort' near 'p_mfgr' in table name
+-
+diff --git a/src/ql/src/test/results/clientnegative/ptf_window_boundaries.q.out b/src/ql/src/test/results/clientnegative/ptf_window_boundaries.q.out
+index 55b4384..de06f0e 100644
+--- a/src/ql/src/test/results/clientnegative/ptf_window_boundaries.q.out
++++ b/src/ql/src/test/results/clientnegative/ptf_window_boundaries.q.out
+@@ -26,4 +26,3 @@ CREATE TABLE part(
+ POSTHOOK: type: CREATETABLE
+ POSTHOOK: Output: default@part
+ FAILED: ParseException line 4:44 mismatched input 'following' expecting KW_PRECEDING near 'unbounded' in windowframestartboundary
+-
+diff --git a/src/ql/src/test/results/clientnegative/ptf_window_boundaries2.q.out b/src/ql/src/test/results/clientnegative/ptf_window_boundaries2.q.out
+index f00b85b..ca935bd 100644
+--- a/src/ql/src/test/results/clientnegative/ptf_window_boundaries2.q.out
++++ b/src/ql/src/test/results/clientnegative/ptf_window_boundaries2.q.out
+@@ -26,4 +26,3 @@ CREATE TABLE part(
+ POSTHOOK: type: CREATETABLE
+ POSTHOOK: Output: default@part
+ FAILED: ParseException line 4:45 mismatched input 'following' expecting KW_PRECEDING near 'unbounded' in windowframestartboundary
+-
+diff --git a/src/ql/src/test/results/clientnegative/select_charliteral.q.out b/src/ql/src/test/results/clientnegative/select_charliteral.q.out
+index 9a66551..09e409b 100644
+--- a/src/ql/src/test/results/clientnegative/select_charliteral.q.out
++++ b/src/ql/src/test/results/clientnegative/select_charliteral.q.out
+@@ -1,3 +1,2 @@
+ FAILED: ParseException line 3:11 missing \' at ',' near '_c17' in character string literal
+ line 4:0 mismatched input '<EOF>' expecting \' near '_c17' in character string literal
+-
+diff --git a/src/ql/src/test/results/clientnegative/select_udtf_alias.q.out b/src/ql/src/test/results/clientnegative/select_udtf_alias.q.out
+index bec540b..614a18e 100644
+--- a/src/ql/src/test/results/clientnegative/select_udtf_alias.q.out
++++ b/src/ql/src/test/results/clientnegative/select_udtf_alias.q.out
+@@ -1,2 +1 @@
+ FAILED: ParseException line 3:49 missing FROM at 'LIMIT' near ')' in table name
+-
+diff --git a/src/ql/src/test/results/clientnegative/set_table_property.q.out b/src/ql/src/test/results/clientnegative/set_table_property.q.out
+index c0898ba..13c86db 100644
+--- a/src/ql/src/test/results/clientnegative/set_table_property.q.out
++++ b/src/ql/src/test/results/clientnegative/set_table_property.q.out
+@@ -4,4 +4,3 @@ POSTHOOK: query: create table testTable(col1 int, col2 int)
+ POSTHOOK: type: CREATETABLE
+ POSTHOOK: Output: default@testTable
+ FAILED: ParseException line 4:45 missing StringLiteral at ')' near '<EOF>'
+-
+diff --git a/src/ql/src/test/results/clientnegative/show_columns2.q.out b/src/ql/src/test/results/clientnegative/show_columns2.q.out
+index bd6a10a..c2921eb 100644
+--- a/src/ql/src/test/results/clientnegative/show_columns2.q.out
++++ b/src/ql/src/test/results/clientnegative/show_columns2.q.out
+@@ -1,2 +1 @@
+ FAILED: ParseException line 1:29 extraneous input 'foo' expecting EOF near '<EOF>'
+-
+diff --git a/src/ql/src/test/results/clientnegative/show_tables_bad1.q.out b/src/ql/src/test/results/clientnegative/show_tables_bad1.q.out
+index 2d5d01a..9a00062 100644
+--- a/src/ql/src/test/results/clientnegative/show_tables_bad1.q.out
++++ b/src/ql/src/test/results/clientnegative/show_tables_bad1.q.out
+@@ -1,2 +1 @@
+ FAILED: ParseException line 1:12 extraneous input 'JOIN' expecting EOF near '<EOF>'
+-
+diff --git a/src/ql/src/test/results/clientnegative/show_tables_bad2.q.out b/src/ql/src/test/results/clientnegative/show_tables_bad2.q.out
+index 8a41a54..6385a2a 100644
+--- a/src/ql/src/test/results/clientnegative/show_tables_bad2.q.out
++++ b/src/ql/src/test/results/clientnegative/show_tables_bad2.q.out
+@@ -1,2 +1 @@
+ FAILED: ParseException line 1:32 extraneous input 'b' expecting EOF near '<EOF>'
+-
+diff --git a/src/ql/src/test/results/clientnegative/uniquejoin3.q.out b/src/ql/src/test/results/clientnegative/uniquejoin3.q.out
+index 192939c..e10a47b 100644
+--- a/src/ql/src/test/results/clientnegative/uniquejoin3.q.out
++++ b/src/ql/src/test/results/clientnegative/uniquejoin3.q.out
+@@ -1,2 +1 @@
+ FAILED: ParseException line 1:54 required (...)+ loop did not match anything at input 'JOIN' in statement
+-
+diff --git a/src/ql/src/test/results/compiler/errors/garbage.q.out b/src/ql/src/test/results/compiler/errors/garbage.q.out
+index 159364f..fdca829 100644
+--- a/src/ql/src/test/results/compiler/errors/garbage.q.out
++++ b/src/ql/src/test/results/compiler/errors/garbage.q.out
+@@ -1 +1 @@
+-Parse Error: line 1:0 cannot recognize input near 'this' 'is' 'totally'
++Parse Error: line 1:0 cannot recognize input near 'this' 'is' 'totally'
+\ No newline at end of file
+diff --git a/src/ql/src/test/results/compiler/errors/invalid_create_table.q.out b/src/ql/src/test/results/compiler/errors/invalid_create_table.q.out
+index bb541f9..79db711 100644
+--- a/src/ql/src/test/results/compiler/errors/invalid_create_table.q.out
++++ b/src/ql/src/test/results/compiler/errors/invalid_create_table.q.out
+@@ -1 +1 @@
+-Parse Error: line 3:2 mismatched input 'b' expecting ) near 'INT' in create table statement
++Parse Error: line 3:2 mismatched input 'b' expecting ) near 'INT' in create table statement
+\ No newline at end of file
+diff --git a/src/ql/src/test/results/compiler/errors/invalid_select.q.out b/src/ql/src/test/results/compiler/errors/invalid_select.q.out
+index aafdc31..af165bb 100644
+--- a/src/ql/src/test/results/compiler/errors/invalid_select.q.out
++++ b/src/ql/src/test/results/compiler/errors/invalid_select.q.out
+@@ -1,2 +1,2 @@
+ Parse Error: line 3:6 missing FROM at '(' near '(' in subquery source
+-line 3:7 cannot recognize input near 'b' ')' 'FROM' in subquery source
++line 3:7 cannot recognize input near 'b' ')' 'FROM' in subquery source
+\ No newline at end of file
+diff --git a/src/ql/src/test/results/compiler/errors/macro_reserved_word.q.out b/src/ql/src/test/results/compiler/errors/macro_reserved_word.q.out
+index 4e43a3f..3af7404 100644
+--- a/src/ql/src/test/results/compiler/errors/macro_reserved_word.q.out
++++ b/src/ql/src/test/results/compiler/errors/macro_reserved_word.q.out
+@@ -1 +1 @@
+-Parse Error: line 1:23 mismatched input 'DOUBLE' expecting Identifier near 'MACRO' in create macro statement
++Parse Error: line 1:23 mismatched input 'DOUBLE' expecting Identifier near 'MACRO' in create macro statement
+\ No newline at end of file
+diff --git a/src/ql/src/test/results/compiler/errors/missing_overwrite.q.out b/src/ql/src/test/results/compiler/errors/missing_overwrite.q.out
+index a1dfe16..441558a 100644
+--- a/src/ql/src/test/results/compiler/errors/missing_overwrite.q.out
++++ b/src/ql/src/test/results/compiler/errors/missing_overwrite.q.out
+@@ -1 +1 @@
+-Parse Error: line 2:0 cannot recognize input near 'INSERT' 'TABLE' 'dest1' in insert clause
++Parse Error: line 2:0 cannot recognize input near 'INSERT' 'TABLE' 'dest1' in insert clause
+\ No newline at end of file
+diff --git a/src/ql/src/test/results/compiler/errors/quoted_string.q.out b/src/ql/src/test/results/compiler/errors/quoted_string.q.out
+index 762ea70..421540b 100644
+--- a/src/ql/src/test/results/compiler/errors/quoted_string.q.out
++++ b/src/ql/src/test/results/compiler/errors/quoted_string.q.out
+@@ -1,2 +1,2 @@
+ Parse Error: line 3:0 character '<EOF>' not supported here
+-line 3:0 character '<EOF>' not supported here
++line 3:0 character '<EOF>' not supported here
+\ No newline at end of file
+diff --git a/src/ql/src/test/results/compiler/errors/wrong_distinct2.q.out b/src/ql/src/test/results/compiler/errors/wrong_distinct2.q.out
+index 9dc7f23..52ddcd8 100644
+--- a/src/ql/src/test/results/compiler/errors/wrong_distinct2.q.out
++++ b/src/ql/src/test/results/compiler/errors/wrong_distinct2.q.out
+@@ -1 +1 @@
+-Parse Error: line 2:45 cannot recognize input near 'DISTINCT' 'substr' '(' in select expression
++Parse Error: line 2:45 cannot recognize input near 'DISTINCT' 'substr' '(' in select expression
+\ No newline at end of file
+-- 
+1.7.0.4
+

@@ -1,0 +1,25 @@
+From 2051770e42ae618959ed965e466e73d1cbb39605 Mon Sep 17 00:00:00 2001
+From: xzhang <xzhang@xzdt.(none)>
+Date: Thu, 27 Feb 2014 15:54:06 -0800
+Subject: [PATCH 293/375] CDH-17606: Fix test case TestExecDriver
+
+---
+ .../apache/hadoop/hive/ql/exec/TestExecDriver.java |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+
+diff --git a/src/ql/src/test/org/apache/hadoop/hive/ql/exec/TestExecDriver.java b/src/ql/src/test/org/apache/hadoop/hive/ql/exec/TestExecDriver.java
+index d4ad931..8730919 100644
+--- a/src/ql/src/test/org/apache/hadoop/hive/ql/exec/TestExecDriver.java
++++ b/src/ql/src/test/org/apache/hadoop/hive/ql/exec/TestExecDriver.java
+@@ -308,7 +308,7 @@ private void populateMapRedPlan3(Table src, Table src2) throws SemanticException
+ 
+     addMapWork(mr, src2, "b", op2);
+     ReduceWork rWork = new ReduceWork();
+-    rWork.setNumReduceTasks(Integer.valueOf(5));
++    rWork.setNumReduceTasks(Integer.valueOf(1));
+     rWork.setNeedsTagging(true);
+     rWork.setKeyDesc(op1.getConf().getKeySerializeInfo());
+     rWork.getTagToValueDesc().add(op1.getConf().getValueSerializeInfo());
+-- 
+1.7.0.4
+

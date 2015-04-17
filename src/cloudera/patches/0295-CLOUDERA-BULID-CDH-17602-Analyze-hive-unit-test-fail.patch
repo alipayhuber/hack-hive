@@ -1,0 +1,25 @@
+From 81782e46df14b3b1da64e09cfc0305894abb7f29 Mon Sep 17 00:00:00 2001
+From: Prasad Mujumdar <prasadm@cloudera.com>
+Date: Thu, 27 Feb 2014 20:36:32 -0800
+Subject: [PATCH 295/375] CLOUDERA-BULID: CDH-17602: Analyze hive unit test failures
+
+---
+ .../service/server/TestHS2ThreadAllocation.java    |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+
+diff --git a/src/itests/hive-unit/src/test/java/org/apache/hive/service/server/TestHS2ThreadAllocation.java b/src/itests/hive-unit/src/test/java/org/apache/hive/service/server/TestHS2ThreadAllocation.java
+index ea8b274..283dfac 100644
+--- a/src/itests/hive-unit/src/test/java/org/apache/hive/service/server/TestHS2ThreadAllocation.java
++++ b/src/itests/hive-unit/src/test/java/org/apache/hive/service/server/TestHS2ThreadAllocation.java
+@@ -101,7 +101,7 @@ public void run() {
+       HiveConnection connection = null;
+       Statement statement = null;
+       try {
+-        connection = new HiveConnection("jdbc:hive2://localhost: " + portNum + "/default", new Properties());
++        connection = new HiveConnection("jdbc:hive2://localhost:" + portNum + "/default", new Properties());
+ 
+         statement = connection.createStatement();
+         if (statement.execute("show tables")) {
+-- 
+1.7.0.4
+

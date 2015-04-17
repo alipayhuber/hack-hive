@@ -1,0 +1,133 @@
+From 24f3962fc088c8d223ce1123be578e63d9a26024 Mon Sep 17 00:00:00 2001
+From: xzhang <xzhang@xzdt.(none)>
+Date: Tue, 25 Feb 2014 11:49:49 -0800
+Subject: [PATCH 285/375] CDH-17606: Unit test failure analysis - Part3
+
+---
+ itests/hcatalog-unit/pom.xml                     |   19 +++++++++++++++++++
+ ql/src/test/results/compiler/plan/groupby2.q.xml |    9 +--------
+ ql/src/test/results/compiler/plan/input3.q.xml   |    2 +-
+ ql/src/test/results/compiler/plan/subq.q.xml     |    2 +-
+ ql/src/test/results/compiler/plan/udf6.q.xml     |    9 +--------
+ ql/src/test/results/compiler/plan/union.q.xml    |    2 +-
+ 6 files changed, 24 insertions(+), 19 deletions(-)
+
+diff --git a/src/itests/hcatalog-unit/pom.xml b/src/itests/hcatalog-unit/pom.xml
+index 33a3c8c..6a24d60 100644
+--- a/src/itests/hcatalog-unit/pom.xml
++++ b/src/itests/hcatalog-unit/pom.xml
+@@ -217,6 +217,7 @@
+           <groupId>org.apache.hadoop</groupId>
+           <artifactId>hadoop-common</artifactId>
+           <version>${hadoop-23.version}</version>
++          <classifier>tests</classifier>
+           <scope>test</scope>
+         </dependency>
+         <dependency>
+@@ -246,6 +247,24 @@
+           <scope>test</scope>
+         </dependency>
+         <dependency>
++          <groupId>org.apache.hadoop</groupId>
++          <artifactId>hadoop-yarn-server-tests</artifactId>
++          <version>${hadoop-23.version}</version>
++          <scope>test</scope>
++          <classifier>tests</classifier>
++        </dependency>
++        <dependency>
++          <groupId>com.sun.jersey</groupId>
++          <artifactId>jersey-servlet</artifactId>
++          <version>${jersey.version}</version>
++        </dependency>
++        <dependency>
++          <groupId>org.apache.hadoop</groupId>
++          <artifactId>hadoop-mapreduce-client-hs</artifactId>
++          <version>${hadoop-23.version}</version>
++          <scope>test</scope>
++        </dependency>
++        <dependency>
+           <groupId>org.apache.hbase</groupId>
+           <artifactId>hbase-client</artifactId>
+           <version>${hbase.hadoop2.version}</version>
+diff --git a/src/ql/src/test/results/compiler/plan/groupby2.q.xml b/src/ql/src/test/results/compiler/plan/groupby2.q.xml
+index 306db81..5aec870 100755
+--- a/src/ql/src/test/results/compiler/plan/groupby2.q.xml
++++ b/src/ql/src/test/results/compiler/plan/groupby2.q.xml
+@@ -1511,14 +1511,7 @@
+                  </object> 
+                 </void> 
+                 <void property="genericUDF"> 
+-                 <object class="org.apache.hadoop.hive.ql.udf.generic.GenericUDFBridge"> 
+-                  <void property="udfClassName"> 
+-                   <string>org.apache.hadoop.hive.ql.udf.UDFConcat</string> 
+-                  </void> 
+-                  <void property="udfName"> 
+-                   <string>concat</string> 
+-                  </void> 
+-                 </object> 
++                 <object class="org.apache.hadoop.hive.ql.udf.generic.GenericUDFConcat"/> 
+                 </void> 
+                 <void property="typeInfo"> 
+                  <object idref="PrimitiveTypeInfo0"/> 
+diff --git a/src/ql/src/test/results/compiler/plan/input3.q.xml b/src/ql/src/test/results/compiler/plan/input3.q.xml
+index dfb2360..8d38a90 100755
+--- a/src/ql/src/test/results/compiler/plan/input3.q.xml
++++ b/src/ql/src/test/results/compiler/plan/input3.q.xml
+@@ -1874,7 +1874,7 @@
+                    <boolean>true</boolean> 
+                   </void> 
+                   <void property="targetDir"> 
+-                   <string>../../../../build/contrib/hive/ql/test/data/warehouse/dest4.out</string> 
++                   #### A masked pattern was here #### 
+                   </void> 
+                  </object> 
+                 </void> 
+diff --git a/src/ql/src/test/results/compiler/plan/subq.q.xml b/src/ql/src/test/results/compiler/plan/subq.q.xml
+index e0d72f0..90f1960 100644
+--- a/src/ql/src/test/results/compiler/plan/subq.q.xml
++++ b/src/ql/src/test/results/compiler/plan/subq.q.xml
+@@ -347,7 +347,7 @@
+                    <boolean>true</boolean> 
+                   </void> 
+                   <void property="targetDir"> 
+-                   <string>../build/ql/test/data/warehouse/union.out</string> 
++                   #### A masked pattern was here #### 
+                   </void> 
+                  </object> 
+                 </void> 
+diff --git a/src/ql/src/test/results/compiler/plan/udf6.q.xml b/src/ql/src/test/results/compiler/plan/udf6.q.xml
+index 1c51c82..15780c6 100644
+--- a/src/ql/src/test/results/compiler/plan/udf6.q.xml
++++ b/src/ql/src/test/results/compiler/plan/udf6.q.xml
+@@ -374,14 +374,7 @@
+                  </object> 
+                 </void> 
+                 <void property="genericUDF"> 
+-                 <object class="org.apache.hadoop.hive.ql.udf.generic.GenericUDFBridge"> 
+-                  <void property="udfClassName"> 
+-                   <string>org.apache.hadoop.hive.ql.udf.UDFConcat</string> 
+-                  </void> 
+-                  <void property="udfName"> 
+-                   <string>concat</string> 
+-                  </void> 
+-                 </object> 
++                 <object class="org.apache.hadoop.hive.ql.udf.generic.GenericUDFConcat"/> 
+                 </void> 
+                 <void property="typeInfo"> 
+                  <object idref="PrimitiveTypeInfo0"/> 
+diff --git a/src/ql/src/test/results/compiler/plan/union.q.xml b/src/ql/src/test/results/compiler/plan/union.q.xml
+index 78fa333..7207463 100644
+--- a/src/ql/src/test/results/compiler/plan/union.q.xml
++++ b/src/ql/src/test/results/compiler/plan/union.q.xml
+@@ -347,7 +347,7 @@
+                    <boolean>true</boolean> 
+                   </void> 
+                   <void property="targetDir"> 
+-                   <string>../build/ql/test/data/warehouse/union.out</string> 
++                   #### A masked pattern was here #### 
+                   </void> 
+                  </object> 
+                 </void> 
+-- 
+1.7.0.4
+

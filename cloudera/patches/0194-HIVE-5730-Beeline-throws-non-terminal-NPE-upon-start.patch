@@ -1,0 +1,26 @@
+From e1738b4132dc9721c60b627cc42e425557fc406d Mon Sep 17 00:00:00 2001
+From: Brock Noland <brock@apache.org>
+Date: Tue, 5 Nov 2013 20:04:56 +0000
+Subject: [PATCH 194/375] HIVE-5730: Beeline throws non-terminal NPE upon starting, after mavenization (Szehon Ho reviewed by Navis)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1539117 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../java/org/apache/hive/beeline/SQLCompletor.java |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+
+diff --git a/src/beeline/src/java/org/apache/hive/beeline/SQLCompletor.java b/src/beeline/src/java/org/apache/hive/beeline/SQLCompletor.java
+index 916c7fc..844b9ae 100644
+--- a/src/beeline/src/java/org/apache/hive/beeline/SQLCompletor.java
++++ b/src/beeline/src/java/org/apache/hive/beeline/SQLCompletor.java
+@@ -45,7 +45,7 @@ public SQLCompletor(BeeLine beeLine, boolean skipmeta)
+     // add the default SQL completions
+     String keywords = new BufferedReader(new InputStreamReader(
+         SQLCompletor.class.getResourceAsStream(
+-            "sql-keywords.properties"))).readLine();
++            "/sql-keywords.properties"))).readLine();
+ 
+     // now add the keywords from the current connection
+     try {
+-- 
+1.7.0.4
+

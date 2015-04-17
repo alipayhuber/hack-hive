@@ -1,0 +1,368 @@
+From 158c9a97b8d129109889e438f7595994cabecc38 Mon Sep 17 00:00:00 2001
+From: Brock Noland <brock@apache.org>
+Date: Fri, 27 Sep 2013 15:00:31 +0000
+Subject: [PATCH 059/375] HIVE-5361 - PTest2 should allow a different JVM for compilation versus execution
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1526925 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../apache/hive/ptest/execution/CleanupPhase.java  |   18 -----
+ .../org/apache/hive/ptest/execution/PTest.java     |   19 ++++--
+ .../ptest/execution/conf/TestConfiguration.java    |   34 +++++++---
+ .../context/CloudExecutionContextProvider.java     |    2 +-
+ testutils/ptest2/src/main/resources/batch-exec.vm  |    6 ++-
+ .../hive/ptest/execution/TestCleanupPhase.java     |   18 -----
+ .../apache/hive/ptest/execution/TestScripts.java   |   24 +++++++
+ ...TestScripts.testAlternativeTestJVM.approved.txt |   69 ++++++++++++++++++++
+ .../execution/TestScripts.testBatch.approved.txt   |    6 ++-
+ 9 files changed, 141 insertions(+), 55 deletions(-)
+ delete mode 100644 testutils/ptest2/src/main/java/org/apache/hive/ptest/execution/CleanupPhase.java
+ delete mode 100644 testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/TestCleanupPhase.java
+ create mode 100644 testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/TestScripts.testAlternativeTestJVM.approved.txt
+
+diff --git a/src/testutils/ptest2/src/main/java/org/apache/hive/ptest/execution/CleanupPhase.java b/src/testutils/ptest2/src/main/java/org/apache/hive/ptest/execution/CleanupPhase.java
+deleted file mode 100644
+index a0ff001..0000000
+--- a/src/testutils/ptest2/src/main/java/org/apache/hive/ptest/execution/CleanupPhase.java
++++ /dev/null
+@@ -1,18 +0,0 @@
+-/**
+- * Licensed to the Apache Software Foundation (ASF) under one
+- * or more contributor license agreements.  See the NOTICE file
+- * distributed with this work for additional information
+- * regarding copyright ownership.  The ASF licenses this file
+- * to you under the Apache License, Version 2.0 (the
+- * "License"); you may not use this file except in compliance
+- * with the License.  You may obtain a copy of the License at
+- *
+- *     http://www.apache.org/licenses/LICENSE-2.0
+- *
+- * Unless required by applicable law or agreed to in writing, software
+- * distributed under the License is distributed on an "AS IS" BASIS,
+- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- * See the License for the specific language governing permissions and
+- * limitations under the License.
+- */
+-
+diff --git a/src/testutils/ptest2/src/main/java/org/apache/hive/ptest/execution/PTest.java b/src/testutils/ptest2/src/main/java/org/apache/hive/ptest/execution/PTest.java
+index 82da43d..2000f4a 100644
+--- a/src/testutils/ptest2/src/main/java/org/apache/hive/ptest/execution/PTest.java
++++ b/src/testutils/ptest2/src/main/java/org/apache/hive/ptest/execution/PTest.java
+@@ -110,6 +110,7 @@ public PTest(final TestConfiguration configuration, final ExecutionContext execu
+     put("buildTag", buildTag).
+     put("logDir", logDir.getAbsolutePath()).
+     put("javaHome", configuration.getJavaHome()).
++    put("javaHomeForTests", configuration.getJavaHomeForTests()).
+     put("antEnvOpts", configuration.getAntEnvOpts());
+     final ImmutableMap<String, String> templateDefaults = templateDefaultsBuilder.build();
+     TestParser testParser = new TestParser(configuration.getContext(),
+@@ -221,12 +222,13 @@ public PTest build(TestConfiguration configuration, ExecutionContext executionCo
+   }
+ 
+   private static final String PROPERTIES = "properties";
+-  private static final String REPOSITORY = "repository";
+-  private static final String REPOSITORY_NAME = "repositoryName";
+-  private static final String BRANCH = "branch";
++  private static final String REPOSITORY = TestConfiguration.REPOSITORY;
++  private static final String REPOSITORY_NAME = TestConfiguration.REPOSITORY_NAME;
++  private static final String BRANCH = TestConfiguration.BRANCH;
+   private static final String PATCH = "patch";
+-  private static final String JAVA_HOME = "javaHome";
+-  private static final String ANT_ENV_OPTS = "antEnvOpts";
++  private static final String JAVA_HOME = TestConfiguration.JAVA_HOME;
++  private static final String JAVA_HOME_TEST = TestConfiguration.JAVA_HOME_TEST;
++  private static final String ANT_ENV_OPTS = TestConfiguration.ANT_ENV_OPTS;
+   /**
+    * All args override properties file settings except
+    * for this one which is additive.
+@@ -243,7 +245,8 @@ public static void main(String[] args) throws Exception {
+     options.addOption(null, BRANCH, true, "Overrides git branch in properties file");
+     options.addOption(null, PATCH, true, "URI to patch, either file:/// or http(s)://");
+     options.addOption(ANT_ARG, null, true, "Supplemntal ant arguments");
+-    options.addOption(null, JAVA_HOME, true, "Java Home for compiling and running tests");
++    options.addOption(null, JAVA_HOME, true, "Java Home for compiling and running tests (unless " + JAVA_HOME_TEST + " is specified)");
++    options.addOption(null, JAVA_HOME_TEST, true, "Java Home for running tests (optional)");
+     options.addOption(null, ANT_ENV_OPTS, true, "ANT_OPTS environemnt variable setting");
+     CommandLine commandLine = parser.parse(options, args);
+     if(!commandLine.hasOption(PROPERTIES)) {
+@@ -282,6 +285,10 @@ public static void main(String[] args) throws Exception {
+         if(!javaHome.isEmpty()) {
+           conf.setJavaHome(javaHome);
+         }
++        String javaHomeForTests = Strings.nullToEmpty(commandLine.getOptionValue(JAVA_HOME_TEST)).trim();
++        if(!javaHomeForTests.isEmpty()) {
++          conf.setJavaHomeForTests(javaHomeForTests);
++        }
+         String antEnvOpts = Strings.nullToEmpty(commandLine.getOptionValue(ANT_ENV_OPTS)).trim();
+         if(!antEnvOpts.isEmpty()) {
+           conf.setAntEnvOpts(antEnvOpts);
+diff --git a/src/testutils/ptest2/src/main/java/org/apache/hive/ptest/execution/conf/TestConfiguration.java b/src/testutils/ptest2/src/main/java/org/apache/hive/ptest/execution/conf/TestConfiguration.java
+index 4dea47b..710878a 100644
+--- a/src/testutils/ptest2/src/main/java/org/apache/hive/ptest/execution/conf/TestConfiguration.java
++++ b/src/testutils/ptest2/src/main/java/org/apache/hive/ptest/execution/conf/TestConfiguration.java
+@@ -32,19 +32,21 @@
+ import com.google.common.collect.Maps;
+ 
+ public class TestConfiguration {
++  public static final String REPOSITORY = "repository";
++  public static final String REPOSITORY_NAME = "repositoryName";
++  public static final String BRANCH = "branch";
++  public static final String JAVA_HOME = "javaHome";
++  public static final String JAVA_HOME_TEST = "javaHomeForTests";
++  public static final String ANT_ENV_OPTS = "antEnvOpts";
++  
+   private static final String REPOSITORY_TYPE = "repositoryType";
+   private static final String GIT = "git";
+   private static final String SVN = "svn";
+-  private static final String REPOSITORY = "repository";
+-  private static final String REPOSITORY_NAME = "repositoryName";
+-  private static final String BRANCH = "branch";
+   private static final String ANT_ARGS = "antArgs";
+-  private static final String ANT_ENV_OPTS = "antEnvOpts";
+-  private static final String JAVA_HOME = "javaHome";
+   private static final String JIRA_URL = "jiraUrl";
+   private static final String JIRA_USER = "jiraUser";
+   private static final String JIRA_PASSWORD = "jiraPassword";
+-  public static final String JENKINS_URL = "jenkinsURL";
++  private static final String JENKINS_URL = "jenkinsURL";
+ 
+   private final Context context;
+   private String antArgs;
+@@ -54,6 +56,7 @@
+   private String repositoryName;
+   private String patch;
+   private String javaHome;
++  private String javaHomeForTests;
+   private String branch;
+   private final String jenkinsURL;
+   private final String jiraUrl;
+@@ -79,6 +82,7 @@ public TestConfiguration(Context context, Logger logger)
+     antArgs =  Preconditions.checkNotNull(context.getString(ANT_ARGS), ANT_ARGS).trim();
+     antEnvOpts =  context.getString(ANT_ENV_OPTS, "").trim();
+     javaHome =  context.getString(JAVA_HOME, "").trim();
++    javaHomeForTests = context.getString(JAVA_HOME_TEST, "").trim();
+     patch = Strings.nullToEmpty(null);
+     jiraName = Strings.nullToEmpty(null);
+     jiraUrl = context.getString(JIRA_URL, "").trim();
+@@ -132,6 +136,9 @@ public String getAntArgs() {
+   public String getJavaHome() {
+     return javaHome;
+   }
++  public String getJavaHomeForTests() {
++    return javaHomeForTests;
++  }
+   public String getPatch() {
+     return patch;
+   }
+@@ -150,6 +157,9 @@ public void setBranch(String branch) {
+   public void setJavaHome(String javaHome) {
+     this.javaHome = Strings.nullToEmpty(javaHome);
+   }
++  public void setJavaHomeForTests(String javaHomeForTests) {
++      this.javaHomeForTests = javaHomeForTests;
++  }
+   public void setAntArgs(String antArgs) {
+     this.antArgs = Strings.nullToEmpty(antArgs);
+   }
+@@ -161,10 +171,14 @@ public void setAntEnvOpts(String antEnvOpts) {
+   }
+   @Override
+   public String toString() {
+-    return "Configuration [context=" + context + ", antArgs=" + antArgs
+-        + ", antEnvOpts=" + antEnvOpts + ", repository=" + repository
+-        + ", repositoryName=" + repositoryName + ", patch=" + patch
+-        + ", javaHome=" + javaHome + ", branch=" + branch + "]";
++    return "TestConfiguration [antArgs=" + antArgs + ", antEnvOpts="
++        + antEnvOpts + ", repositoryType=" + repositoryType + ", repository="
++        + repository + ", repositoryName=" + repositoryName + ", patch="
++        + patch + ", javaHome=" + javaHome + ", javaHomeForTests="
++        + javaHomeForTests + ", branch=" + branch + ", jenkinsURL="
++        + jenkinsURL + ", jiraUrl=" + jiraUrl + ", jiraUser=" + jiraUser
++        + ", jiraName=" + jiraName + ", clearLibraryCache=" + clearLibraryCache
++        + "]";
+   }
+   public static TestConfiguration fromInputStream(InputStream inputStream, Logger logger)
+       throws IOException {
+diff --git a/src/testutils/ptest2/src/main/java/org/apache/hive/ptest/execution/context/CloudExecutionContextProvider.java b/src/testutils/ptest2/src/main/java/org/apache/hive/ptest/execution/context/CloudExecutionContextProvider.java
+index 7a0a1d0..cb72992 100644
+--- a/src/testutils/ptest2/src/main/java/org/apache/hive/ptest/execution/context/CloudExecutionContextProvider.java
++++ b/src/testutils/ptest2/src/main/java/org/apache/hive/ptest/execution/context/CloudExecutionContextProvider.java
+@@ -106,7 +106,7 @@ public boolean removeEldestEntry(Map.Entry<String, Long> entry) {
+             return size() > 100;
+           }
+         });
+-    mTerminationExecutor = Executors.newCachedThreadPool();
++    mTerminationExecutor = Executors.newSingleThreadExecutor();
+     mHostLog = new RandomAccessFile(new File(dataDir, "hosts"), "rw");
+     initialize();
+   }
+diff --git a/src/testutils/ptest2/src/main/resources/batch-exec.vm b/src/testutils/ptest2/src/main/resources/batch-exec.vm
+index e02e254..ffe7353 100644
+--- a/src/testutils/ptest2/src/main/resources/batch-exec.vm
++++ b/src/testutils/ptest2/src/main/resources/batch-exec.vm
+@@ -23,7 +23,11 @@ chmod -R u+w $logDir
+ rm -rf $logDir
+ # makes $logDir and $logDir/tmp
+ mkdir -p $logDir/tmp
+-if [[ -n "${javaHome}" ]]
++if [[ -n "${javaHomeForTests}" ]]
++then
++  export JAVA_HOME=$javaHomeForTests
++  export PATH=$JAVA_HOME/bin/:$PATH
++elif [[ -n "${javaHome}" ]]
+ then
+   export JAVA_HOME=$javaHome
+   export PATH=$JAVA_HOME/bin/:$PATH
+diff --git a/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/TestCleanupPhase.java b/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/TestCleanupPhase.java
+deleted file mode 100644
+index a0ff001..0000000
+--- a/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/TestCleanupPhase.java
++++ /dev/null
+@@ -1,18 +0,0 @@
+-/**
+- * Licensed to the Apache Software Foundation (ASF) under one
+- * or more contributor license agreements.  See the NOTICE file
+- * distributed with this work for additional information
+- * regarding copyright ownership.  The ASF licenses this file
+- * to you under the Apache License, Version 2.0 (the
+- * "License"); you may not use this file except in compliance
+- * with the License.  You may obtain a copy of the License at
+- *
+- *     http://www.apache.org/licenses/LICENSE-2.0
+- *
+- * Unless required by applicable law or agreed to in writing, software
+- * distributed under the License is distributed on an "AS IS" BASIS,
+- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- * See the License for the specific language governing permissions and
+- * limitations under the License.
+- */
+-
+diff --git a/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/TestScripts.java b/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/TestScripts.java
+index 987069e..5fad864 100644
+--- a/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/TestScripts.java
++++ b/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/TestScripts.java
+@@ -78,6 +78,30 @@ public void testBatch() throws Throwable {
+     Approvals.verify(actual);
+   }
+   @Test
++  public void testAlternativeTestJVM() throws Throwable {
++    Map<String, String> templateVariables = Maps.newHashMap();
++    templateVariables.put("repository", "git:///repo1");
++    templateVariables.put("repositoryName", "apache");
++    templateVariables.put("branch", "branch-1");
++    templateVariables.put("localDir", "/some/local/dir");
++    templateVariables.put("workingDir", "/some/working/dir");
++    templateVariables.put("antArgs", "-Dant=arg1");
++    templateVariables.put("buildTag", "build-1");
++    templateVariables.put("logDir", "/some/log/dir");
++    templateVariables.put("instanceName", "instance-1");
++    templateVariables.put("batchName","batch-1");
++    templateVariables.put("numOfFailedTests", "20");
++    templateVariables.put("maxSourceDirs", String.valueOf(5));
++    templateVariables.put("testArguments", "-Dtest=arg1");
++    templateVariables.put("clearLibraryCache", "true");
++    templateVariables.put("javaHome", "/usr/java/jdk1.7");
++    templateVariables.put("javaHomeForTests", "/usr/java/jdk1.7-other");
++    templateVariables.put("antEnvOpts", "-Dhttp.proxyHost=somehost -Dhttp.proxyPort=3128");
++    String template = readResource("batch-exec.vm");
++    String actual = getTemplateResult(template, templateVariables);
++    Approvals.verify(actual);
++  }
++  @Test
+   public void testPrepNone() throws Throwable {
+     Map<String, String> templateVariables = Maps.newHashMap();
+     templateVariables.put("repository", "git:///repo1");
+diff --git a/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/TestScripts.testAlternativeTestJVM.approved.txt b/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/TestScripts.testAlternativeTestJVM.approved.txt
+new file mode 100644
+index 0000000..553f4c4
+--- /dev/null
++++ b/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/TestScripts.testAlternativeTestJVM.approved.txt
+@@ -0,0 +1,69 @@
++#!/bin/bash
++# Licensed to the Apache Software Foundation (ASF) under one or more
++# contributor license agreements.  See the NOTICE file distributed with
++# this work for additional information regarding copyright ownership.
++# The ASF licenses this file to You under the Apache License, Version 2.0
++# (the "License"); you may not use this file except in compliance with
++# the License.  You may obtain a copy of the License at
++#
++#     http://www.apache.org/licenses/LICENSE-2.0
++#
++# Unless required by applicable law or agreed to in writing, software
++# distributed under the License is distributed on an "AS IS" BASIS,
++# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++# See the License for the specific language governing permissions and
++# limitations under the License.
++
++set -x
++umask 0022
++find /some/local/dir/instance-1/apache-source/build -name 'TEST-*.xml' -delete
++find /some/local/dir/instance-1/apache-source/build -name 'hive.log' -delete
++chmod -R u+w /some/log/dir
++rm -rf /some/log/dir
++# makes /some/log/dir and /some/log/dir/tmp
++mkdir -p /some/log/dir/tmp
++if [[ -n "/usr/java/jdk1.7-other" ]]
++then
++  export JAVA_HOME=/usr/java/jdk1.7-other
++  export PATH=$JAVA_HOME/bin/:$PATH
++elif [[ -n "/usr/java/jdk1.7" ]]
++then
++  export JAVA_HOME=/usr/java/jdk1.7
++  export PATH=$JAVA_HOME/bin/:$PATH
++fi
++export ANT_OPTS="-Xmx1g -XX:MaxPermSize=256m -Djava.io.tmpdir=/some/log/dir/tmp -Dhttp.proxyHost=somehost -Dhttp.proxyPort=3128"
++export HADOOP_ROOT_LOGGER=INFO,console
++export HADOOP_OPTS="-Dhive.log.dir=/some/log/dir -Dhive.query.id=hadoop -Djava.io.tmpdir=/some/log/dir/tmp"
++cd /some/local/dir/instance-1/apache-source && \
++  timeout 2h ant test -Dtest.junit.output.format=xml -Dant=arg1 \
++   -Divy.default.ivy.user.dir=/some/local/dir/instance-1/ivy \
++   -Divy.default.always.check.exact.revision=false \
++   -Divy.cache.ttl.default=eternal -Divy.checkmodified=false \
++   -Dmvn.local.repo=/some/local/dir/instance-1/maven \
++   -Dant=arg1 -Dtest=arg1 1>/some/log/dir/ant-test.txt 2>&1
++ret=$?
++if [[ $ret -ne 0 ]]
++then
++  if [[ 20 -lt 5 ]]
++  then
++    cp -R /some/local/dir/instance-1/apache-source /some/log/dir/source
++  else
++    echo "Number of failed tests 20 exceeded threshold, not copying source"
++  fi
++fi
++if [[ -f /some/local/dir/instance-1/apache-source/build/ql/tmp/hive.log ]]
++then
++  mv /some/local/dir/instance-1/apache-source/build/ql/tmp/hive.log /some/log/dir/hive.log
++fi
++batchName=batch-1
++for testOutputFile in $(find /some/local/dir/instance-1/apache-source/ -name 'TEST-*.xml')
++do
++  mv "$testOutputFile" "/some/log/dir/TEST-$batchName-$(basename $testOutputFile)"
++done
++if [[ -f /some/log/dir/.log ]]
++then
++  mv /some/log/dir/.log /some/log/dir/dot.log
++else
++  echo "/some/log/dir/.log does not exist"
++fi
++exit $ret
+diff --git a/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/TestScripts.testBatch.approved.txt b/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/TestScripts.testBatch.approved.txt
+index e5ea0fd..d8587e4 100644
+--- a/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/TestScripts.testBatch.approved.txt
++++ b/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/TestScripts.testBatch.approved.txt
+@@ -22,7 +22,11 @@ chmod -R u+w /some/log/dir
+ rm -rf /some/log/dir
+ # makes /some/log/dir and /some/log/dir/tmp
+ mkdir -p /some/log/dir/tmp
+-if [[ -n "/usr/java/jdk1.7" ]]
++if [[ -n "${javaHomeForTests}" ]]
++then
++  export JAVA_HOME=$javaHomeForTests
++  export PATH=$JAVA_HOME/bin/:$PATH
++elif [[ -n "/usr/java/jdk1.7" ]]
+ then
+   export JAVA_HOME=/usr/java/jdk1.7
+   export PATH=$JAVA_HOME/bin/:$PATH
+-- 
+1.7.0.4
+

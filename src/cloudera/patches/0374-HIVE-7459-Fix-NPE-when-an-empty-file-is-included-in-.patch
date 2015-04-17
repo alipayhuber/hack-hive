@@ -1,0 +1,30 @@
+From ac783eecd9a1bd74be39c520280e44fa57056ca7 Mon Sep 17 00:00:00 2001
+From: Brock Noland <brock@apache.org>
+Date: Sun, 27 Jul 2014 19:07:23 +0000
+Subject: [PATCH 374/375] HIVE-7459 - Fix NPE when an empty file is included in a Hive query that uses CombineHiveInputFormat (Matt Martin, Ryan Blue via Brock)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1613830 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../parquet/read/ParquetRecordReaderWrapper.java   |    6 +++---
+ 1 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/io/parquet/read/ParquetRecordReaderWrapper.java b/src/ql/src/java/org/apache/hadoop/hive/ql/io/parquet/read/ParquetRecordReaderWrapper.java
+index e1a7a48..f5da46d 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/io/parquet/read/ParquetRecordReaderWrapper.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/io/parquet/read/ParquetRecordReaderWrapper.java
+@@ -104,9 +104,9 @@ public ParquetRecordReaderWrapper(
+     } else {
+       realReader = null;
+       eof = true;
+-      if (valueObj == null) { // Should initialize the value for createValue
+-        valueObj = new ArrayWritable(Writable.class, new Writable[schemaSize]);
+-      }
++    }
++    if (valueObj == null) { // Should initialize the value for createValue
++      valueObj = new ArrayWritable(Writable.class, new Writable[schemaSize]);
+     }
+   }
+ 
+-- 
+1.7.0.4
+

@@ -1,0 +1,75 @@
+From ddd61345ad380ef22e3ad732ec8db0df1a237233 Mon Sep 17 00:00:00 2001
+From: Ashutosh Chauhan <hashutosh@apache.org>
+Date: Tue, 29 Oct 2013 15:35:18 +0000
+Subject: [PATCH 130/375] HIVE-5602 : Micro optimize select operator (Ed Capriolo via Ashutosh Chauhan)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1536761 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../apache/hadoop/hive/ql/exec/SelectOperator.java |   25 +++++++++----------
+ 1 files changed, 12 insertions(+), 13 deletions(-)
+
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/SelectOperator.java b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/SelectOperator.java
+index 025bf9e..c7e781d 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/SelectOperator.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/SelectOperator.java
+@@ -40,14 +40,16 @@
+ 
+   transient Object[] output;
+ 
++  private transient boolean isSelectStarNoCompute = false;
++
+   @Override
+   protected void initializeOp(Configuration hconf) throws HiveException {
+     // Just forward the row as is
+     if (conf.isSelStarNoCompute()) {
+       initializeChildren(hconf);
++      isSelectStarNoCompute = true;
+       return;
+     }
+-
+     List<ExprNodeDesc> colList = conf.getColList();
+     eval = new ExprNodeEvaluator[colList.size()];
+     for (int i = 0; i < colList.size(); i++) {
+@@ -57,7 +59,6 @@ protected void initializeOp(Configuration hconf) throws HiveException {
+         eval[i] = ExprNodeEvaluatorFactory.toCachedEval(eval[i]);
+       }
+     }
+-
+     output = new Object[eval.length];
+     LOG.info("SELECT "
+         + ((StructObjectInspector) inputObjInspectors[0]).getTypeName());
+@@ -68,22 +69,20 @@ protected void initializeOp(Configuration hconf) throws HiveException {
+ 
+   @Override
+   public void processOp(Object row, int tag) throws HiveException {
+-
+-    // Just forward the row as is
+-    if (conf.isSelStarNoCompute()) {
++    if (isSelectStarNoCompute) {
+       forward(row, inputObjInspectors[tag]);
+       return;
+     }
+-
+-    for (int i = 0; i < eval.length; i++) {
+-      try {
++    int i = 0;
++    try {
++      for (; i < eval.length; ++i) {
+         output[i] = eval[i].evaluate(row);
+-      } catch (HiveException e) {
+-        throw e;
+-      } catch (RuntimeException e) {
+-        throw new HiveException("Error evaluating "
+-            + conf.getColList().get(i).getExprString(), e);
+       }
++    } catch (HiveException e) {
++      throw e;
++    } catch (RuntimeException e) {
++      throw new HiveException("Error evaluating "
++          + conf.getColList().get(i).getExprString(), e);
+     }
+     forward(output, outputObjInspector);
+   }
+-- 
+1.7.0.4
+

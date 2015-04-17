@@ -1,0 +1,55 @@
+From c98684a56c0944dd71c5d4d3bbc6d660bf4da8b2 Mon Sep 17 00:00:00 2001
+From: Prasad Mujumdar <prasadm@cloudera.com>
+Date: Fri, 7 Mar 2014 01:36:39 -0800
+Subject: [PATCH 305/375] CLOUDERA-BUILD: CDH-17875: Deprecate HiveServer2 SSL configuration parameter
+
+---
+ .../java/org/apache/hadoop/hive/conf/HiveConf.java |    1 +
+ .../test/java/org/apache/hive/jdbc/TestSSL.java    |   21 ++++++++++++++++++++
+ 2 files changed, 22 insertions(+), 0 deletions(-)
+
+diff --git a/src/common/src/java/org/apache/hadoop/hive/conf/HiveConf.java b/src/common/src/java/org/apache/hadoop/hive/conf/HiveConf.java
+index 7309911..f3b6978 100644
+--- a/src/common/src/java/org/apache/hadoop/hive/conf/HiveConf.java
++++ b/src/common/src/java/org/apache/hadoop/hive/conf/HiveConf.java
+@@ -75,6 +75,7 @@
+       vars.put(confVar.varname, confVar);
+     }
+     Configuration.addDeprecation("hive.server2.enable.impersonation", "hive.server2.enable.doAs");
++    Configuration.addDeprecation("hive.server2.enable.SSL", "hive.server2.use.SSL");
+   }
+ 
+   /**
+diff --git a/src/itests/hive-unit/src/test/java/org/apache/hive/jdbc/TestSSL.java b/src/itests/hive-unit/src/test/java/org/apache/hive/jdbc/TestSSL.java
+index 6535e70..081ebea 100644
+--- a/src/itests/hive-unit/src/test/java/org/apache/hive/jdbc/TestSSL.java
++++ b/src/itests/hive-unit/src/test/java/org/apache/hive/jdbc/TestSSL.java
+@@ -219,4 +219,25 @@ private void startSslSever () throws Exception {
+     miniHS2.start();
+   }
+ 
++  /***
++   * Test SSL client connection to SSL server
++   * @throws Exception
++   */
++  @Test
++  public void testSSLDeprecatConfig() throws Exception {
++    // Start HS2 with SSL using old config
++    miniHS2.setConfProperty("hive.server2.enable.SSL", "true");
++    miniHS2.setConfProperty(ConfVars.HIVE_SERVER2_SSL_KEYSTORE_PATH.varname,
++        dataFileDir + File.separator +  KEY_STORE_NAME);
++    miniHS2.setConfProperty(ConfVars.HIVE_SERVER2_SSL_KEYSTORE_PASSWORD.varname,
++        KEY_STORE_PASSWORD);
++    miniHS2.start();
++
++    // make SSL connection
++    hs2Conn = DriverManager.getConnection(miniHS2.getJdbcURL() + ";ssl=true;sslTrustStore=" +
++        dataFileDir + File.separator + TRUST_STORE_NAME + ";trustStorePassword=" +
++        KEY_STORE_PASSWORD, System.getProperty("user.name"), "bar");
++
++    hs2Conn.close();
++  }
+ }
+-- 
+1.7.0.4
+

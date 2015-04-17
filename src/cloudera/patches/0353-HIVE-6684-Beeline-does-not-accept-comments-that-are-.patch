@@ -1,0 +1,52 @@
+From 1119267a7dcc4a65673f65001a5b71aaa643743e Mon Sep 17 00:00:00 2001
+From: Xuefu Zhang <xuefu@apache.org>
+Date: Thu, 22 May 2014 22:13:23 +0000
+Subject: [PATCH 353/375] HIVE-6684: Beeline does not accept comments that are preceded by spaces (Jeremy Beard via Xuefu)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1596976 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../src/java/org/apache/hive/beeline/BeeLine.java  |    3 ++-
+ .../apache/hive/beeline/TestBeeLineWithArgs.java   |   13 +++++++++++++
+ 2 files changed, 15 insertions(+), 1 deletions(-)
+
+diff --git a/src/beeline/src/java/org/apache/hive/beeline/BeeLine.java b/src/beeline/src/java/org/apache/hive/beeline/BeeLine.java
+index 33bea5b..82e3976 100644
+--- a/src/beeline/src/java/org/apache/hive/beeline/BeeLine.java
++++ b/src/beeline/src/java/org/apache/hive/beeline/BeeLine.java
+@@ -848,7 +848,8 @@ boolean isHelpRequest(String line) {
+   boolean isComment(String line) {
+     // SQL92 comment prefix is "--"
+     // beeline also supports shell-style "#" prefix
+-    return line.startsWith("#") || line.startsWith("--");
++    String lineTrimmed = line.trim();
++    return lineTrimmed.startsWith("#") || lineTrimmed.startsWith("--");
+   }
+ 
+   /**
+diff --git a/src/itests/hive-unit/src/test/java/org/apache/hive/beeline/TestBeeLineWithArgs.java b/src/itests/hive-unit/src/test/java/org/apache/hive/beeline/TestBeeLineWithArgs.java
+index ac96213..ac41603 100644
+--- a/src/itests/hive-unit/src/test/java/org/apache/hive/beeline/TestBeeLineWithArgs.java
++++ b/src/itests/hive-unit/src/test/java/org/apache/hive/beeline/TestBeeLineWithArgs.java
+@@ -165,6 +165,19 @@ private void testScriptFile(String testName, String scriptText, String expectedP
+     }
+     scriptFile.delete();
+   }
++  
++  /**
++   * Test that BeeLine will read comment lines that start with whitespace
++   * @throws Throwable
++   */
++  @Test
++  public void testWhitespaceBeforeCommentScriptFile() throws Throwable {
++	  final String TEST_NAME = "testWhitespaceBeforeCommentScriptFile";
++	  final String SCRIPT_TEXT = " 	 	-- comment has spaces and tabs before it\n 	 	# comment has spaces and tabs before it\n";
++	  final String EXPECTED_PATTERN = "cannot recognize input near '<EOF>'";
++	  List<String> argList = getBaseArgs(JDBC_URL);
++	  testScriptFile(TEST_NAME, SCRIPT_TEXT, EXPECTED_PATTERN, false, argList);
++  }
+ 
+   /**
+    * Attempt to execute a simple script file with the -f option to BeeLine
+-- 
+1.7.0.4
+

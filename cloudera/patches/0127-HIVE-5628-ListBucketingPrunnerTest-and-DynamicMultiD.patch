@@ -1,0 +1,562 @@
+From e98de04538ac950d1f0d050d62b3ec03a4de8daf Mon Sep 17 00:00:00 2001
+From: Ashutosh Chauhan <hashutosh@apache.org>
+Date: Fri, 25 Oct 2013 15:16:07 +0000
+Subject: [PATCH 127/375] HIVE-5628 : ListBucketingPrunnerTest and DynamicMultiDimeCollectionTest should start with Test not end with it (Brock Noland via Ashutosh Chauhan)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1535761 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../DynamicMultiDimeCollectionTest.java            |  154 --------------------
+ .../ListBucketingPrunnerTest.java                  |  105 -------------
+ .../TestDynamicMultiDimeCollection.java            |  154 ++++++++++++++++++++
+ .../TestListBucketingPrunner.java                  |  105 +++++++++++++
+ 4 files changed, 259 insertions(+), 259 deletions(-)
+ delete mode 100644 ql/src/test/org/apache/hadoop/hive/ql/optimizer/listbucketingpruner/DynamicMultiDimeCollectionTest.java
+ delete mode 100644 ql/src/test/org/apache/hadoop/hive/ql/optimizer/listbucketingpruner/ListBucketingPrunnerTest.java
+ create mode 100644 ql/src/test/org/apache/hadoop/hive/ql/optimizer/listbucketingpruner/TestDynamicMultiDimeCollection.java
+ create mode 100644 ql/src/test/org/apache/hadoop/hive/ql/optimizer/listbucketingpruner/TestListBucketingPrunner.java
+
+diff --git a/src/ql/src/test/org/apache/hadoop/hive/ql/optimizer/listbucketingpruner/DynamicMultiDimeCollectionTest.java b/src/ql/src/test/org/apache/hadoop/hive/ql/optimizer/listbucketingpruner/DynamicMultiDimeCollectionTest.java
+deleted file mode 100644
+index 801ce20..0000000
+--- a/src/ql/src/test/org/apache/hadoop/hive/ql/optimizer/listbucketingpruner/DynamicMultiDimeCollectionTest.java
++++ /dev/null
+@@ -1,154 +0,0 @@
+-/**
+- * Licensed to the Apache Software Foundation (ASF) under one
+- * or more contributor license agreements.  See the NOTICE file
+- * distributed with this work for additional information
+- * regarding copyright ownership.  The ASF licenses this file
+- * to you under the Apache License, Version 2.0 (the
+- * "License"); you may not use this file except in compliance
+- * with the License.  You may obtain a copy of the License at
+- *
+- *     http://www.apache.org/licenses/LICENSE-2.0
+- *
+- * Unless required by applicable law or agreed to in writing, software
+- * distributed under the License is distributed on an "AS IS" BASIS,
+- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- * See the License for the specific language governing permissions and
+- * limitations under the License.
+- */
+-package org.apache.hadoop.hive.ql.optimizer.listbucketingpruner;
+-
+-import java.util.ArrayList;
+-import java.util.Arrays;
+-import java.util.List;
+-
+-import junit.framework.TestCase;
+-
+-import org.apache.hadoop.hive.ql.parse.SemanticException;
+-import org.junit.Assert;
+-import org.junit.Test;
+-
+-/**
+- *
+- * Test {@link DynamicMultiDimeContainer}
+- *
+- */
+-public class DynamicMultiDimeCollectionTest extends TestCase {
+-  private static String DEF_DIR = "default";
+-
+-  @Test
+-  public void testUniqueElementsList1() {
+-    // (1,a,x), (2,b,x), (1,c,x), (2,a,y)
+-    List<List<String>> values = new ArrayList<List<String>>();
+-    List<String> v1 = Arrays.asList("1", "a", "x");
+-    List<String> v2 = Arrays.asList("2", "b", "x");
+-    List<String> v3 = Arrays.asList("1", "c", "x");
+-    List<String> v4 = Arrays.asList("2", "a", "y");
+-    values.add(v1);
+-    values.add(v2);
+-    values.add(v3);
+-    values.add(v4);
+-    List<List<String>> actuals = ListBucketingPruner.DynamicMultiDimensionalCollection
+-        .uniqueElementsList(values, DEF_DIR);
+-
+-    List<List<String>> expecteds = new ArrayList<List<String>>();
+-    v1 = Arrays.asList("1", "2", "default");
+-    v2 = Arrays.asList("a", "b", "c", "default");
+-    v3 = Arrays.asList("x", "y", "default");
+-    expecteds.add(v1);
+-    expecteds.add(v2);
+-    expecteds.add(v3);
+-
+-    Assert.assertEquals(expecteds, actuals);
+-  }
+-
+-  @Test
+-  public void testUniqueElementsList2() {
+-    // (1,a,x), (2,b,x), (1,c,x), (2,a,y)
+-    List<List<String>> values = new ArrayList<List<String>>();
+-    List<String> v1 = Arrays.asList("1", "a", "x");
+-    values.add(v1);
+-    List<List<String>> actuals = ListBucketingPruner.DynamicMultiDimensionalCollection
+-        .uniqueElementsList(values, DEF_DIR);
+-    List<List<String>> expecteds = new ArrayList<List<String>>();
+-    v1 = Arrays.asList("1", "default");
+-    List<String> v2 = Arrays.asList("a", "default");
+-    List<String> v3 = Arrays.asList("x", "default");
+-    expecteds.add(v1);
+-    expecteds.add(v2);
+-    expecteds.add(v3);
+-
+-    Assert.assertEquals(expecteds, actuals);
+-  }
+-
+-  @Test
+-  public void testUniqueElementsList3() {
+-    // (1,a,x), (2,b,x), (1,c,x), (2,a,y)
+-    List<List<String>> values = new ArrayList<List<String>>();
+-    List<String> v1 = Arrays.asList("1");
+-    List<String> v2 = Arrays.asList("2");
+-    List<String> v3 = Arrays.asList("3");
+-    List<String> v4 = Arrays.asList("4");
+-    values.add(v1);
+-    values.add(v2);
+-    values.add(v3);
+-    values.add(v4);
+-    List<List<String>> actuals = ListBucketingPruner.DynamicMultiDimensionalCollection
+-        .uniqueElementsList(values, DEF_DIR);
+-    List<List<String>> expecteds = new ArrayList<List<String>>();
+-    v1 = Arrays.asList("1", "2", "3", "4", "default");
+-    expecteds.add(v1);
+-
+-    Assert.assertEquals(expecteds, actuals);
+-  }
+-
+-  @Test
+-  public void testFlat3() throws SemanticException {
+-    List<List<String>> uniqSkewedElements = new ArrayList<List<String>>();
+-    List<String> v1 = Arrays.asList("1", "2", "default");
+-    List<String> v2 = Arrays.asList("a", "b", "c", "default");
+-    List<String> v3 = Arrays.asList("x", "y", "default");
+-    uniqSkewedElements.add(v1);
+-    uniqSkewedElements.add(v2);
+-    uniqSkewedElements.add(v3);
+-    List<List<String>> actuals = ListBucketingPruner.DynamicMultiDimensionalCollection
+-        .flat(uniqSkewedElements);
+-    Assert.assertTrue(actuals.size() == 36);
+-  }
+-
+-  @Test
+-  public void testFlat2() throws SemanticException {
+-    List<List<String>> uniqSkewedElements = new ArrayList<List<String>>();
+-    List<String> v1 = Arrays.asList("1", "2");
+-    uniqSkewedElements.add(v1);
+-    List<List<String>> actual = ListBucketingPruner.DynamicMultiDimensionalCollection
+-        .flat(uniqSkewedElements);
+-    List<List<String>> expected = new ArrayList<List<String>>();
+-    v1 = Arrays.asList("1");
+-    List<String> v2 = Arrays.asList("2");
+-    expected.add(v1);
+-    expected.add(v2);
+-    Assert.assertEquals(expected, actual);
+-  }
+-
+-  @Test
+-  public void testFlat1() throws SemanticException {
+-    List<List<String>> uniqSkewedElements = new ArrayList<List<String>>();
+-    List<String> v1 = Arrays.asList("1", "2");
+-    List<String> v2 = Arrays.asList("3", "4");
+-    uniqSkewedElements.add(v1);
+-    uniqSkewedElements.add(v2);
+-    List<List<String>> actual = ListBucketingPruner.DynamicMultiDimensionalCollection
+-        .flat(uniqSkewedElements);
+-    List<List<String>> expected = new ArrayList<List<String>>();
+-    v1 = Arrays.asList("1", "3");
+-    v2 = Arrays.asList("1", "4");
+-    List<String> v3 = Arrays.asList("2", "3");
+-    List<String> v4 = Arrays.asList("2", "4");
+-    expected.add(v1);
+-    expected.add(v2);
+-    expected.add(v3);
+-    expected.add(v4);
+-    Assert.assertEquals(expected, actual);
+-  }
+-
+-}
+diff --git a/src/ql/src/test/org/apache/hadoop/hive/ql/optimizer/listbucketingpruner/ListBucketingPrunnerTest.java b/src/ql/src/test/org/apache/hadoop/hive/ql/optimizer/listbucketingpruner/ListBucketingPrunnerTest.java
+deleted file mode 100644
+index 8f426a0..0000000
+--- a/src/ql/src/test/org/apache/hadoop/hive/ql/optimizer/listbucketingpruner/ListBucketingPrunnerTest.java
++++ /dev/null
+@@ -1,105 +0,0 @@
+-/**
+- * Licensed to the Apache Software Foundation (ASF) under one
+- * or more contributor license agreements.  See the NOTICE file
+- * distributed with this work for additional information
+- * regarding copyright ownership.  The ASF licenses this file
+- * to you under the Apache License, Version 2.0 (the
+- * "License"); you may not use this file except in compliance
+- * with the License.  You may obtain a copy of the License at
+- *
+- *     http://www.apache.org/licenses/LICENSE-2.0
+- *
+- * Unless required by applicable law or agreed to in writing, software
+- * distributed under the License is distributed on an "AS IS" BASIS,
+- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- * See the License for the specific language governing permissions and
+- * limitations under the License.
+- */
+-package org.apache.hadoop.hive.ql.optimizer.listbucketingpruner;
+-
+-import junit.framework.Assert;
+-import junit.framework.TestCase;
+-
+-import org.junit.Test;
+-
+-/**
+- *
+- * Test {@link ListBucketingPruner}
+- *
+- */
+-public class ListBucketingPrunnerTest extends TestCase {
+-
+-  @Test
+-  public void testSkipSkewedDirectory1() {
+-    Assert.assertFalse(ListBucketingPrunerUtils.skipSkewedDirectory(null)) ;
+-  }
+-
+-  @Test
+-  public void testSkipSkewedDirectory2() {
+-    Assert.assertTrue(ListBucketingPrunerUtils.skipSkewedDirectory(Boolean.FALSE)) ;
+-  }
+-
+-  @Test
+-  public void testSkipSkewedDirectory3() {
+-    Assert.assertFalse(ListBucketingPrunerUtils.skipSkewedDirectory(Boolean.TRUE)) ;
+-  }
+-
+-  @Test
+-  public void testAndBoolOperand() {
+-    /**
+-     * Operand one|Operand another | And result
+-     */
+-    // unknown | T | unknown
+-    Assert.assertNull(ListBucketingPrunerUtils.andBoolOperand(null, Boolean.TRUE));
+-    // unknown | F | F
+-    Assert.assertFalse(ListBucketingPrunerUtils.andBoolOperand(null, Boolean.FALSE));
+-    // unknown | unknown | unknown
+-    Assert.assertNull(ListBucketingPrunerUtils.andBoolOperand(null, null));
+-    // T | T | T
+-    Assert.assertTrue(ListBucketingPrunerUtils.andBoolOperand(Boolean.TRUE, Boolean.TRUE));
+-    // T | F | F
+-    Assert.assertFalse(ListBucketingPrunerUtils.andBoolOperand(Boolean.TRUE, Boolean.FALSE));
+-    // T | unknown | unknown
+-    Assert.assertNull(ListBucketingPrunerUtils.andBoolOperand(Boolean.TRUE, null));
+-    // F | T | F
+-    Assert.assertFalse(ListBucketingPrunerUtils.andBoolOperand(Boolean.FALSE, Boolean.TRUE));
+-    // F | F | F
+-    Assert.assertFalse(ListBucketingPrunerUtils.andBoolOperand(Boolean.FALSE, Boolean.FALSE));
+-    // F | unknown | F
+-    Assert.assertFalse(ListBucketingPrunerUtils.andBoolOperand(Boolean.FALSE, null));
+-  }
+-
+-  @Test
+-  public void testOrBoolOperand() {
+-    // Operand one|Operand another | or result
+-    // unknown | T | T
+-    Assert.assertTrue(ListBucketingPrunerUtils.orBoolOperand(null, Boolean.TRUE));
+-    // unknown | F | unknown
+-    Assert.assertNull(ListBucketingPrunerUtils.orBoolOperand(null, Boolean.FALSE));
+-    // unknown | unknown | unknown
+-    Assert.assertNull(ListBucketingPrunerUtils.orBoolOperand(null, Boolean.FALSE));
+-    // T | T | T
+-    Assert.assertTrue(ListBucketingPrunerUtils.orBoolOperand(Boolean.TRUE, Boolean.TRUE));
+-    // T | F | T
+-    Assert.assertTrue(ListBucketingPrunerUtils.orBoolOperand(Boolean.TRUE, Boolean.FALSE));
+-    // T | unknown | unknown
+-    Assert.assertNull(ListBucketingPrunerUtils.orBoolOperand(Boolean.TRUE, null));
+-    // F | T | T
+-    Assert.assertTrue(ListBucketingPrunerUtils.orBoolOperand(Boolean.FALSE, Boolean.TRUE));
+-    // F | F | F
+-    Assert.assertFalse(ListBucketingPrunerUtils.orBoolOperand(Boolean.FALSE, Boolean.FALSE));
+-    // F | unknown | unknown
+-    Assert.assertNull(ListBucketingPrunerUtils.orBoolOperand(Boolean.FALSE, null));
+-  }
+-
+-  @Test
+-  public void testNotBoolOperand() {
+-    // Operand | Not
+-    // T | F
+-    Assert.assertFalse(ListBucketingPrunerUtils.notBoolOperand(Boolean.TRUE));
+-    // F | T
+-    Assert.assertTrue(ListBucketingPrunerUtils.notBoolOperand(Boolean.FALSE));
+-    // unknown | unknown
+-    Assert.assertNull(ListBucketingPrunerUtils.notBoolOperand(null));
+-  }
+-}
+diff --git a/src/ql/src/test/org/apache/hadoop/hive/ql/optimizer/listbucketingpruner/TestDynamicMultiDimeCollection.java b/src/ql/src/test/org/apache/hadoop/hive/ql/optimizer/listbucketingpruner/TestDynamicMultiDimeCollection.java
+new file mode 100644
+index 0000000..6411a72
+--- /dev/null
++++ b/src/ql/src/test/org/apache/hadoop/hive/ql/optimizer/listbucketingpruner/TestDynamicMultiDimeCollection.java
+@@ -0,0 +1,154 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.apache.hadoop.hive.ql.optimizer.listbucketingpruner;
++
++import java.util.ArrayList;
++import java.util.Arrays;
++import java.util.List;
++
++import junit.framework.TestCase;
++
++import org.apache.hadoop.hive.ql.parse.SemanticException;
++import org.junit.Assert;
++import org.junit.Test;
++
++/**
++ *
++ * Test {@link DynamicMultiDimeContainer}
++ *
++ */
++public class TestDynamicMultiDimeCollection extends TestCase {
++  private static String DEF_DIR = "default";
++
++  @Test
++  public void testUniqueElementsList1() {
++    // (1,a,x), (2,b,x), (1,c,x), (2,a,y)
++    List<List<String>> values = new ArrayList<List<String>>();
++    List<String> v1 = Arrays.asList("1", "a", "x");
++    List<String> v2 = Arrays.asList("2", "b", "x");
++    List<String> v3 = Arrays.asList("1", "c", "x");
++    List<String> v4 = Arrays.asList("2", "a", "y");
++    values.add(v1);
++    values.add(v2);
++    values.add(v3);
++    values.add(v4);
++    List<List<String>> actuals = ListBucketingPruner.DynamicMultiDimensionalCollection
++        .uniqueElementsList(values, DEF_DIR);
++
++    List<List<String>> expecteds = new ArrayList<List<String>>();
++    v1 = Arrays.asList("1", "2", "default");
++    v2 = Arrays.asList("a", "b", "c", "default");
++    v3 = Arrays.asList("x", "y", "default");
++    expecteds.add(v1);
++    expecteds.add(v2);
++    expecteds.add(v3);
++
++    Assert.assertEquals(expecteds, actuals);
++  }
++
++  @Test
++  public void testUniqueElementsList2() {
++    // (1,a,x), (2,b,x), (1,c,x), (2,a,y)
++    List<List<String>> values = new ArrayList<List<String>>();
++    List<String> v1 = Arrays.asList("1", "a", "x");
++    values.add(v1);
++    List<List<String>> actuals = ListBucketingPruner.DynamicMultiDimensionalCollection
++        .uniqueElementsList(values, DEF_DIR);
++    List<List<String>> expecteds = new ArrayList<List<String>>();
++    v1 = Arrays.asList("1", "default");
++    List<String> v2 = Arrays.asList("a", "default");
++    List<String> v3 = Arrays.asList("x", "default");
++    expecteds.add(v1);
++    expecteds.add(v2);
++    expecteds.add(v3);
++
++    Assert.assertEquals(expecteds, actuals);
++  }
++
++  @Test
++  public void testUniqueElementsList3() {
++    // (1,a,x), (2,b,x), (1,c,x), (2,a,y)
++    List<List<String>> values = new ArrayList<List<String>>();
++    List<String> v1 = Arrays.asList("1");
++    List<String> v2 = Arrays.asList("2");
++    List<String> v3 = Arrays.asList("3");
++    List<String> v4 = Arrays.asList("4");
++    values.add(v1);
++    values.add(v2);
++    values.add(v3);
++    values.add(v4);
++    List<List<String>> actuals = ListBucketingPruner.DynamicMultiDimensionalCollection
++        .uniqueElementsList(values, DEF_DIR);
++    List<List<String>> expecteds = new ArrayList<List<String>>();
++    v1 = Arrays.asList("1", "2", "3", "4", "default");
++    expecteds.add(v1);
++
++    Assert.assertEquals(expecteds, actuals);
++  }
++
++  @Test
++  public void testFlat3() throws SemanticException {
++    List<List<String>> uniqSkewedElements = new ArrayList<List<String>>();
++    List<String> v1 = Arrays.asList("1", "2", "default");
++    List<String> v2 = Arrays.asList("a", "b", "c", "default");
++    List<String> v3 = Arrays.asList("x", "y", "default");
++    uniqSkewedElements.add(v1);
++    uniqSkewedElements.add(v2);
++    uniqSkewedElements.add(v3);
++    List<List<String>> actuals = ListBucketingPruner.DynamicMultiDimensionalCollection
++        .flat(uniqSkewedElements);
++    Assert.assertTrue(actuals.size() == 36);
++  }
++
++  @Test
++  public void testFlat2() throws SemanticException {
++    List<List<String>> uniqSkewedElements = new ArrayList<List<String>>();
++    List<String> v1 = Arrays.asList("1", "2");
++    uniqSkewedElements.add(v1);
++    List<List<String>> actual = ListBucketingPruner.DynamicMultiDimensionalCollection
++        .flat(uniqSkewedElements);
++    List<List<String>> expected = new ArrayList<List<String>>();
++    v1 = Arrays.asList("1");
++    List<String> v2 = Arrays.asList("2");
++    expected.add(v1);
++    expected.add(v2);
++    Assert.assertEquals(expected, actual);
++  }
++
++  @Test
++  public void testFlat1() throws SemanticException {
++    List<List<String>> uniqSkewedElements = new ArrayList<List<String>>();
++    List<String> v1 = Arrays.asList("1", "2");
++    List<String> v2 = Arrays.asList("3", "4");
++    uniqSkewedElements.add(v1);
++    uniqSkewedElements.add(v2);
++    List<List<String>> actual = ListBucketingPruner.DynamicMultiDimensionalCollection
++        .flat(uniqSkewedElements);
++    List<List<String>> expected = new ArrayList<List<String>>();
++    v1 = Arrays.asList("1", "3");
++    v2 = Arrays.asList("1", "4");
++    List<String> v3 = Arrays.asList("2", "3");
++    List<String> v4 = Arrays.asList("2", "4");
++    expected.add(v1);
++    expected.add(v2);
++    expected.add(v3);
++    expected.add(v4);
++    Assert.assertEquals(expected, actual);
++  }
++
++}
+diff --git a/src/ql/src/test/org/apache/hadoop/hive/ql/optimizer/listbucketingpruner/TestListBucketingPrunner.java b/src/ql/src/test/org/apache/hadoop/hive/ql/optimizer/listbucketingpruner/TestListBucketingPrunner.java
+new file mode 100644
+index 0000000..5924d14
+--- /dev/null
++++ b/src/ql/src/test/org/apache/hadoop/hive/ql/optimizer/listbucketingpruner/TestListBucketingPrunner.java
+@@ -0,0 +1,105 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.apache.hadoop.hive.ql.optimizer.listbucketingpruner;
++
++import junit.framework.Assert;
++import junit.framework.TestCase;
++
++import org.junit.Test;
++
++/**
++ *
++ * Test {@link ListBucketingPruner}
++ *
++ */
++public class TestListBucketingPrunner extends TestCase {
++
++  @Test
++  public void testSkipSkewedDirectory1() {
++    Assert.assertFalse(ListBucketingPrunerUtils.skipSkewedDirectory(null)) ;
++  }
++
++  @Test
++  public void testSkipSkewedDirectory2() {
++    Assert.assertTrue(ListBucketingPrunerUtils.skipSkewedDirectory(Boolean.FALSE)) ;
++  }
++
++  @Test
++  public void testSkipSkewedDirectory3() {
++    Assert.assertFalse(ListBucketingPrunerUtils.skipSkewedDirectory(Boolean.TRUE)) ;
++  }
++
++  @Test
++  public void testAndBoolOperand() {
++    /**
++     * Operand one|Operand another | And result
++     */
++    // unknown | T | unknown
++    Assert.assertNull(ListBucketingPrunerUtils.andBoolOperand(null, Boolean.TRUE));
++    // unknown | F | F
++    Assert.assertFalse(ListBucketingPrunerUtils.andBoolOperand(null, Boolean.FALSE));
++    // unknown | unknown | unknown
++    Assert.assertNull(ListBucketingPrunerUtils.andBoolOperand(null, null));
++    // T | T | T
++    Assert.assertTrue(ListBucketingPrunerUtils.andBoolOperand(Boolean.TRUE, Boolean.TRUE));
++    // T | F | F
++    Assert.assertFalse(ListBucketingPrunerUtils.andBoolOperand(Boolean.TRUE, Boolean.FALSE));
++    // T | unknown | unknown
++    Assert.assertNull(ListBucketingPrunerUtils.andBoolOperand(Boolean.TRUE, null));
++    // F | T | F
++    Assert.assertFalse(ListBucketingPrunerUtils.andBoolOperand(Boolean.FALSE, Boolean.TRUE));
++    // F | F | F
++    Assert.assertFalse(ListBucketingPrunerUtils.andBoolOperand(Boolean.FALSE, Boolean.FALSE));
++    // F | unknown | F
++    Assert.assertFalse(ListBucketingPrunerUtils.andBoolOperand(Boolean.FALSE, null));
++  }
++
++  @Test
++  public void testOrBoolOperand() {
++    // Operand one|Operand another | or result
++    // unknown | T | T
++    Assert.assertTrue(ListBucketingPrunerUtils.orBoolOperand(null, Boolean.TRUE));
++    // unknown | F | unknown
++    Assert.assertNull(ListBucketingPrunerUtils.orBoolOperand(null, Boolean.FALSE));
++    // unknown | unknown | unknown
++    Assert.assertNull(ListBucketingPrunerUtils.orBoolOperand(null, Boolean.FALSE));
++    // T | T | T
++    Assert.assertTrue(ListBucketingPrunerUtils.orBoolOperand(Boolean.TRUE, Boolean.TRUE));
++    // T | F | T
++    Assert.assertTrue(ListBucketingPrunerUtils.orBoolOperand(Boolean.TRUE, Boolean.FALSE));
++    // T | unknown | unknown
++    Assert.assertNull(ListBucketingPrunerUtils.orBoolOperand(Boolean.TRUE, null));
++    // F | T | T
++    Assert.assertTrue(ListBucketingPrunerUtils.orBoolOperand(Boolean.FALSE, Boolean.TRUE));
++    // F | F | F
++    Assert.assertFalse(ListBucketingPrunerUtils.orBoolOperand(Boolean.FALSE, Boolean.FALSE));
++    // F | unknown | unknown
++    Assert.assertNull(ListBucketingPrunerUtils.orBoolOperand(Boolean.FALSE, null));
++  }
++
++  @Test
++  public void testNotBoolOperand() {
++    // Operand | Not
++    // T | F
++    Assert.assertFalse(ListBucketingPrunerUtils.notBoolOperand(Boolean.TRUE));
++    // F | T
++    Assert.assertTrue(ListBucketingPrunerUtils.notBoolOperand(Boolean.FALSE));
++    // unknown | unknown
++    Assert.assertNull(ListBucketingPrunerUtils.notBoolOperand(null));
++  }
++}
+-- 
+1.7.0.4
+

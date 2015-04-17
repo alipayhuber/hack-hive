@@ -1,0 +1,1337 @@
+From 2e39fdfdb7366dc8f068db276668e298f6d15451 Mon Sep 17 00:00:00 2001
+From: Brock Noland <brock@cloudera.com>
+Date: Mon, 25 Nov 2013 11:19:06 -0600
+Subject: [PATCH 152/375] CDH-15870 - Backport HIVE-5741: Fix binary packaging build eg include hcatalog, resolve pom issues
+
+---
+ ant/pom.xml                             |    1 +
+ beeline/pom.xml                         |    1 +
+ cli/pom.xml                             |    1 +
+ common/pom.xml                          |    1 +
+ contrib/pom.xml                         |    1 +
+ hbase-handler/pom.xml                   |    1 +
+ hcatalog/core/pom.xml                   |    1 +
+ hcatalog/hcatalog-pig-adapter/pom.xml   |    1 +
+ hcatalog/server-extensions/pom.xml      |    1 +
+ hcatalog/storage-handlers/hbase/pom.xml |    8 +-
+ hcatalog/webhcat/java-client/pom.xml    |    1 +
+ hcatalog/webhcat/svr/pom.xml            |    2 +-
+ hwi/pom.xml                             |    4 +
+ itests/hcatalog-unit/pom.xml            |    1 +
+ itests/hive-unit/pom.xml                |    1 +
+ itests/qtest/pom.xml                    |    3 +-
+ itests/test-serde/pom.xml               |    1 +
+ itests/util/pom.xml                     |    2 +-
+ jdbc/pom.xml                            |    3 +-
+ metastore/pom.xml                       |    2 +
+ odbc/pom.xml                            |    1 +
+ packaging/pom.xml                       |   54 +++-
+ packaging/src/main/assembly/bin.xml     |  134 +++++++++-
+ pom.xml                                 |  468 ++++++++++++++++++++++++++++++-
+ ql/pom.xml                              |    2 +
+ serde/pom.xml                           |    1 +
+ service/pom.xml                         |    1 +
+ shims/0.20/pom.xml                      |    1 +
+ shims/0.20S/pom.xml                     |    1 +
+ shims/0.23/pom.xml                      |    1 +
+ shims/assembly/pom.xml                  |    4 +
+ shims/common-secure/pom.xml             |    1 +
+ shims/common/pom.xml                    |    1 +
+ testutils/pom.xml                       |    1 +
+ testutils/ptest2/pom.xml                |    3 +
+ 35 files changed, 673 insertions(+), 38 deletions(-)
+
+diff --git a/src/ant/pom.xml b/src/ant/pom.xml
+index 8fe0792..27d4ead 100644
+--- a/src/ant/pom.xml
++++ b/src/ant/pom.xml
+@@ -32,6 +32,7 @@
+   </properties>
+ 
+   <dependencies>
++    <!-- dependencies are always listed in sorted order by groupId, artifectId -->
+     <!-- inter-project -->
+     <dependency>
+       <groupId>commons-lang</groupId>
+diff --git a/src/beeline/pom.xml b/src/beeline/pom.xml
+index 2321757..fa65113 100644
+--- a/src/beeline/pom.xml
++++ b/src/beeline/pom.xml
+@@ -32,6 +32,7 @@
+   </properties>
+ 
+   <dependencies>
++    <!-- dependencies are always listed in sorted order by groupId, artifectId -->
+     <!-- intra-project -->
+     <dependency>
+       <groupId>org.apache.hive</groupId>
+diff --git a/src/cli/pom.xml b/src/cli/pom.xml
+index 8f5f556..fd1ce86 100644
+--- a/src/cli/pom.xml
++++ b/src/cli/pom.xml
+@@ -32,6 +32,7 @@
+   </properties>
+ 
+   <dependencies>
++    <!-- dependencies are always listed in sorted order by groupId, artifectId -->
+     <!-- intra-project -->
+     <dependency>
+       <groupId>org.apache.hive</groupId>
+diff --git a/src/common/pom.xml b/src/common/pom.xml
+index 5782ff7..e4bcf12 100644
+--- a/src/common/pom.xml
++++ b/src/common/pom.xml
+@@ -32,6 +32,7 @@
+   </properties>
+ 
+   <dependencies>
++    <!-- dependencies are always listed in sorted order by groupId, artifectId -->
+     <!-- intra-proect -->
+     <dependency>
+       <groupId>org.apache.hive</groupId>
+diff --git a/src/contrib/pom.xml b/src/contrib/pom.xml
+index 362a03d..ae1a77d 100644
+--- a/src/contrib/pom.xml
++++ b/src/contrib/pom.xml
+@@ -32,6 +32,7 @@
+   </properties>
+ 
+   <dependencies>
++    <!-- dependencies are always listed in sorted order by groupId, artifectId -->
+     <!-- intra-project -->
+     <dependency>
+       <groupId>org.apache.hive</groupId>
+diff --git a/src/hbase-handler/pom.xml b/src/hbase-handler/pom.xml
+index d69bf05..307103e 100644
+--- a/src/hbase-handler/pom.xml
++++ b/src/hbase-handler/pom.xml
+@@ -32,6 +32,7 @@
+   </properties>
+ 
+   <dependencies>
++    <!-- dependencies are always listed in sorted order by groupId, artifectId -->
+     <!-- intra-project -->
+     <dependency>
+       <groupId>org.apache.hive</groupId>
+diff --git a/src/hcatalog/core/pom.xml b/src/hcatalog/core/pom.xml
+index fca962c..c069846 100644
+--- a/src/hcatalog/core/pom.xml
++++ b/src/hcatalog/core/pom.xml
+@@ -38,6 +38,7 @@
+   </properties>
+ 
+   <dependencies>
++    <!-- dependencies are always listed in sorted order by groupId, artifectId -->
+     <!-- intra-project -->
+     <dependency>
+       <groupId>org.apache.hive</groupId>
+diff --git a/src/hcatalog/hcatalog-pig-adapter/pom.xml b/src/hcatalog/hcatalog-pig-adapter/pom.xml
+index 90d26a6..f8fe779 100644
+--- a/src/hcatalog/hcatalog-pig-adapter/pom.xml
++++ b/src/hcatalog/hcatalog-pig-adapter/pom.xml
+@@ -38,6 +38,7 @@
+   </properties>
+ 
+   <dependencies>
++    <!-- dependencies are always listed in sorted order by groupId, artifectId -->
+     <!-- intra-project -->
+     <dependency>
+       <groupId>org.apache.hive.hcatalog</groupId>
+diff --git a/src/hcatalog/server-extensions/pom.xml b/src/hcatalog/server-extensions/pom.xml
+index bd999b0..3b677bd 100644
+--- a/src/hcatalog/server-extensions/pom.xml
++++ b/src/hcatalog/server-extensions/pom.xml
+@@ -38,6 +38,7 @@
+   </properties>
+ 
+   <dependencies>
++    <!-- dependencies are always listed in sorted order by groupId, artifectId -->
+     <!-- intra-project -->
+     <dependency>
+       <groupId>org.apache.hive.hcatalog</groupId>
+diff --git a/src/hcatalog/storage-handlers/hbase/pom.xml b/src/hcatalog/storage-handlers/hbase/pom.xml
+index 393e2cd..8d6311d 100644
+--- a/src/hcatalog/storage-handlers/hbase/pom.xml
++++ b/src/hcatalog/storage-handlers/hbase/pom.xml
+@@ -38,6 +38,7 @@
+   </properties>
+ 
+   <dependencies>
++    <!-- dependencies are always listed in sorted order by groupId, artifectId -->
+     <!-- intra-project -->
+     <dependency>
+       <groupId>org.apache.hive</groupId>
+@@ -85,12 +86,6 @@
+       <classifier>tests</classifier>
+       <scope>test</scope>
+     </dependency>
+-    <dependency>
+-      <groupId>org.hamcrest</groupId>
+-      <artifactId>hamcrest-core</artifactId>
+-      <version>1.3</version>
+-      <scope>test</scope>
+-    </dependency>
+   </dependencies>
+ 
+   <profiles>
+@@ -261,6 +256,7 @@
+       </resource>
+     </resources>
+     <plugins>
++      <!-- plugins are always listed in sorted order by groupId, artifectId -->
+       <plugin>
+         <groupId>org.apache.maven.plugins</groupId>
+         <artifactId>maven-jar-plugin</artifactId>
+diff --git a/src/hcatalog/webhcat/java-client/pom.xml b/src/hcatalog/webhcat/java-client/pom.xml
+index 709ab17..6735088 100644
+--- a/src/hcatalog/webhcat/java-client/pom.xml
++++ b/src/hcatalog/webhcat/java-client/pom.xml
+@@ -38,6 +38,7 @@
+   </properties>
+ 
+   <dependencies>
++    <!-- dependencies are always listed in sorted order by groupId, artifectId -->
+     <!-- intra-project -->
+     <dependency>
+       <groupId>org.apache.hive.hcatalog</groupId>
+diff --git a/src/hcatalog/webhcat/svr/pom.xml b/src/hcatalog/webhcat/svr/pom.xml
+index b375020..0c2878a 100644
+--- a/src/hcatalog/webhcat/svr/pom.xml
++++ b/src/hcatalog/webhcat/svr/pom.xml
+@@ -38,7 +38,7 @@
+   </properties>
+ 
+   <dependencies>
+-
++    <!-- dependencies are always listed in sorted order by groupId, artifectId -->
+     <!-- intra-project -->
+     <dependency>
+       <groupId>org.apache.hive.hcatalog</groupId>
+diff --git a/src/hwi/pom.xml b/src/hwi/pom.xml
+index d77f7b9..25e5189 100644
+--- a/src/hwi/pom.xml
++++ b/src/hwi/pom.xml
+@@ -32,6 +32,7 @@
+   </properties>
+ 
+   <dependencies>
++    <!-- dependencies are always listed in sorted order by groupId, artifectId -->
+     <!-- intra-project -->
+     <dependency>
+       <groupId>org.apache.hive</groupId>
+@@ -99,6 +100,7 @@
+         <activeByDefault>false</activeByDefault>
+       </activation>
+       <dependencies>
++    <!-- dependencies are always listed in sorted order by groupId, artifectId -->
+         <dependency>
+           <groupId>org.apache.hadoop</groupId>
+           <artifactId>hadoop-core</artifactId>
+@@ -110,6 +112,7 @@
+    <profile>
+       <id>hadoop-2</id>
+       <dependencies>
++    <!-- dependencies are always listed in sorted order by groupId, artifectId -->
+         <dependency>
+           <groupId>org.apache.hadoop</groupId>
+           <artifactId>hadoop-common</artifactId>
+@@ -124,6 +127,7 @@
+     <sourceDirectory>${basedir}/src/java</sourceDirectory>
+     <testSourceDirectory>${basedir}/src/test</testSourceDirectory>
+     <plugins>
++    <!-- plugins are always listed in sorted order by groupId, artifectId -->
+       <plugin>
+         <groupId>org.apache.maven.plugins</groupId>
+         <artifactId>maven-war-plugin</artifactId>
+diff --git a/src/itests/hcatalog-unit/pom.xml b/src/itests/hcatalog-unit/pom.xml
+index c728957..05b0d26 100644
+--- a/src/itests/hcatalog-unit/pom.xml
++++ b/src/itests/hcatalog-unit/pom.xml
+@@ -38,6 +38,7 @@
+   </properties>
+ 
+   <dependencies>
++    <!-- dependencies are always listed in sorted order by groupId, artifectId -->
+     <!-- test intra-project -->
+     <dependency>
+       <groupId>org.apache.hive.hcatalog</groupId>
+diff --git a/src/itests/hive-unit/pom.xml b/src/itests/hive-unit/pom.xml
+index 96dc853..53f3609 100644
+--- a/src/itests/hive-unit/pom.xml
++++ b/src/itests/hive-unit/pom.xml
+@@ -32,6 +32,7 @@
+   </properties>
+ 
+   <dependencies>
++    <!-- dependencies are always listed in sorted order by groupId, artifectId -->
+     <!-- test intra-project -->
+     <dependency>
+       <groupId>org.apache.hive</groupId>
+diff --git a/src/itests/qtest/pom.xml b/src/itests/qtest/pom.xml
+index d44f2f0..a3116e8 100644
+--- a/src/itests/qtest/pom.xml
++++ b/src/itests/qtest/pom.xml
+@@ -42,6 +42,7 @@
+   </properties>
+ 
+   <dependencies>
++    <!-- dependencies are always listed in sorted order by groupId, artifectId -->
+     <!-- test intra-project -->
+     <dependency>
+       <groupId>org.apache.hive</groupId>
+@@ -197,7 +198,7 @@
+         </dependency>
+       </dependencies>
+     </profile>
+-   <profile>
++    <profile>
+       <id>hadoop-2</id>
+       <properties>
+         <active.hadoop.version>${hadoop-23.version}</active.hadoop.version>
+diff --git a/src/itests/test-serde/pom.xml b/src/itests/test-serde/pom.xml
+index a994938..5d3da9f 100644
+--- a/src/itests/test-serde/pom.xml
++++ b/src/itests/test-serde/pom.xml
+@@ -32,6 +32,7 @@
+   </properties>
+ 
+   <dependencies>
++    <!-- dependencies are always listed in sorted order by groupId, artifectId -->
+     <!-- intra-project -->
+     <dependency>
+       <groupId>org.apache.hive</groupId>
+diff --git a/src/itests/util/pom.xml b/src/itests/util/pom.xml
+index 8b068de..8c15daf 100644
+--- a/src/itests/util/pom.xml
++++ b/src/itests/util/pom.xml
+@@ -32,6 +32,7 @@
+   </properties>
+ 
+   <dependencies>
++    <!-- dependencies are always listed in sorted order by groupId, artifectId -->
+     <!-- test intra-project -->
+     <dependency>
+       <groupId>org.apache.hive</groupId>
+@@ -157,5 +158,4 @@
+     </profile>
+   </profiles>
+ 
+-
+ </project>
+diff --git a/src/jdbc/pom.xml b/src/jdbc/pom.xml
+index 774f1e8..9bcf068 100644
+--- a/src/jdbc/pom.xml
++++ b/src/jdbc/pom.xml
+@@ -32,6 +32,7 @@
+   </properties>
+ 
+   <dependencies>
++    <!-- dependencies are always listed in sorted order by groupId, artifectId -->
+     <!-- intra-project -->
+     <dependency>
+       <groupId>org.apache.hive</groupId>
+@@ -67,7 +68,7 @@
+     <dependency>
+       <groupId>org.apache.httpcomponents</groupId>
+       <artifactId>httpclient</artifactId>
+-      <version>${httpcomponents.version}</version>
++      <version>${httpcomponents.client.version}</version>
+     </dependency>
+     <dependency>
+       <groupId>org.apache.httpcomponents</groupId>
+diff --git a/src/metastore/pom.xml b/src/metastore/pom.xml
+index f604f05..baf7b23 100644
+--- a/src/metastore/pom.xml
++++ b/src/metastore/pom.xml
+@@ -32,6 +32,7 @@
+   </properties>
+ 
+   <dependencies>
++    <!-- dependencies are always listed in sorted order by groupId, artifectId -->
+     <!-- intra-project -->
+     <dependency>
+       <groupId>org.apache.hive</groupId>
+@@ -172,6 +173,7 @@
+       </resource>
+     </resources>
+     <plugins>
++      <!-- plugins are always listed in sorted order by groupId, artifectId -->
+       <plugin>
+         <groupId>org.antlr</groupId>
+         <artifactId>antlr3-maven-plugin</artifactId>
+diff --git a/src/odbc/pom.xml b/src/odbc/pom.xml
+index d0d605f..2aba90c 100644
+--- a/src/odbc/pom.xml
++++ b/src/odbc/pom.xml
+@@ -34,6 +34,7 @@
+ 
+   <!-- odbc code depends on code generated in these modules -->
+   <dependencies>
++    <!-- dependencies are always listed in sorted order by groupId, artifectId -->
+     <!-- intra-project -->
+     <dependency>
+       <groupId>org.apache.hive</groupId>
+diff --git a/src/packaging/pom.xml b/src/packaging/pom.xml
+index 37a42d8..db5ee08 100644
+--- a/src/packaging/pom.xml
++++ b/src/packaging/pom.xml
+@@ -36,6 +36,7 @@
+       <id>dist</id>
+       <build>
+         <plugins>
++    <!-- plugins are always listed in sorted order by groupId, artifectId -->
+           <plugin>
+             <groupId>org.apache.maven.plugins</groupId>
+             <artifactId>maven-assembly-plugin</artifactId>
+@@ -62,22 +63,9 @@
+     </profile>
+   </profiles>
+ 
++
+   <dependencies>
+-    <dependency>
+-      <groupId>org.apache.hive.shims</groupId>
+-      <artifactId>hive-shims-common</artifactId>
+-      <version>${project.version}</version>
+-    </dependency>
+-    <dependency>
+-      <groupId>org.apache.hive.shims</groupId>
+-      <artifactId>hive-shims-common-secure</artifactId>
+-      <version>${project.version}</version>
+-    </dependency>
+-    <dependency>
+-      <groupId>org.apache.hive.shims</groupId>
+-      <artifactId>hive-shims-0.23</artifactId>
+-      <version>${project.version}</version>
+-    </dependency>
++    <!-- dependencies are always listed in sorted order by groupId, artifectId -->
+     <dependency>
+       <groupId>org.apache.hive</groupId>
+       <artifactId>hive-common</artifactId>
+@@ -110,6 +98,11 @@
+     </dependency>
+     <dependency>
+       <groupId>org.apache.hive</groupId>
++      <artifactId>hive-shims</artifactId>
++      <version>${project.version}</version>
++    </dependency>
++    <dependency>
++      <groupId>org.apache.hive</groupId>
+       <artifactId>hive-jdbc</artifactId>
+       <version>${project.version}</version>
+     </dependency>
+@@ -138,7 +131,36 @@
+       <artifactId>hive-hwi</artifactId>
+       <version>${project.version}</version>
+     </dependency>
+-
++    <dependency>
++      <groupId>org.apache.hive.hcatalog</groupId>
++      <artifactId>hive-hbase-storage-handler</artifactId>
++      <version>${project.version}</version>
++    </dependency>
++    <dependency>
++      <groupId>org.apache.hive.hcatalog</groupId>
++      <artifactId>hive-hcatalog-core</artifactId>
++      <version>${project.version}</version>
++    </dependency>
++    <dependency>
++      <groupId>org.apache.hive.hcatalog</groupId>
++      <artifactId>hive-hcatalog-pig-adapter</artifactId>
++      <version>${project.version}</version>
++    </dependency>
++    <dependency>
++      <groupId>org.apache.hive.hcatalog</groupId>
++      <artifactId>hive-hcatalog-server-extensions</artifactId>
++      <version>${project.version}</version>
++    </dependency>
++    <dependency>
++      <groupId>org.apache.hive.hcatalog</groupId>
++      <artifactId>hive-webhcat</artifactId>
++      <version>${project.version}</version>
++    </dependency>
++    <dependency>
++      <groupId>org.apache.hive.hcatalog</groupId>
++      <artifactId>hive-webhcat-java-client</artifactId>
++      <version>${project.version}</version>
++    </dependency>
+   </dependencies>
+ 
+ </project>
+diff --git a/src/packaging/src/main/assembly/bin.xml b/src/packaging/src/main/assembly/bin.xml
+index 5d8bb1a..4ec0313 100644
+--- a/src/packaging/src/main/assembly/bin.xml
++++ b/src/packaging/src/main/assembly/bin.xml
+@@ -33,9 +33,58 @@
+ 
+   <dependencySets>
+     <dependencySet>
+-    <outputDirectory>lib</outputDirectory>
+-    <unpack>false</unpack>
+-    <useProjectArtifact>false</useProjectArtifact>
++      <outputDirectory>lib</outputDirectory>
++      <unpack>false</unpack>
++      <useProjectArtifact>false</useProjectArtifact>
++      <useStrictFiltering>true</useStrictFiltering>
++      <useTransitiveFiltering>true</useTransitiveFiltering>
++      <excludes>
++        <exclude>org.apache.hadoop:*</exclude>
++        <exclude>org.apache.hbase:*</exclude>
++        <exclude>org.apache.hive.hcatalog:*</exclude>
++      </excludes>
++    </dependencySet>
++    <dependencySet>
++      <outputDirectory>hcatalog/share/hcatalog</outputDirectory>
++      <unpack>false</unpack>
++      <useProjectArtifact>false</useProjectArtifact>
++      <useStrictFiltering>true</useStrictFiltering>
++      <includes>
++        <include>org.apache.hive.hcatalog:hive-hcatalog-core</include>
++        <include>org.apache.hive.hcatalog:hive-hcatalog-pig-adapter</include>
++        <include>org.apache.hive.hcatalog:hive-hcatalog-server-extensions</include>
++      </includes>
++    </dependencySet>
++    <dependencySet>
++      <outputDirectory>hcatalog/share/hcatalog/storage-handlers/hbase/lib</outputDirectory>
++      <unpack>false</unpack>
++      <useProjectArtifact>false</useProjectArtifact>
++      <useStrictFiltering>true</useStrictFiltering>
++      <includes>
++        <include>org.apache.hive.hcatalog:hive-hbase-storage-handler</include>
++      </includes>
++    </dependencySet>
++    <!-- TODO 0.12 release the webhcat server lib directory had all transitive jars
++         while this lib directory only has explicit dependencies
++    -->
++    <dependencySet>
++      <outputDirectory>hcatalog/share/webhcat/svr/lib</outputDirectory>
++      <unpack>false</unpack>
++      <useProjectArtifact>false</useProjectArtifact>
++      <useStrictFiltering>true</useStrictFiltering>
++      <useTransitiveFiltering>true</useTransitiveFiltering>
++      <includes>
++        <include>org.apache.hive.hcatalog:hive-webhcat:*</include>
++      </includes>
++    </dependencySet>
++    <dependencySet>
++      <outputDirectory>hcatalog/share/webhcat/java-client</outputDirectory>
++      <unpack>false</unpack>
++      <useProjectArtifact>false</useProjectArtifact>
++      <useStrictFiltering>true</useStrictFiltering>
++      <includes>
++        <include>org.apache.hive.hcatalog:hive-webhcat-java-client</include>
++      </includes>
+     </dependencySet>
+   </dependencySets>
+ 
+@@ -202,7 +251,77 @@
+       <outputDirectory>lib/py/queryplan</outputDirectory>
+     </fileSet>
+ 
++    <!-- hcatalog bin -->
++    <fileSet>
++      <directory>${project.parent.basedir}/hcatalog/bin</directory>
++      <fileMode>755</fileMode>
++      <includes>
++        <include>hcat</include>
++        <include>hcatcfg.py</include>
++        <include>hcat.py</include>
++        <include>templeton.cmd</include>
++      </includes>
++      <outputDirectory>hcatalog/bin</outputDirectory>
++    </fileSet>
++
++    <!-- hcatalog etc -->
++    <fileSet>
++      <directory>${project.parent.basedir}/hcatalog/conf</directory>
++      <fileMode>644</fileMode>
++      <includes>
++        <include>jndi.properties</include>
++        <include>proto-hive-site.xml</include>
++      </includes>
++      <outputDirectory>hcatalog/etc/hcatalog</outputDirectory>
++    </fileSet>
++    <fileSet>
++      <directory>${project.parent.basedir}/hcatalog/webhcat/svr/src/main/config</directory>
++      <fileMode>644</fileMode>
++      <includes>
++        <include>webhcat-default.xml</include>
++        <include>webhcat-log4j.properties</include>
++      </includes>
++      <outputDirectory>hcatalog/etc/webhcat</outputDirectory>
++    </fileSet>
++
++    <!-- hcatalog libexec -->
++    <fileSet>
++      <directory>${project.parent.basedir}/hcatalog/bin</directory>
++      <fileMode>755</fileMode>
++      <includes>
++        <include>hcat-config.sh</include>
++      </includes>
++      <outputDirectory>hcatalog/libexec</outputDirectory>
++    </fileSet>
+ 
++    <!-- hcatalog sbin -->
++    <fileSet>
++      <directory>${project.parent.basedir}/hcatalog/bin</directory>
++      <fileMode>755</fileMode>
++      <includes>
++        <include>hcatcfg.py</include>
++        <include>hcat_server.py</include>
++        <include>hcat_server.sh</include>
++      </includes>
++      <outputDirectory>hcatalog/sbin</outputDirectory>
++    </fileSet>
++    <fileSet>
++      <directory>${project.parent.basedir}/hcatalog/src/packages</directory>
++      <fileMode>755</fileMode>
++      <includes>
++        <include>update-hcatalog-env.sh</include>
++      </includes>
++      <outputDirectory>hcatalog/sbin</outputDirectory>
++    </fileSet>
++    <fileSet>
++      <directory>${project.parent.basedir}/hcatalog/webhcat/svr/src/main/bin</directory>
++      <fileMode>755</fileMode>
++      <includes>
++        <include>webhcat_config.sh</include>
++        <include>webhcat_server.sh</include>
++      </includes>
++      <outputDirectory>hcatalog/sbin</outputDirectory>
++    </fileSet>
+   </fileSets>
+ 
+   <files>
+@@ -211,12 +330,19 @@
+       <outputDirectory>conf</outputDirectory>
+       <destName>hive-log4j.properties.template</destName>
+     </file>
+-
+     <file>
+       <source>${project.parent.basedir}/ql/src/main/resources/hive-exec-log4j.properties</source>
+       <outputDirectory>conf</outputDirectory>
+       <destName>hive-exec-log4j.properties.template</destName>
+     </file>
++    <file>
++      <source>${project.parent.basedir}/hcatalog/README.txt</source>
++      <outputDirectory>hcatalog/share/doc/hcatalog</outputDirectory>
++    </file>
++    <file>
++      <source>${project.parent.basedir}/hcatalog/storage-handlers/hbase/conf/revision-manager-site.xml</source>
++      <outputDirectory>hcatalog/share/hcatalog/storage-handlers/hbase/conf</outputDirectory>
++    </file>
+   </files>
+ 
+ </assembly>
+diff --git a/src/pom.xml b/src/pom.xml
+index 50bf15e..e315500 100644
+--- a/src/pom.xml
++++ b/src/pom.xml
+@@ -90,19 +90,14 @@
+     <datanucleus-api-jdo.version>3.2.1</datanucleus-api-jdo.version>
+     <datanucleus-core.version>3.2.2</datanucleus-core.version>
+     <datanucleus-rdbms.version>3.2.1</datanucleus-rdbms.version>
+-    <checkstyle.version>5.0</checkstyle.version>
+-    <findbugs.version>1.3.9</findbugs.version>
+     <commons-cli.version>1.2</commons-cli.version>
+     <commons-codec.version>1.4</commons-codec.version>
+-    <commons-collections.version>3.2.1</commons-collections.version>
+     <commons-compress.version>1.4.1</commons-compress.version>
+-    <commons-configuration.version>1.6</commons-configuration.version>
+     <commons-exec.version>1.1</commons-exec.version>
+     <commons-httpclient.version>3.0.1</commons-httpclient.version>
+     <commons-io.version>2.4</commons-io.version>
+     <commons-lang.version>2.4</commons-lang.version>
+     <commons-logging.version>1.1.3</commons-logging.version>
+-    <commons-pool.version>1.5.4</commons-pool.version>
+     <derby.version>10.4.2.0</derby.version>
+     <guava.version>11.0.2</guava.version>
+     <groovy.version>2.1.6</groovy.version>
+@@ -111,16 +106,18 @@
+     <hadoop-23.version>${cdh.hadoop.version}</hadoop-23.version>
+     <hbase.hadoop1.version>${cdh.hbase.version}</hbase.hadoop1.version>
+     <hbase.hadoop2.version>${cdh.hbase.version}</hbase.hadoop2.version>
+-    <httpcomponents.version>${cdh.httpcomponents.version}</httpcomponents.version>
++    <!-- httpcomponents are not always in version sync -->
++    <httpcomponents.client.version>${cdh.httpcomponents.version}</httpcomponents.client.version>
+     <httpcomponents.core.version>${cdh.httpcomponents.core.version}</httpcomponents.core.version>
+     <jackson.version>1.9.2</jackson.version>
+     <javaewah.version>0.3.2</javaewah.version>
+     <javolution.version>5.5.1</javolution.version>
+-    <jersey.version>1.14</jersey.version>
+-    <jetty.webhcat.version>7.6.0.v20120127</jetty.webhcat.version>
+     <jdo-api.version>3.0.1</jdo-api.version>
+     <jdom.version>1.1</jdom.version>
++    <!-- TODO figure out how to reconcile jetty versions -->
+     <jetty.version>6.1.26.cloudera.2</jetty.version>
++    <jetty.webhcat.version>7.6.0.v20120127</jetty.webhcat.version>
++    <jersey.version>1.14</jersey.version>
+     <jline.version>0.9.94</jline.version>
+     <jms.version>1.1</jms.version>
+     <json.version>20090211</json.version>
+@@ -131,6 +128,11 @@
+     <log4j.version>1.2.16</log4j.version>
+     <mockito-all.version>1.8.2</mockito-all.version>
+     <mina.version>2.0.0-M5</mina.version>
++    <!--netty is not a direct dependency but due to a change
++        in artifact name and given that zookeeper < 3.5
++        requires netty < 3.6.0 we force hadoops version
++      -->
++    <netty.version>3.4.0.Final</netty.version>
+     <pig.version>${cdh.pig.version}</pig.version>
+     <protobuf.version>${cdh.protobuf.version}</protobuf.version>
+     <rat.version>0.8</rat.version>
+@@ -207,7 +209,322 @@
+      </repository>
+   </repositories>
+ 
++  <!-- Hadoop dependency management is done at the bottom under profiles -->
++  <dependencyManagement>
++    <dependencies>
++      <!-- dependencies are always listed in sorted order by groupId, artifectId -->
++      <dependency>
++        <groupId>com.esotericsoftware.kryo</groupId>
++        <artifactId>kryo</artifactId>
++        <version>${kryo.version}</version>
++      </dependency>
++      <dependency>
++        <groupId>com.google.guava</groupId>
++        <artifactId>guava</artifactId>
++        <version>${guava.version}</version>
++      </dependency>
++      <dependency>
++        <groupId>com.google.protobuf</groupId>
++        <artifactId>protobuf-java</artifactId>
++        <version>${protobuf.version}</version>
++      </dependency>
++      <dependency>
++        <groupId>com.google.code.tempus-fugit</groupId>
++        <artifactId>tempus-fugit</artifactId>
++        <version>${tempus-fugit.version}</version>
++      </dependency>
++      <dependency>
++        <groupId>com.googlecode.javaewah</groupId>
++        <artifactId>JavaEWAH</artifactId>
++        <version>${javaewah.version}</version>
++      </dependency>
++      <dependency>
++        <groupId>com.jolbox</groupId>
++        <artifactId>bonecp</artifactId>
++        <version>${bonecp.version}</version>
++      </dependency>
++      <dependency>
++        <groupId>com.sun.jersey</groupId>
++        <artifactId>jersey-core</artifactId>
++        <version>${jersey.version}</version>
++      </dependency>
++      <dependency>
++        <groupId>com.sun.jersey</groupId>
++        <artifactId>jersey-json</artifactId>
++        <version>${jersey.version}</version>
++      </dependency>
++      <dependency>
++        <groupId>com.sun.jersey</groupId>
++        <artifactId>jersey-server</artifactId>
++        <version>${jersey.version}</version>
++      </dependency>
++      <dependency>
++        <groupId>com.sun.jersey.contribs</groupId>
++        <artifactId>wadl-resourcedoc-doclet</artifactId>
++        <version>${wadl-resourcedoc-doclet.version}</version>
++      </dependency>
++      <dependency>
++        <groupId>commons-cli</groupId>
++        <artifactId>commons-cli</artifactId>
++        <version>${commons-cli.version}</version>
++      </dependency>
++      <dependency>
++        <groupId>commons-codec</groupId>
++        <artifactId>commons-codec</artifactId>
++        <version>${commons-codec.version}</version>
++      </dependency>
++      <dependency>
++        <groupId>commons-httpclient</groupId>
++        <artifactId>commons-httpclient</artifactId>
++        <version>${commons-httpclient.version}</version>
++      </dependency>
++      <dependency>
++        <groupId>commons-io</groupId>
++        <artifactId>commons-io</artifactId>
++        <version>${commons-io.version}</version>
++      </dependency>
++      <dependency>
++        <groupId>commons-lang</groupId>
++        <artifactId>commons-lang</artifactId>
++        <version>${commons-lang.version}</version>
++      </dependency>
++      <dependency>
++        <groupId>commons-logging</groupId>
++        <artifactId>commons-logging</artifactId>
++        <version>${commons-logging.version}</version>
++      </dependency>
++      <dependency>
++        <groupId>io.netty</groupId>
++        <artifactId>netty</artifactId>
++        <version>${netty.version}</version>
++      </dependency>
++      <dependency>
++        <groupId>javax.jdo</groupId>
++        <artifactId>jdo-api</artifactId>
++        <version>${jdo-api.version}</version>
++      </dependency>
++      <dependency>
++        <groupId>javax.jms</groupId>
++        <artifactId>jms</artifactId>
++        <version>${jms.version}</version>
++      </dependency>
++      <dependency>
++        <groupId>javolution</groupId>
++        <artifactId>javolution</artifactId>
++        <version>${javolution.version}</version>
++      </dependency>
++      <dependency>
++        <groupId>jline</groupId>
++        <artifactId>jline</artifactId>
++        <version>${jline.version}</version>
++      </dependency>
++      <dependency>
++        <groupId>junit</groupId>
++        <artifactId>junit</artifactId>
++        <version>${junit.version}</version>
++      </dependency>
++      <dependency>
++        <groupId>log4j</groupId>
++        <artifactId>log4j</artifactId>
++        <version>${log4j.version}</version>
++      </dependency>
++      <dependency>
++        <groupId>org.antlr</groupId>
++        <artifactId>antlr-runtime</artifactId>
++        <version>${antlr.version}</version>
++      </dependency>
++      <dependency>
++        <groupId>org.antlr</groupId>
++        <artifactId>ST4</artifactId>
++        <version>${ST4.version}</version>
++      </dependency>
++      <dependency>
++        <groupId>org.apache.ant</groupId>
++        <artifactId>ant</artifactId>
++        <version>${ant.version}</version>
++      </dependency>
++      <dependency>
++        <groupId>org.apache.commons</groupId>
++        <artifactId>commons-compress</artifactId>
++        <version>${commons-compress.version}</version>
++      </dependency>
++      <dependency>
++        <groupId>org.apache.commons</groupId>
++        <artifactId>commons-exec</artifactId>
++        <version>${commons-exec.version}</version>
++      </dependency>
++      <dependency>
++        <groupId>org.apache.activemq</groupId>
++        <artifactId>activemq-core</artifactId>
++        <version>${activemq.version}</version>
++        <exclusions>
++          <exclusion>
++            <groupId>org.springframework</groupId>
++            <artifactId>spring-context</artifactId>
++          </exclusion>
++        </exclusions>
++      </dependency>
++      <dependency>
++        <groupId>org.apache.activemq</groupId>
++        <artifactId>kahadb</artifactId>
++        <version>${activemq.version}</version>
++      </dependency>
++      <dependency>
++        <groupId>org.apache.avro</groupId>
++        <artifactId>avro</artifactId>
++        <version>${avro.version}</version>
++      </dependency>
++      <dependency>
++        <groupId>org.apache.avro</groupId>
++        <artifactId>avro-mapred</artifactId>
++        <version>${avro.version}</version>
++      </dependency>
++      <dependency>
++        <groupId>org.apache.derby</groupId>
++        <artifactId>derby</artifactId>
++        <version>${derby.version}</version>
++      </dependency>
++      <dependency>
++        <groupId>org.apache.httpcomponents</groupId>
++        <artifactId>httpclient</artifactId>
++        <version>${httpcomponents.client.version}</version>
++      </dependency>
++      <dependency>
++        <groupId>org.apache.httpcomponents</groupId>
++        <artifactId>httpcore</artifactId>
++        <version>${httpcomponents.core.version}</version>
++      </dependency>
++      <dependency>
++        <groupId>org.apache.mina</groupId>
++        <artifactId>mina-core</artifactId>
++        <version>${mina.version}</version>
++      </dependency>
++      <dependency>
++        <groupId>org.apache.velocity</groupId>
++        <artifactId>velocity</artifactId>
++        <version>${velocity.version}</version>
++      </dependency>
++      <dependency>
++        <groupId>stax</groupId>
++        <artifactId>stax-api</artifactId>
++        <version>${stax.version}</version>
++      </dependency>
++      <dependency>
++        <groupId>org.apache.pig</groupId>
++        <artifactId>pig</artifactId>
++        <version>${pig.version}</version>
++      </dependency>
++      <dependency>
++        <groupId>org.apache.thrift</groupId>
++        <artifactId>libfb303</artifactId>
++        <version>${libfb303.version}</version>
++      </dependency>
++      <dependency>
++        <groupId>org.apache.thrift</groupId>
++        <artifactId>libthrift</artifactId>
++        <version>${libthrift.version}</version>
++      </dependency>
++      <dependency>
++        <groupId>org.apache.zookeeper</groupId>
++        <artifactId>zookeeper</artifactId>
++        <version>${zookeeper.version}</version>
++        <exclusions>
++          <exclusion>
++            <groupId>org.jboss.netty</groupId>
++            <artifactId>netty</artifactId>
++          </exclusion>
++        </exclusions>
++      </dependency>
++      <dependency>
++        <groupId>org.codehaus.groovy</groupId>
++        <artifactId>groovy-all</artifactId>
++        <version>${groovy.version}</version>
++      </dependency>
++      <dependency>
++        <groupId>org.codehaus.jackson</groupId>
++        <artifactId>jackson-core-asl</artifactId>
++        <version>${jackson.version}</version>
++      </dependency>
++      <dependency>
++        <groupId>org.codehaus.jackson</groupId>
++        <artifactId>jackson-mapper-asl</artifactId>
++        <version>${jackson.version}</version>
++      </dependency>
++      <dependency>
++        <groupId>org.codehaus.jackson</groupId>
++        <artifactId>jackson-jaxrs</artifactId>
++        <version>${jackson.version}</version>
++      </dependency>
++      <dependency>
++        <groupId>org.codehaus.jackson</groupId>
++        <artifactId>jackson-xc</artifactId>
++        <version>${jackson.version}</version>
++      </dependency>
++      <dependency>
++        <groupId>org.eclipse.jetty.aggregate</groupId>
++        <artifactId>jetty-all-server</artifactId>
++        <version>${jetty.webhcat.version}</version>
++      </dependency>
++      <dependency>
++        <groupId>org.datanucleus</groupId>
++        <artifactId>datanucleus-api-jdo</artifactId>
++        <version>${datanucleus-api-jdo.version}</version>
++      </dependency>
++      <dependency>
++        <groupId>org.datanucleus</groupId>
++        <artifactId>datanucleus-core</artifactId>
++        <version>${datanucleus-core.version}</version>
++      </dependency>
++      <dependency>
++        <groupId>org.datanucleus</groupId>
++        <artifactId>datanucleus-rdbms</artifactId>
++        <version>${datanucleus-rdbms.version}</version>
++      </dependency>
++      <dependency>
++        <groupId>org.iq80.snappy</groupId>
++        <artifactId>snappy</artifactId>
++        <version>${snappy.version}</version>
++      </dependency>
++      <dependency>
++        <groupId>org.json</groupId>
++        <artifactId>json</artifactId>
++        <version>${json.version}</version>
++      </dependency>
++      <dependency>
++        <groupId>org.mockito</groupId>
++        <artifactId>mockito-all</artifactId>
++        <version>${mockito-all.version}</version>
++      </dependency>
++      <dependency>
++        <groupId>org.mortbay.jetty</groupId>
++        <artifactId>jetty</artifactId>
++        <version>${jetty.version}</version>
++      </dependency>
++      <dependency>
++        <groupId>org.mortbay.jetty</groupId>
++        <artifactId>jetty-util</artifactId>
++        <version>${jetty.version}</version>
++      </dependency>
++      <dependency>
++        <groupId>org.slf4j</groupId>
++        <artifactId>slf4j-api</artifactId>
++        <version>${slf4j.version}</version>
++      </dependency>
++      <dependency>
++        <groupId>org.slf4j</groupId>
++        <artifactId>slf4j-log4j12</artifactId>
++        <version>${slf4j.version}</version>
++      </dependency>
++      <dependency>
++        <groupId>xerces</groupId>
++        <artifactId>xercesImpl</artifactId>
++        <version>${xerces.version}</version>
++      </dependency>
++    </dependencies>
++  </dependencyManagement>
++
+   <dependencies>
++    <!-- dependencies are always listed in sorted order by groupId, artifectId -->
+     <!-- global dependencies -->
+     <dependency>
+       <groupId>org.slf4j</groupId>
+@@ -224,6 +541,7 @@
+   <build>
+     <pluginManagement>
+       <plugins>
++        <!-- plugins are always listed in sorted order by groupId, artifectId -->
+         <plugin>
+           <groupId>org.antlr</groupId>
+           <artifactId>antlr3-maven-plugin</artifactId>
+@@ -312,6 +630,7 @@
+     </pluginManagement>
+ 
+     <plugins>
++      <!-- plugins are always listed in sorted order by groupId, artifectId -->
+       <plugin>
+         <groupId>org.apache.maven.plugins</groupId>
+         <artifactId>maven-antrun-plugin</artifactId>
+@@ -497,5 +816,138 @@
+         </plugins>
+       </build>
+     </profile>
++
++    <profile>
++      <id>sources</id>
++      <build>
++        <plugins>
++          <plugin>
++            <groupId>org.apache.maven.plugins</groupId>
++            <artifactId>maven-source-plugin</artifactId>
++            <executions>
++              <execution>
++                <id>attach-sources</id>
++                <goals>
++                  <goal>jar</goal>
++                </goals>
++              </execution>
++            </executions>
++          </plugin>
++        </plugins>
++      </build>
++    </profile>
++
++    <profile>
++      <id>javadoc</id>
++      <build>
++        <plugins>
++          <plugin>
++            <groupId>org.apache.maven.plugins</groupId>
++            <artifactId>maven-javadoc-plugin</artifactId>
++            <executions>
++              <execution>
++                <id>attach-javadocs</id>
++                <goals>
++                  <goal>jar</goal>
++                </goals>
++              </execution>
++            </executions>
++          </plugin>
++        </plugins>
++      </build>
++    </profile>
++    <!-- hadoop profiles in the root pom are only used for dependency management -->
++    <profile>
++      <id>hadoop-1</id>
++      <activation>
++        <activeByDefault>true</activeByDefault>
++      </activation>
++      <dependencyManagement>
++        <dependencies>
++          <dependency>
++            <groupId>org.apache.hadoop</groupId>
++            <artifactId>hadoop-core</artifactId>
++            <version>${hadoop-20S.version}</version>
++          </dependency>
++          <dependency>
++            <groupId>org.apache.hadoop</groupId>
++            <artifactId>hadoop-test</artifactId>
++            <version>${hadoop-20S.version}</version>
++          </dependency>
++          <dependency>
++            <groupId>org.apache.hadoop</groupId>
++            <artifactId>hadoop-tools</artifactId>
++            <version>${hadoop-20S.version}</version>
++          </dependency>
++          <dependency>
++            <groupId>org.apache.hbase</groupId>
++            <artifactId>hbase-common</artifactId>
++            <version>${hbase.hadoop1.version}</version>
++          </dependency>
++          <dependency>
++            <groupId>org.apache.hbase</groupId>
++            <artifactId>hbase-hadoop-compat</artifactId>
++            <version>${hbase.hadoop1.version}</version>
++          </dependency>
++          <dependency>
++            <groupId>org.apache.hbase</groupId>
++            <artifactId>hbase-hadoop1-compat</artifactId>
++            <version>${hbase.hadoop1.version}</version>
++          </dependency>
++          <dependency>
++            <groupId>org.apache.hbase</groupId>
++            <artifactId>hbase-server</artifactId>
++            <version>${hbase.hadoop1.version}</version>
++          </dependency>
++        </dependencies>
++      </dependencyManagement>
++    </profile>
++    <profile>
++      <id>hadoop-2</id>
++      <dependencyManagement>
++        <dependencies>
++          <dependency>
++            <groupId>org.apache.hadoop</groupId>
++            <artifactId>hadoop-common</artifactId>
++            <version>${hadoop-23.version}</version>
++          </dependency>
++          <dependency>
++            <groupId>org.apache.hadoop</groupId>
++            <artifactId>hadoop-hdfs</artifactId>
++            <version>${hadoop-23.version}</version>
++          </dependency>
++          <dependency>
++            <groupId>org.apache.hadoop</groupId>
++            <artifactId>hadoop-mapreduce-client-jobclient</artifactId>
++            <version>${hadoop-23.version}</version>
++          </dependency>
++          <dependency>
++            <groupId>org.apache.hadoop</groupId>
++            <artifactId>hadoop-mapreduce-client-core</artifactId>
++            <version>${hadoop-23.version}</version>
++          </dependency>
++          <dependency>
++            <groupId>org.apache.hbase</groupId>
++            <artifactId>hbase-common</artifactId>
++            <version>${hbase.hadoop2.version}</version>
++          </dependency>
++          <dependency>
++            <groupId>org.apache.hbase</groupId>
++            <artifactId>hbase-hadoop-compat</artifactId>
++            <version>${hbase.hadoop2.version}</version>
++          </dependency>
++          <dependency>
++            <groupId>org.apache.hbase</groupId>
++            <artifactId>hbase-hadoop2-compat</artifactId>
++            <version>${hbase.hadoop2.version}</version>
++          </dependency>
++          <dependency>
++            <groupId>org.apache.hbase</groupId>
++            <artifactId>hbase-server</artifactId>
++            <version>${hbase.hadoop2.version}</version>
++          </dependency>
++        </dependencies>
++      </dependencyManagement>
++    </profile>
+   </profiles>
+ </project>
+diff --git a/src/ql/pom.xml b/src/ql/pom.xml
+index 7c92b5e..9f3b277 100644
+--- a/src/ql/pom.xml
++++ b/src/ql/pom.xml
+@@ -32,6 +32,7 @@
+   </properties>
+ 
+   <dependencies>
++    <!-- dependencies are always listed in sorted order by groupId, artifectId -->
+     <!-- intra-project -->
+     <!-- used for vector code-gen -->
+     <dependency>
+@@ -288,6 +289,7 @@
+     <sourceDirectory>${basedir}/src/java</sourceDirectory>
+     <testSourceDirectory>${basedir}/src/test</testSourceDirectory>
+     <plugins>
++      <!-- plugins are always listed in sorted order by groupId, artifectId -->
+       <plugin>
+         <groupId>org.antlr</groupId>
+         <artifactId>antlr3-maven-plugin</artifactId>
+diff --git a/src/serde/pom.xml b/src/serde/pom.xml
+index bc376fb..e487be5 100644
+--- a/src/serde/pom.xml
++++ b/src/serde/pom.xml
+@@ -32,6 +32,7 @@
+   </properties>
+ 
+   <dependencies>
++    <!-- dependencies are always listed in sorted order by groupId, artifectId -->
+     <!-- intra-project -->
+     <dependency>
+       <groupId>org.apache.hive</groupId>
+diff --git a/src/service/pom.xml b/src/service/pom.xml
+index 9008af8..5b3a4f5 100644
+--- a/src/service/pom.xml
++++ b/src/service/pom.xml
+@@ -32,6 +32,7 @@
+   </properties>
+ 
+   <dependencies>
++    <!-- dependencies are always listed in sorted order by groupId, artifectId -->
+     <!-- intra-project -->
+     <dependency>
+       <groupId>org.apache.hive</groupId>
+diff --git a/src/shims/0.20/pom.xml b/src/shims/0.20/pom.xml
+index d486d58..8422194 100644
+--- a/src/shims/0.20/pom.xml
++++ b/src/shims/0.20/pom.xml
+@@ -33,6 +33,7 @@
+   </properties>
+ 
+   <dependencies>
++    <!-- dependencies are always listed in sorted order by groupId, artifectId -->
+     <!-- intra-project -->
+     <dependency>
+       <groupId>org.apache.hive.shims</groupId>
+diff --git a/src/shims/0.20S/pom.xml b/src/shims/0.20S/pom.xml
+index 865ccb6..a23ec07 100644
+--- a/src/shims/0.20S/pom.xml
++++ b/src/shims/0.20S/pom.xml
+@@ -33,6 +33,7 @@
+   </properties>
+ 
+   <dependencies>
++    <!-- dependencies are always listed in sorted order by groupId, artifectId -->
+     <!-- intra-project -->
+     <dependency>
+       <groupId>org.apache.hive.shims</groupId>
+diff --git a/src/shims/0.23/pom.xml b/src/shims/0.23/pom.xml
+index af03d82..9dd3fe4 100644
+--- a/src/shims/0.23/pom.xml
++++ b/src/shims/0.23/pom.xml
+@@ -33,6 +33,7 @@
+   </properties>
+ 
+   <dependencies>
++    <!-- dependencies are always listed in sorted order by groupId, artifectId -->
+     <!-- intra-project -->
+     <dependency>
+       <groupId>org.apache.hive.shims</groupId>
+diff --git a/src/shims/assembly/pom.xml b/src/shims/assembly/pom.xml
+index dd219db..50e93a5 100644
+--- a/src/shims/assembly/pom.xml
++++ b/src/shims/assembly/pom.xml
+@@ -32,20 +32,24 @@
+   </properties>
+ 
+   <dependencies>
++    <!-- dependencies are always listed in sorted order by groupId, artifectId -->
+     <dependency>
+       <groupId>org.apache.hive.shims</groupId>
+       <artifactId>hive-shims-common</artifactId>
+       <version>${project.version}</version>
++      <optional>true</optional>
+     </dependency>
+     <dependency>
+       <groupId>org.apache.hive.shims</groupId>
+       <artifactId>hive-shims-common-secure</artifactId>
+       <version>${project.version}</version>
++      <optional>true</optional>
+     </dependency>
+     <dependency>
+       <groupId>org.apache.hive.shims</groupId>
+       <artifactId>hive-shims-0.23</artifactId>
+       <version>${project.version}</version>
++      <optional>true</optional>
+     </dependency>
+   </dependencies>
+ 
+diff --git a/src/shims/common-secure/pom.xml b/src/shims/common-secure/pom.xml
+index 6c15b72..5d2c7ef 100644
+--- a/src/shims/common-secure/pom.xml
++++ b/src/shims/common-secure/pom.xml
+@@ -33,6 +33,7 @@
+   </properties>
+ 
+   <dependencies>
++    <!-- dependencies are always listed in sorted order by groupId, artifectId -->
+     <!-- intra-project -->
+     <dependency>
+       <groupId>org.apache.hive.shims</groupId>
+diff --git a/src/shims/common/pom.xml b/src/shims/common/pom.xml
+index 8de98dd..beb2be3 100644
+--- a/src/shims/common/pom.xml
++++ b/src/shims/common/pom.xml
+@@ -33,6 +33,7 @@
+   </properties>
+ 
+   <dependencies>
++    <!-- dependencies are always listed in sorted order by groupId, artifectId -->
+     <!-- inter-project -->
+     <dependency>
+       <groupId>commons-logging</groupId>
+diff --git a/src/testutils/pom.xml b/src/testutils/pom.xml
+index 3d0926a..6c20985 100644
+--- a/src/testutils/pom.xml
++++ b/src/testutils/pom.xml
+@@ -32,6 +32,7 @@
+   </properties>
+ 
+   <dependencies>
++    <!-- dependencies are always listed in sorted order by groupId, artifectId -->
+     <!-- inter-project -->
+     <dependency>
+       <groupId>com.google.code.tempus-fugit</groupId>
+diff --git a/src/testutils/ptest2/pom.xml b/src/testutils/ptest2/pom.xml
+index 00d2d6e..468ed26 100644
+--- a/src/testutils/ptest2/pom.xml
++++ b/src/testutils/ptest2/pom.xml
+@@ -42,6 +42,7 @@ limitations under the License.
+ 
+ 
+   <dependencies>
++    <!-- dependencies are always listed in sorted order by groupId, artifectId -->
+     <dependency>
+       <groupId>commons-io</groupId>
+       <artifactId>commons-io</artifactId>
+@@ -170,6 +171,7 @@ limitations under the License.
+   </dependencies>
+   <build>
+     <plugins>
++      <!-- plugins are always listed in sorted order by groupId, artifectId -->
+       <plugin>
+         <groupId>org.apache.maven.plugins</groupId>
+         <artifactId>maven-dependency-plugin</artifactId>
+@@ -228,6 +230,7 @@ limitations under the License.
+     </plugins>
+     <pluginManagement>
+       <plugins>
++    <!-- plugins are always listed in sorted order by groupId, artifectId -->
+         <plugin>
+           <groupId>org.apache.rat</groupId>
+           <artifactId>apache-rat-plugin</artifactId>
+-- 
+1.7.0.4
+

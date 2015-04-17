@@ -1,0 +1,24 @@
+From 87600fedc6c77c3733ab426ee0be120e0e5b62f2 Mon Sep 17 00:00:00 2001
+From: Prasad Mujumdar <prasadm@cloudera.com>
+Date: Mon, 20 Jan 2014 13:06:20 -0800
+Subject: [PATCH 238/375] CDH-16852: HS2 doesnt seem to be using the SSL properties
+
+---
+ .../java/org/apache/hive/jdbc/HiveConnection.java  |    1 -
+ 1 files changed, 0 insertions(+), 1 deletions(-)
+
+diff --git a/src/jdbc/src/java/org/apache/hive/jdbc/HiveConnection.java b/src/jdbc/src/java/org/apache/hive/jdbc/HiveConnection.java
+index db73cf3..ef9b4e2 100644
+--- a/src/jdbc/src/java/org/apache/hive/jdbc/HiveConnection.java
++++ b/src/jdbc/src/java/org/apache/hive/jdbc/HiveConnection.java
+@@ -263,7 +263,6 @@ private TTransport createBinaryTransport() throws SQLException {
+                 transport = HiveAuthFactory.getSSLSocket(host, port, loginTimeout,
+                   sslTrustStore, sslTrustStorePassword);
+               }
+-              transport = PlainSaslHelper.getPlainTransport(userName, passwd, transport);
+             } else {
+               // get non-SSL socket transport
+               transport = HiveAuthFactory.getSocketTransport(host, port, loginTimeout);
+-- 
+1.7.0.4
+

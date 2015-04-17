@@ -1,0 +1,51 @@
+From 58b8ed11ec9ea7b6f306934951a7489447b117d9 Mon Sep 17 00:00:00 2001
+From: Ashutosh Chauhan <hashutosh@apache.org>
+Date: Wed, 11 Sep 2013 14:58:50 +0000
+Subject: [PATCH 034/375] HIVE-5266 : HCatalog checkstyle failure due to HIVE5225 (Brock Noland via Ashutosh Chauhan)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1521890 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../apache/hcatalog/common/HiveClientCache.java    |    7 +------
+ .../hive/hcatalog/common/HiveClientCache.java      |    1 -
+ 2 files changed, 1 insertions(+), 7 deletions(-)
+
+diff --git a/src/hcatalog/core/src/main/java/org/apache/hcatalog/common/HiveClientCache.java b/src/hcatalog/core/src/main/java/org/apache/hcatalog/common/HiveClientCache.java
+index 153a394..2b3200b 100644
+--- a/src/hcatalog/core/src/main/java/org/apache/hcatalog/common/HiveClientCache.java
++++ b/src/hcatalog/core/src/main/java/org/apache/hcatalog/common/HiveClientCache.java
+@@ -27,7 +27,6 @@
+ import org.apache.hadoop.hive.conf.HiveConf;
+ import org.apache.hadoop.hive.metastore.HiveMetaStoreClient;
+ import org.apache.hadoop.hive.metastore.api.MetaException;
+-import org.apache.hadoop.hive.metastore.api.NoSuchObjectException;
+ import org.apache.hadoop.hive.shims.ShimLoader;
+ import org.apache.hadoop.security.UserGroupInformation;
+ import org.apache.thrift.TException;
+@@ -274,11 +273,7 @@ public boolean isClosed() {
+     protected boolean isOpen() {
+       try {
+         // Look for an unlikely database name and see if either MetaException or TException is thrown
+-        this.getDatabase("NonExistentDatabaseUsedForHealthCheck");
+-      } catch (NoSuchObjectException e) {
+-        return true; // It is okay if the database doesn't exist
+-      } catch (MetaException e) {
+-        return false;
++        this.getDatabases("NonExistentDatabaseUsedForHealthCheck");
+       } catch (TException e) {
+         return false;
+       }
+diff --git a/src/hcatalog/core/src/main/java/org/apache/hive/hcatalog/common/HiveClientCache.java b/src/hcatalog/core/src/main/java/org/apache/hive/hcatalog/common/HiveClientCache.java
+index 8f89293..68f5e8f 100644
+--- a/src/hcatalog/core/src/main/java/org/apache/hive/hcatalog/common/HiveClientCache.java
++++ b/src/hcatalog/core/src/main/java/org/apache/hive/hcatalog/common/HiveClientCache.java
+@@ -27,7 +27,6 @@
+ import org.apache.hadoop.hive.conf.HiveConf;
+ import org.apache.hadoop.hive.metastore.HiveMetaStoreClient;
+ import org.apache.hadoop.hive.metastore.api.MetaException;
+-import org.apache.hadoop.hive.metastore.api.NoSuchObjectException;
+ import org.apache.hadoop.hive.shims.ShimLoader;
+ import org.apache.hadoop.security.UserGroupInformation;
+ import org.apache.thrift.TException;
+-- 
+1.7.0.4
+

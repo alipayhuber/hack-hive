@@ -1,0 +1,105 @@
+From cfe037d517a0cd60832b19c247f997358897c291 Mon Sep 17 00:00:00 2001
+From: Xuefu Zhang <xuefu@apache.org>
+Date: Sat, 21 Dec 2013 01:58:49 +0000
+Subject: [PATCH 209/375] HIVE-5992: Hive inconsistently converts timestamp in AVG and SUM UDAF's (reviewed by Prasad)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1552860 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../hadoop/hive/ql/udf/generic/GenericUDAFSum.java |   12 ++++++------
+ ql/src/test/queries/clientpositive/timestamp_3.q   |    2 ++
+ .../test/results/clientpositive/timestamp_3.q.out  |   10 ++++++++++
+ 3 files changed, 18 insertions(+), 6 deletions(-)
+
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDAFSum.java b/src/ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDAFSum.java
+index 58685f0..8508ffb 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDAFSum.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDAFSum.java
+@@ -50,7 +50,7 @@
+ 
+   @Override
+   public GenericUDAFEvaluator getEvaluator(TypeInfo[] parameters)
+-    throws SemanticException {
++      throws SemanticException {
+     if (parameters.length != 1) {
+       throw new UDFArgumentTypeException(parameters.length - 1,
+           "Exactly one argument is expected.");
+@@ -59,15 +59,15 @@ public GenericUDAFEvaluator getEvaluator(TypeInfo[] parameters)
+     if (parameters[0].getCategory() != ObjectInspector.Category.PRIMITIVE) {
+       throw new UDFArgumentTypeException(0,
+           "Only primitive type arguments are accepted but "
+-          + parameters[0].getTypeName() + " is passed.");
++              + parameters[0].getTypeName() + " is passed.");
+     }
+     switch (((PrimitiveTypeInfo) parameters[0]).getPrimitiveCategory()) {
+     case BYTE:
+     case SHORT:
+     case INT:
+     case LONG:
+-    case TIMESTAMP:
+       return new GenericUDAFSumLong();
++    case TIMESTAMP:
+     case FLOAT:
+     case DOUBLE:
+     case STRING:
+@@ -81,7 +81,7 @@ public GenericUDAFEvaluator getEvaluator(TypeInfo[] parameters)
+     default:
+       throw new UDFArgumentTypeException(0,
+           "Only numeric or string type arguments are accepted but "
+-          + parameters[0].getTypeName() + " is passed.");
++              + parameters[0].getTypeName() + " is passed.");
+     }
+   }
+ 
+@@ -145,7 +145,7 @@ public void iterate(AggregationBuffer agg, Object[] parameters) throws HiveExcep
+           LOG.warn(getClass().getSimpleName() + " "
+               + StringUtils.stringifyException(e));
+           LOG
+-              .warn(getClass().getSimpleName()
++          .warn(getClass().getSimpleName()
+               + " ignoring similar exceptions.");
+         }
+       }
+@@ -234,7 +234,7 @@ public void iterate(AggregationBuffer agg, Object[] parameters) throws HiveExcep
+           LOG.warn(getClass().getSimpleName() + " "
+               + StringUtils.stringifyException(e));
+           LOG
+-              .warn(getClass().getSimpleName()
++          .warn(getClass().getSimpleName()
+               + " ignoring similar exceptions.");
+         }
+       }
+diff --git a/src/ql/src/test/queries/clientpositive/timestamp_3.q b/src/ql/src/test/queries/clientpositive/timestamp_3.q
+index cda724f..fb3c1be 100644
+--- a/src/ql/src/test/queries/clientpositive/timestamp_3.q
++++ b/src/ql/src/test/queries/clientpositive/timestamp_3.q
+@@ -14,4 +14,6 @@ select cast(t as float) from timestamp_3 limit 1;
+ select cast(t as double) from timestamp_3 limit 1;
+ select cast(t as string) from timestamp_3 limit 1;
+ 
++select t, sum(t), count(*), sum(t)/count(*), avg(t) from timestamp_3 group by t;
++
+ drop table timestamp_3;
+diff --git a/src/ql/src/test/results/clientpositive/timestamp_3.q.out b/src/ql/src/test/results/clientpositive/timestamp_3.q.out
+index 0a042fb..859f997 100644
+--- a/src/ql/src/test/results/clientpositive/timestamp_3.q.out
++++ b/src/ql/src/test/results/clientpositive/timestamp_3.q.out
+@@ -106,6 +106,16 @@ POSTHOOK: Input: default@timestamp_3
+ #### A masked pattern was here ####
+ POSTHOOK: Lineage: timestamp_3.t EXPRESSION []
+ 2011-04-29 20:46:56.4485
++PREHOOK: query: select t, sum(t), count(*), sum(t)/count(*), avg(t) from timestamp_3 group by t
++PREHOOK: type: QUERY
++PREHOOK: Input: default@timestamp_3
++#### A masked pattern was here ####
++POSTHOOK: query: select t, sum(t), count(*), sum(t)/count(*), avg(t) from timestamp_3 group by t
++POSTHOOK: type: QUERY
++POSTHOOK: Input: default@timestamp_3
++#### A masked pattern was here ####
++POSTHOOK: Lineage: timestamp_3.t EXPRESSION []
++2011-04-29 20:46:56.4485	1.3041352164485E9	1	1.3041352164485E9	1.3041352164485E9
+ PREHOOK: query: drop table timestamp_3
+ PREHOOK: type: DROPTABLE
+ PREHOOK: Input: default@timestamp_3
+-- 
+1.7.0.4
+

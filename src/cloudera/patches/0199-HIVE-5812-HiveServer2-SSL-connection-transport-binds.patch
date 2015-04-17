@@ -1,0 +1,72 @@
+From 653a8330926eff8811449359a39f2959e758a8f9 Mon Sep 17 00:00:00 2001
+From: Brock Noland <brock@apache.org>
+Date: Tue, 17 Dec 2013 15:19:31 +0000
+Subject: [PATCH 199/375] HIVE-5812 - HiveServer2 SSL connection transport binds to loopback address by default (Prasad Mujumdar via Brock Noland)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1551568 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../java/org/apache/hive/jdbc/HiveConnection.java  |   13 ++++++++++++-
+ .../apache/hive/service/auth/HiveAuthFactory.java  |    9 +++++++--
+ 2 files changed, 19 insertions(+), 3 deletions(-)
+
+diff --git a/src/jdbc/src/java/org/apache/hive/jdbc/HiveConnection.java b/src/jdbc/src/java/org/apache/hive/jdbc/HiveConnection.java
+index c38dd5c..e689a23 100644
+--- a/src/jdbc/src/java/org/apache/hive/jdbc/HiveConnection.java
++++ b/src/jdbc/src/java/org/apache/hive/jdbc/HiveConnection.java
+@@ -43,6 +43,7 @@
+ import java.util.Map.Entry;
+ import java.util.Properties;
+ import java.util.concurrent.Executor;
++import java.util.concurrent.TimeUnit;
+ 
+ import javax.security.sasl.Sasl;
+ import javax.security.sasl.SaslException;
+@@ -109,7 +110,7 @@
+   private int loginTimeout = 0;
+ 
+   public HiveConnection(String uri, Properties info) throws SQLException {
+-    loginTimeout = DriverManager.getLoginTimeout();
++    setupLoginTimeout();
+     jdbcURI = uri;
+     // parse the connection uri
+     Utils.JdbcConnectionParams connParams;
+@@ -390,6 +391,16 @@ private String getSessionValue(String varName, String varDefault) {
+     return varValue;
+   }
+ 
++  // copy loginTimeout from driver manager. Thrift timeout needs to be in millis
++  private void setupLoginTimeout() {
++    long timeOut = TimeUnit.SECONDS.toMillis(DriverManager.getLoginTimeout());
++    if (timeOut > Integer.MAX_VALUE) {
++      loginTimeout = Integer.MAX_VALUE;
++    } else {
++      loginTimeout = (int) timeOut;
++    }
++  }
++
+   public void abort(Executor executor) throws SQLException {
+     // JDK 1.7
+     throw new SQLException("Method not supported");
+diff --git a/src/service/src/java/org/apache/hive/service/auth/HiveAuthFactory.java b/src/service/src/java/org/apache/hive/service/auth/HiveAuthFactory.java
+index 1df6556..30b0c35 100644
+--- a/src/service/src/java/org/apache/hive/service/auth/HiveAuthFactory.java
++++ b/src/service/src/java/org/apache/hive/service/auth/HiveAuthFactory.java
+@@ -210,8 +210,13 @@ public static TServerSocket getServerSSLSocket(String hiveHost, int portNum,
+         new TSSLTransportFactory.TSSLTransportParameters();
+     params.setKeyStore(keyStorePath, keyStorePassWord);
+ 
+-    return TSSLTransportFactory.getServerSocket(portNum, 10000,
+-        InetAddress.getByName(hiveHost), params);
++    InetAddress serverAddress;
++    if (hiveHost == null || hiveHost.isEmpty()) {
++      serverAddress = InetAddress.getLocalHost();
++    } else {
++      serverAddress = InetAddress.getByName(hiveHost);
++    }
++    return TSSLTransportFactory.getServerSocket(portNum, 10000, serverAddress, params);
+   }
+ 
+   // retrieve delegation token for the given user
+-- 
+1.7.0.4
+

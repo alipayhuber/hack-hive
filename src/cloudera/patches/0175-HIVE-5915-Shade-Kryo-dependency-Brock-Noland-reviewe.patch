@@ -1,0 +1,30 @@
+From 37fdacb16f8900c4582781efc9c66dfaad36c93f Mon Sep 17 00:00:00 2001
+From: Brock Noland <brock@apache.org>
+Date: Wed, 4 Dec 2013 14:50:55 +0000
+Subject: [PATCH 175/375] HIVE-5915 - Shade Kryo dependency (Brock Noland reviewed by Ashutosh Chauhan)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1547812 13f79535-47bb-0310-9956-ffa450edef68
+---
+ ql/pom.xml |    6 ++++++
+ 1 files changed, 6 insertions(+), 0 deletions(-)
+
+diff --git a/src/ql/pom.xml b/src/ql/pom.xml
+index 66bf919..89aa14c 100644
+--- a/src/ql/pom.xml
++++ b/src/ql/pom.xml
+@@ -357,6 +357,12 @@
+                   <include>com.google.guava:guava</include>
+                 </includes>
+               </artifactSet>
++              <relocations>
++                <relocation>
++                  <pattern>com.esotericsoftware</pattern>
++                  <shadedPattern>org.apache.hive.com.esotericsoftware</shadedPattern>
++                </relocation>
++              </relocations>
+             </configuration>
+           </execution>
+         </executions>
+-- 
+1.7.0.4
+

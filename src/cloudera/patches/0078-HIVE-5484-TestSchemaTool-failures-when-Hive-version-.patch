@@ -1,0 +1,29 @@
+From e4079c1395e29d6b03aca22d3cb2144b500b9f86 Mon Sep 17 00:00:00 2001
+From: Ashutosh Chauhan <hashutosh@apache.org>
+Date: Wed, 9 Oct 2013 15:52:28 +0000
+Subject: [PATCH 078/375] HIVE-5484 : TestSchemaTool failures when Hive version has more than 3 revision numbers (Jason Dere via Ashutosh Chauhan)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1530688 13f79535-47bb-0310-9956-ffa450edef68
+---
+ common/build.xml |    5 +++++
+ 1 files changed, 5 insertions(+), 0 deletions(-)
+
+diff --git a/src/common/build.xml b/src/common/build.xml
+index 22684b0..1d42451 100755
+--- a/src/common/build.xml
++++ b/src/common/build.xml
+@@ -30,6 +30,11 @@ to call at top-level: ant deploy-contrib compile-core-test
+ 
+   <target name="compile" depends="init, setup, ivy-retrieve">
+     <echo message="Project: ${ant.project.name}"/>
++    <!-- Restrict short version to just major.minor.change numbers -->
++    <propertyregex property="shortversion"
++      input="${version}" regexp="^([0-9]+\.[0-9]+\.[0-9]+)"
++      select="\1" defaultValue="${version}"
++    />
+     <exec executable="bash" failonerror="true">
+       <arg value="${basedir}/src/scripts/saveVersion.sh"/>
+       <arg value="${version}"/>
+-- 
+1.7.0.4
+

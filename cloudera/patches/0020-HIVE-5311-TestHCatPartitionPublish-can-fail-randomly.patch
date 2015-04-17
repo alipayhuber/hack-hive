@@ -1,0 +1,74 @@
+From fcf337d0329945cf791d6c2d85ba9bffd6de86b6 Mon Sep 17 00:00:00 2001
+From: Ashutosh Chauhan <hashutosh@apache.org>
+Date: Wed, 18 Sep 2013 18:19:05 +0000
+Subject: [PATCH 020/375] HIVE-5311 : TestHCatPartitionPublish can fail randomly (Brock Noland via Ashutosh Chauhan)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1524515 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../mapreduce/TestHCatPartitionPublish.java        |    5 ++++-
+ .../mapreduce/TestHCatPartitionPublish.java        |    5 ++++-
+ 2 files changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/src/hcatalog/core/src/test/java/org/apache/hcatalog/mapreduce/TestHCatPartitionPublish.java b/src/hcatalog/core/src/test/java/org/apache/hcatalog/mapreduce/TestHCatPartitionPublish.java
+index 7bd1b4d..9a8f3c0 100644
+--- a/src/hcatalog/core/src/test/java/org/apache/hcatalog/mapreduce/TestHCatPartitionPublish.java
++++ b/src/hcatalog/core/src/test/java/org/apache/hcatalog/mapreduce/TestHCatPartitionPublish.java
+@@ -70,7 +70,7 @@
+   private static FileSystem fs = null;
+   private static MiniMRCluster mrCluster = null;
+   private static boolean isServerRunning = false;
+-  private static final int msPort = 20101;
++  private static int msPort;
+   private static HiveConf hcatConf;
+   private static HiveMetaStoreClient msc;
+   private static SecurityManager securityManager;
+@@ -94,6 +94,8 @@ public static void setup() throws Exception {
+       return;
+     }
+ 
++    msPort = MetaStoreUtils.findFreePort();
++
+     MetaStoreUtils.startMetaStore(msPort, ShimLoader
+         .getHadoopThriftAuthBridge());
+     isServerRunning = true;
+@@ -106,6 +108,7 @@ public static void setup() throws Exception {
+         + msPort);
+     hcatConf.setIntVar(HiveConf.ConfVars.METASTORETHRIFTCONNECTIONRETRIES, 3);
+     hcatConf.setIntVar(HiveConf.ConfVars.METASTORETHRIFTFAILURERETRIES, 3);
++    hcatConf.setIntVar(HiveConf.ConfVars.METASTORE_CLIENT_SOCKET_TIMEOUT, 120);
+     hcatConf.set(HiveConf.ConfVars.SEMANTIC_ANALYZER_HOOK.varname,
+         HCatSemanticAnalyzer.class.getName());
+     hcatConf.set(HiveConf.ConfVars.PREEXECHOOKS.varname, "");
+diff --git a/src/hcatalog/core/src/test/java/org/apache/hive/hcatalog/mapreduce/TestHCatPartitionPublish.java b/src/hcatalog/core/src/test/java/org/apache/hive/hcatalog/mapreduce/TestHCatPartitionPublish.java
+index 383a7a2..cebc840 100644
+--- a/src/hcatalog/core/src/test/java/org/apache/hive/hcatalog/mapreduce/TestHCatPartitionPublish.java
++++ b/src/hcatalog/core/src/test/java/org/apache/hive/hcatalog/mapreduce/TestHCatPartitionPublish.java
+@@ -70,7 +70,7 @@
+   private static FileSystem fs = null;
+   private static MiniMRCluster mrCluster = null;
+   private static boolean isServerRunning = false;
+-  private static final int msPort = 20101;
++  private static int msPort;
+   private static HiveConf hcatConf;
+   private static HiveMetaStoreClient msc;
+   private static SecurityManager securityManager;
+@@ -98,6 +98,8 @@ public static void setup() throws Exception {
+       return;
+     }
+ 
++    msPort = MetaStoreUtils.findFreePort();
++
+     MetaStoreUtils.startMetaStore(msPort, ShimLoader
+         .getHadoopThriftAuthBridge());
+     Thread.sleep(10000);
+@@ -111,6 +113,7 @@ public static void setup() throws Exception {
+         + msPort);
+     hcatConf.setIntVar(HiveConf.ConfVars.METASTORETHRIFTCONNECTIONRETRIES, 3);
+     hcatConf.setIntVar(HiveConf.ConfVars.METASTORETHRIFTFAILURERETRIES, 3);
++    hcatConf.setIntVar(HiveConf.ConfVars.METASTORE_CLIENT_SOCKET_TIMEOUT, 120);
+     hcatConf.set(HiveConf.ConfVars.SEMANTIC_ANALYZER_HOOK.varname,
+         HCatSemanticAnalyzer.class.getName());
+     hcatConf.set(HiveConf.ConfVars.PREEXECHOOKS.varname, "");
+-- 
+1.7.0.4
+

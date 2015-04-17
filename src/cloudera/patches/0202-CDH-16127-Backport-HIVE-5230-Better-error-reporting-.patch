@@ -1,0 +1,2384 @@
+From 47b28260e5811b00fa26ced50fa82339772de737 Mon Sep 17 00:00:00 2001
+From: Thejas Madhavan Nair <thejas@apache.org>
+Date: Wed, 18 Dec 2013 01:48:24 +0000
+Subject: [PATCH 202/375] CDH-16127: Backport HIVE-5230 : Better error reporting by async threads in HiveServer2 (Vaibhav Gumashta via Thejas Nair)
+
+---
+ .../java/org/apache/hive/jdbc/HiveConnection.java  |    5 +-
+ .../java/org/apache/hive/jdbc/HiveStatement.java   |    1 +
+ service/if/TCLIService.thrift                      |   24 ++-
+ .../src/gen/thrift/gen-cpp/TCLIService_types.cpp   |   54 +++-
+ service/src/gen/thrift/gen-cpp/TCLIService_types.h |   52 +++-
+ .../cli/thrift/TGetOperationStatusResp.java        |  323 +++++++++++++++++++-
+ .../hive/service/cli/thrift/TOpenSessionReq.java   |    4 +-
+ .../hive/service/cli/thrift/TOpenSessionResp.java  |    4 +-
+ .../hive/service/cli/thrift/TProtocolVersion.java  |    5 +-
+ .../src/gen/thrift/gen-py/TCLIService/ttypes.py    |   45 +++-
+ .../src/gen/thrift/gen-rb/t_c_l_i_service_types.rb |   17 +-
+ .../org/apache/hive/service/cli/CLIService.java    |   59 ++--
+ .../apache/hive/service/cli/CLIServiceClient.java  |  117 -------
+ .../hive/service/cli/EmbeddedCLIServiceClient.java |    4 +-
+ .../org/apache/hive/service/cli/ICLIService.java   |   20 +-
+ .../apache/hive/service/cli/OperationState.java    |    2 +-
+ .../apache/hive/service/cli/OperationStatus.java   |   43 +++
+ .../hive/service/cli/operation/Operation.java      |   18 +-
+ .../service/cli/operation/OperationManager.java    |   10 +-
+ .../hive/service/cli/operation/SQLOperation.java   |   18 +-
+ .../hive/service/cli/session/HiveSessionImpl.java  |    6 +-
+ .../hive/service/cli/session/SessionManager.java   |   21 +-
+ .../hive/service/cli/thrift/ThriftCLIService.java  |   18 +-
+ .../service/cli/thrift/ThriftCLIServiceClient.java |   11 +-
+ .../apache/hive/service/cli/CLIServiceTest.java    |  132 +++++---
+ .../service/cli/thrift/ThriftCLIServiceTest.java   |  137 ++++++++-
+ 26 files changed, 849 insertions(+), 301 deletions(-)
+ create mode 100644 service/src/java/org/apache/hive/service/cli/OperationStatus.java
+
+diff --git a/src/jdbc/src/java/org/apache/hive/jdbc/HiveConnection.java b/src/jdbc/src/java/org/apache/hive/jdbc/HiveConnection.java
+index e689a23..85b0604 100644
+--- a/src/jdbc/src/java/org/apache/hive/jdbc/HiveConnection.java
++++ b/src/jdbc/src/java/org/apache/hive/jdbc/HiveConnection.java
+@@ -155,6 +155,7 @@ public HiveConnection(String uri, Properties info) throws SQLException {
+     supportedProtocols.add(TProtocolVersion.HIVE_CLI_SERVICE_PROTOCOL_V2);
+     supportedProtocols.add(TProtocolVersion.HIVE_CLI_SERVICE_PROTOCOL_V3);
+     supportedProtocols.add(TProtocolVersion.HIVE_CLI_SERVICE_PROTOCOL_V4);
++    supportedProtocols.add(TProtocolVersion.HIVE_CLI_SERVICE_PROTOCOL_V5);
+ 
+     // open client session
+     openSession(connParams.getSessionVars());
+@@ -163,9 +164,7 @@ public HiveConnection(String uri, Properties info) throws SQLException {
+   }
+ 
+   private void openTransport() throws SQLException {
+-    transport = isHttpTransportMode() ?
+-        createHttpTransport() :
+-          createBinaryTransport();
++    transport = isHttpTransportMode() ? createHttpTransport() : createBinaryTransport();
+     TProtocol protocol = new TBinaryProtocol(transport);
+     client = new TCLIService.Client(protocol);
+     try {
+diff --git a/src/jdbc/src/java/org/apache/hive/jdbc/HiveStatement.java b/src/jdbc/src/java/org/apache/hive/jdbc/HiveStatement.java
+index 4a5be25..6460924 100644
+--- a/src/jdbc/src/java/org/apache/hive/jdbc/HiveStatement.java
++++ b/src/jdbc/src/java/org/apache/hive/jdbc/HiveStatement.java
+@@ -240,6 +240,7 @@ public boolean execute(String sql) throws SQLException {
+             case UKNOWN_STATE:
+               throw new SQLException("Unknown query", "HY000");
+             case INITIALIZED_STATE:
++            case PENDING_STATE:
+             case RUNNING_STATE:
+               break;
+             }
+diff --git a/src/service/if/TCLIService.thrift b/src/service/if/TCLIService.thrift
+index f32346a..53ea3cf 100644
+--- a/src/service/if/TCLIService.thrift
++++ b/src/service/if/TCLIService.thrift
+@@ -48,6 +48,9 @@ enum TProtocolVersion {
+ 
+   // V4 add decimal precision/scale, char type
+   HIVE_CLI_SERVICE_PROTOCOL_V4
++
++  // V5 adds error details when GetOperationStatus returns in error state
++  HIVE_CLI_SERVICE_PROTOCOL_V5
+ }
+ 
+ enum TTypeId {
+@@ -389,12 +392,11 @@ enum TOperationState {
+ 
+   // The operation is in an unrecognized state
+   UKNOWN_STATE,
+-  
++
+   // The operation is in an pending state
+   PENDING_STATE,
+ }
+ 
+-
+ // A string identifier. This is interpreted literally.
+ typedef string TIdentifier
+ 
+@@ -485,11 +487,11 @@ struct TOperationHandle {
+ // OpenSession()
+ //
+ // Open a session (connection) on the server against
+-// which operations may be executed. 
++// which operations may be executed.
+ struct TOpenSessionReq {
+   // The version of the HiveServer2 protocol that the client is using.
+-  1: required TProtocolVersion client_protocol = TProtocolVersion.HIVE_CLI_SERVICE_PROTOCOL_V3
+-  
++  1: required TProtocolVersion client_protocol = TProtocolVersion.HIVE_CLI_SERVICE_PROTOCOL_V5
++
+   // Username and password for authentication.
+   // Depending on the authentication scheme being used,
+   // this information may instead be provided by a lower
+@@ -507,7 +509,7 @@ struct TOpenSessionResp {
+   1: required TStatus status
+ 
+   // The protocol version that the server is using.
+-  2: required TProtocolVersion serverProtocolVersion = TProtocolVersion.HIVE_CLI_SERVICE_PROTOCOL_V4
++  2: required TProtocolVersion serverProtocolVersion = TProtocolVersion.HIVE_CLI_SERVICE_PROTOCOL_V5
+ 
+   // Session Handle
+   3: optional TSessionHandle sessionHandle
+@@ -904,6 +906,16 @@ struct TGetOperationStatusReq {
+ struct TGetOperationStatusResp {
+   1: required TStatus status
+   2: optional TOperationState operationState
++
++  // If operationState is ERROR_STATE, then the following fields may be set
++  // sqlState as defined in the ISO/IEF CLI specification
++  3: optional string sqlState
++
++  // Internal error code
++  4: optional i32 errorCode
++
++  // Error message
++  5: optional string errorMessage
+ }
+ 
+ 
+diff --git a/src/service/src/gen/thrift/gen-cpp/TCLIService_types.cpp b/src/service/src/gen/thrift/gen-cpp/TCLIService_types.cpp
+index 798be08..ee21324 100644
+--- a/src/service/src/gen/thrift/gen-cpp/TCLIService_types.cpp
++++ b/src/service/src/gen/thrift/gen-cpp/TCLIService_types.cpp
+@@ -14,15 +14,17 @@ int _kTProtocolVersionValues[] = {
+   TProtocolVersion::HIVE_CLI_SERVICE_PROTOCOL_V1,
+   TProtocolVersion::HIVE_CLI_SERVICE_PROTOCOL_V2,
+   TProtocolVersion::HIVE_CLI_SERVICE_PROTOCOL_V3,
+-  TProtocolVersion::HIVE_CLI_SERVICE_PROTOCOL_V4
++  TProtocolVersion::HIVE_CLI_SERVICE_PROTOCOL_V4,
++  TProtocolVersion::HIVE_CLI_SERVICE_PROTOCOL_V5
+ };
+ const char* _kTProtocolVersionNames[] = {
+   "HIVE_CLI_SERVICE_PROTOCOL_V1",
+   "HIVE_CLI_SERVICE_PROTOCOL_V2",
+   "HIVE_CLI_SERVICE_PROTOCOL_V3",
+-  "HIVE_CLI_SERVICE_PROTOCOL_V4"
++  "HIVE_CLI_SERVICE_PROTOCOL_V4",
++  "HIVE_CLI_SERVICE_PROTOCOL_V5"
+ };
+-const std::map<int, const char*> _TProtocolVersion_VALUES_TO_NAMES(::apache::thrift::TEnumIterator(4, _kTProtocolVersionValues, _kTProtocolVersionNames), ::apache::thrift::TEnumIterator(-1, NULL, NULL));
++const std::map<int, const char*> _TProtocolVersion_VALUES_TO_NAMES(::apache::thrift::TEnumIterator(5, _kTProtocolVersionValues, _kTProtocolVersionNames), ::apache::thrift::TEnumIterator(-1, NULL, NULL));
+ 
+ int _kTTypeIdValues[] = {
+   TTypeId::BOOLEAN_TYPE,
+@@ -4936,8 +4938,8 @@ void swap(TGetOperationStatusReq &a, TGetOperationStatusReq &b) {
+   swap(a.operationHandle, b.operationHandle);
+ }
+ 
+-const char* TGetOperationStatusResp::ascii_fingerprint = "4F27EC6715D9B6D702A4842459E6587B";
+-const uint8_t TGetOperationStatusResp::binary_fingerprint[16] = {0x4F,0x27,0xEC,0x67,0x15,0xD9,0xB6,0xD7,0x02,0xA4,0x84,0x24,0x59,0xE6,0x58,0x7B};
++const char* TGetOperationStatusResp::ascii_fingerprint = "BD124DB87A5A2E7D11945BD1B17F013D";
++const uint8_t TGetOperationStatusResp::binary_fingerprint[16] = {0xBD,0x12,0x4D,0xB8,0x7A,0x5A,0x2E,0x7D,0x11,0x94,0x5B,0xD1,0xB1,0x7F,0x01,0x3D};
+ 
+ uint32_t TGetOperationStatusResp::read(::apache::thrift::protocol::TProtocol* iprot) {
+ 
+@@ -4978,6 +4980,30 @@ uint32_t TGetOperationStatusResp::read(::apache::thrift::protocol::TProtocol* ip
+           xfer += iprot->skip(ftype);
+         }
+         break;
++      case 3:
++        if (ftype == ::apache::thrift::protocol::T_STRING) {
++          xfer += iprot->readString(this->sqlState);
++          this->__isset.sqlState = true;
++        } else {
++          xfer += iprot->skip(ftype);
++        }
++        break;
++      case 4:
++        if (ftype == ::apache::thrift::protocol::T_I32) {
++          xfer += iprot->readI32(this->errorCode);
++          this->__isset.errorCode = true;
++        } else {
++          xfer += iprot->skip(ftype);
++        }
++        break;
++      case 5:
++        if (ftype == ::apache::thrift::protocol::T_STRING) {
++          xfer += iprot->readString(this->errorMessage);
++          this->__isset.errorMessage = true;
++        } else {
++          xfer += iprot->skip(ftype);
++        }
++        break;
+       default:
+         xfer += iprot->skip(ftype);
+         break;
+@@ -5005,6 +5031,21 @@ uint32_t TGetOperationStatusResp::write(::apache::thrift::protocol::TProtocol* o
+     xfer += oprot->writeI32((int32_t)this->operationState);
+     xfer += oprot->writeFieldEnd();
+   }
++  if (this->__isset.sqlState) {
++    xfer += oprot->writeFieldBegin("sqlState", ::apache::thrift::protocol::T_STRING, 3);
++    xfer += oprot->writeString(this->sqlState);
++    xfer += oprot->writeFieldEnd();
++  }
++  if (this->__isset.errorCode) {
++    xfer += oprot->writeFieldBegin("errorCode", ::apache::thrift::protocol::T_I32, 4);
++    xfer += oprot->writeI32(this->errorCode);
++    xfer += oprot->writeFieldEnd();
++  }
++  if (this->__isset.errorMessage) {
++    xfer += oprot->writeFieldBegin("errorMessage", ::apache::thrift::protocol::T_STRING, 5);
++    xfer += oprot->writeString(this->errorMessage);
++    xfer += oprot->writeFieldEnd();
++  }
+   xfer += oprot->writeFieldStop();
+   xfer += oprot->writeStructEnd();
+   return xfer;
+@@ -5014,6 +5055,9 @@ void swap(TGetOperationStatusResp &a, TGetOperationStatusResp &b) {
+   using ::std::swap;
+   swap(a.status, b.status);
+   swap(a.operationState, b.operationState);
++  swap(a.sqlState, b.sqlState);
++  swap(a.errorCode, b.errorCode);
++  swap(a.errorMessage, b.errorMessage);
+   swap(a.__isset, b.__isset);
+ }
+ 
+diff --git a/src/service/src/gen/thrift/gen-cpp/TCLIService_types.h b/src/service/src/gen/thrift/gen-cpp/TCLIService_types.h
+index 6c50f4a..70ad814 100644
+--- a/src/service/src/gen/thrift/gen-cpp/TCLIService_types.h
++++ b/src/service/src/gen/thrift/gen-cpp/TCLIService_types.h
+@@ -21,7 +21,8 @@ struct TProtocolVersion {
+     HIVE_CLI_SERVICE_PROTOCOL_V1 = 0,
+     HIVE_CLI_SERVICE_PROTOCOL_V2 = 1,
+     HIVE_CLI_SERVICE_PROTOCOL_V3 = 2,
+-    HIVE_CLI_SERVICE_PROTOCOL_V4 = 3
++    HIVE_CLI_SERVICE_PROTOCOL_V4 = 3,
++    HIVE_CLI_SERVICE_PROTOCOL_V5 = 4
+   };
+ };
+ 
+@@ -1583,8 +1584,8 @@ class TOpenSessionReq {
+   static const char* ascii_fingerprint; // = "C8FD0F306A16C16BDA7B57F58BFAE5B2";
+   static const uint8_t binary_fingerprint[16]; // = {0xC8,0xFD,0x0F,0x30,0x6A,0x16,0xC1,0x6B,0xDA,0x7B,0x57,0xF5,0x8B,0xFA,0xE5,0xB2};
+ 
+-  TOpenSessionReq() : client_protocol((TProtocolVersion::type)2), username(), password() {
+-    client_protocol = (TProtocolVersion::type)2;
++  TOpenSessionReq() : client_protocol((TProtocolVersion::type)4), username(), password() {
++    client_protocol = (TProtocolVersion::type)4;
+ 
+   }
+ 
+@@ -1659,8 +1660,8 @@ class TOpenSessionResp {
+   static const char* ascii_fingerprint; // = "CFE7D7F4E9EC671F2518ED74FEE9F163";
+   static const uint8_t binary_fingerprint[16]; // = {0xCF,0xE7,0xD7,0xF4,0xE9,0xEC,0x67,0x1F,0x25,0x18,0xED,0x74,0xFE,0xE9,0xF1,0x63};
+ 
+-  TOpenSessionResp() : serverProtocolVersion((TProtocolVersion::type)3) {
+-    serverProtocolVersion = (TProtocolVersion::type)3;
++  TOpenSessionResp() : serverProtocolVersion((TProtocolVersion::type)4) {
++    serverProtocolVersion = (TProtocolVersion::type)4;
+ 
+   }
+ 
+@@ -2916,23 +2917,29 @@ class TGetOperationStatusReq {
+ void swap(TGetOperationStatusReq &a, TGetOperationStatusReq &b);
+ 
+ typedef struct _TGetOperationStatusResp__isset {
+-  _TGetOperationStatusResp__isset() : operationState(false) {}
++  _TGetOperationStatusResp__isset() : operationState(false), sqlState(false), errorCode(false), errorMessage(false) {}
+   bool operationState;
++  bool sqlState;
++  bool errorCode;
++  bool errorMessage;
+ } _TGetOperationStatusResp__isset;
+ 
+ class TGetOperationStatusResp {
+  public:
+ 
+-  static const char* ascii_fingerprint; // = "4F27EC6715D9B6D702A4842459E6587B";
+-  static const uint8_t binary_fingerprint[16]; // = {0x4F,0x27,0xEC,0x67,0x15,0xD9,0xB6,0xD7,0x02,0xA4,0x84,0x24,0x59,0xE6,0x58,0x7B};
++  static const char* ascii_fingerprint; // = "BD124DB87A5A2E7D11945BD1B17F013D";
++  static const uint8_t binary_fingerprint[16]; // = {0xBD,0x12,0x4D,0xB8,0x7A,0x5A,0x2E,0x7D,0x11,0x94,0x5B,0xD1,0xB1,0x7F,0x01,0x3D};
+ 
+-  TGetOperationStatusResp() : operationState((TOperationState::type)0) {
++  TGetOperationStatusResp() : operationState((TOperationState::type)0), sqlState(), errorCode(0), errorMessage() {
+   }
+ 
+   virtual ~TGetOperationStatusResp() throw() {}
+ 
+   TStatus status;
+   TOperationState::type operationState;
++  std::string sqlState;
++  int32_t errorCode;
++  std::string errorMessage;
+ 
+   _TGetOperationStatusResp__isset __isset;
+ 
+@@ -2945,6 +2952,21 @@ class TGetOperationStatusResp {
+     __isset.operationState = true;
+   }
+ 
++  void __set_sqlState(const std::string& val) {
++    sqlState = val;
++    __isset.sqlState = true;
++  }
++
++  void __set_errorCode(const int32_t val) {
++    errorCode = val;
++    __isset.errorCode = true;
++  }
++
++  void __set_errorMessage(const std::string& val) {
++    errorMessage = val;
++    __isset.errorMessage = true;
++  }
++
+   bool operator == (const TGetOperationStatusResp & rhs) const
+   {
+     if (!(status == rhs.status))
+@@ -2953,6 +2975,18 @@ class TGetOperationStatusResp {
+       return false;
+     else if (__isset.operationState && !(operationState == rhs.operationState))
+       return false;
++    if (__isset.sqlState != rhs.__isset.sqlState)
++      return false;
++    else if (__isset.sqlState && !(sqlState == rhs.sqlState))
++      return false;
++    if (__isset.errorCode != rhs.__isset.errorCode)
++      return false;
++    else if (__isset.errorCode && !(errorCode == rhs.errorCode))
++      return false;
++    if (__isset.errorMessage != rhs.__isset.errorMessage)
++      return false;
++    else if (__isset.errorMessage && !(errorMessage == rhs.errorMessage))
++      return false;
+     return true;
+   }
+   bool operator != (const TGetOperationStatusResp &rhs) const {
+diff --git a/src/service/src/gen/thrift/gen-javabean/org/apache/hive/service/cli/thrift/TGetOperationStatusResp.java b/src/service/src/gen/thrift/gen-javabean/org/apache/hive/service/cli/thrift/TGetOperationStatusResp.java
+index b5c3f01..94ba6bb 100644
+--- a/src/service/src/gen/thrift/gen-javabean/org/apache/hive/service/cli/thrift/TGetOperationStatusResp.java
++++ b/src/service/src/gen/thrift/gen-javabean/org/apache/hive/service/cli/thrift/TGetOperationStatusResp.java
+@@ -36,6 +36,9 @@
+ 
+   private static final org.apache.thrift.protocol.TField STATUS_FIELD_DESC = new org.apache.thrift.protocol.TField("status", org.apache.thrift.protocol.TType.STRUCT, (short)1);
+   private static final org.apache.thrift.protocol.TField OPERATION_STATE_FIELD_DESC = new org.apache.thrift.protocol.TField("operationState", org.apache.thrift.protocol.TType.I32, (short)2);
++  private static final org.apache.thrift.protocol.TField SQL_STATE_FIELD_DESC = new org.apache.thrift.protocol.TField("sqlState", org.apache.thrift.protocol.TType.STRING, (short)3);
++  private static final org.apache.thrift.protocol.TField ERROR_CODE_FIELD_DESC = new org.apache.thrift.protocol.TField("errorCode", org.apache.thrift.protocol.TType.I32, (short)4);
++  private static final org.apache.thrift.protocol.TField ERROR_MESSAGE_FIELD_DESC = new org.apache.thrift.protocol.TField("errorMessage", org.apache.thrift.protocol.TType.STRING, (short)5);
+ 
+   private static final Map<Class<? extends IScheme>, SchemeFactory> schemes = new HashMap<Class<? extends IScheme>, SchemeFactory>();
+   static {
+@@ -45,6 +48,9 @@
+ 
+   private TStatus status; // required
+   private TOperationState operationState; // optional
++  private String sqlState; // optional
++  private int errorCode; // optional
++  private String errorMessage; // optional
+ 
+   /** The set of fields this struct contains, along with convenience methods for finding and manipulating them. */
+   public enum _Fields implements org.apache.thrift.TFieldIdEnum {
+@@ -53,7 +59,10 @@
+      * 
+      * @see TOperationState
+      */
+-    OPERATION_STATE((short)2, "operationState");
++    OPERATION_STATE((short)2, "operationState"),
++    SQL_STATE((short)3, "sqlState"),
++    ERROR_CODE((short)4, "errorCode"),
++    ERROR_MESSAGE((short)5, "errorMessage");
+ 
+     private static final Map<String, _Fields> byName = new HashMap<String, _Fields>();
+ 
+@@ -72,6 +81,12 @@ public static _Fields findByThriftId(int fieldId) {
+           return STATUS;
+         case 2: // OPERATION_STATE
+           return OPERATION_STATE;
++        case 3: // SQL_STATE
++          return SQL_STATE;
++        case 4: // ERROR_CODE
++          return ERROR_CODE;
++        case 5: // ERROR_MESSAGE
++          return ERROR_MESSAGE;
+         default:
+           return null;
+       }
+@@ -112,7 +127,9 @@ public String getFieldName() {
+   }
+ 
+   // isset id assignments
+-  private _Fields optionals[] = {_Fields.OPERATION_STATE};
++  private static final int __ERRORCODE_ISSET_ID = 0;
++  private byte __isset_bitfield = 0;
++  private _Fields optionals[] = {_Fields.OPERATION_STATE,_Fields.SQL_STATE,_Fields.ERROR_CODE,_Fields.ERROR_MESSAGE};
+   public static final Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> metaDataMap;
+   static {
+     Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> tmpMap = new EnumMap<_Fields, org.apache.thrift.meta_data.FieldMetaData>(_Fields.class);
+@@ -120,6 +137,12 @@ public String getFieldName() {
+         new org.apache.thrift.meta_data.StructMetaData(org.apache.thrift.protocol.TType.STRUCT, TStatus.class)));
+     tmpMap.put(_Fields.OPERATION_STATE, new org.apache.thrift.meta_data.FieldMetaData("operationState", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
+         new org.apache.thrift.meta_data.EnumMetaData(org.apache.thrift.protocol.TType.ENUM, TOperationState.class)));
++    tmpMap.put(_Fields.SQL_STATE, new org.apache.thrift.meta_data.FieldMetaData("sqlState", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
++        new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.STRING)));
++    tmpMap.put(_Fields.ERROR_CODE, new org.apache.thrift.meta_data.FieldMetaData("errorCode", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
++        new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.I32)));
++    tmpMap.put(_Fields.ERROR_MESSAGE, new org.apache.thrift.meta_data.FieldMetaData("errorMessage", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
++        new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.STRING)));
+     metaDataMap = Collections.unmodifiableMap(tmpMap);
+     org.apache.thrift.meta_data.FieldMetaData.addStructMetaDataMap(TGetOperationStatusResp.class, metaDataMap);
+   }
+@@ -138,12 +161,20 @@ public TGetOperationStatusResp(
+    * Performs a deep copy on <i>other</i>.
+    */
+   public TGetOperationStatusResp(TGetOperationStatusResp other) {
++    __isset_bitfield = other.__isset_bitfield;
+     if (other.isSetStatus()) {
+       this.status = new TStatus(other.status);
+     }
+     if (other.isSetOperationState()) {
+       this.operationState = other.operationState;
+     }
++    if (other.isSetSqlState()) {
++      this.sqlState = other.sqlState;
++    }
++    this.errorCode = other.errorCode;
++    if (other.isSetErrorMessage()) {
++      this.errorMessage = other.errorMessage;
++    }
+   }
+ 
+   public TGetOperationStatusResp deepCopy() {
+@@ -154,6 +185,10 @@ public TGetOperationStatusResp deepCopy() {
+   public void clear() {
+     this.status = null;
+     this.operationState = null;
++    this.sqlState = null;
++    setErrorCodeIsSet(false);
++    this.errorCode = 0;
++    this.errorMessage = null;
+   }
+ 
+   public TStatus getStatus() {
+@@ -210,6 +245,74 @@ public void setOperationStateIsSet(boolean value) {
+     }
+   }
+ 
++  public String getSqlState() {
++    return this.sqlState;
++  }
++
++  public void setSqlState(String sqlState) {
++    this.sqlState = sqlState;
++  }
++
++  public void unsetSqlState() {
++    this.sqlState = null;
++  }
++
++  /** Returns true if field sqlState is set (has been assigned a value) and false otherwise */
++  public boolean isSetSqlState() {
++    return this.sqlState != null;
++  }
++
++  public void setSqlStateIsSet(boolean value) {
++    if (!value) {
++      this.sqlState = null;
++    }
++  }
++
++  public int getErrorCode() {
++    return this.errorCode;
++  }
++
++  public void setErrorCode(int errorCode) {
++    this.errorCode = errorCode;
++    setErrorCodeIsSet(true);
++  }
++
++  public void unsetErrorCode() {
++    __isset_bitfield = EncodingUtils.clearBit(__isset_bitfield, __ERRORCODE_ISSET_ID);
++  }
++
++  /** Returns true if field errorCode is set (has been assigned a value) and false otherwise */
++  public boolean isSetErrorCode() {
++    return EncodingUtils.testBit(__isset_bitfield, __ERRORCODE_ISSET_ID);
++  }
++
++  public void setErrorCodeIsSet(boolean value) {
++    __isset_bitfield = EncodingUtils.setBit(__isset_bitfield, __ERRORCODE_ISSET_ID, value);
++  }
++
++  public String getErrorMessage() {
++    return this.errorMessage;
++  }
++
++  public void setErrorMessage(String errorMessage) {
++    this.errorMessage = errorMessage;
++  }
++
++  public void unsetErrorMessage() {
++    this.errorMessage = null;
++  }
++
++  /** Returns true if field errorMessage is set (has been assigned a value) and false otherwise */
++  public boolean isSetErrorMessage() {
++    return this.errorMessage != null;
++  }
++
++  public void setErrorMessageIsSet(boolean value) {
++    if (!value) {
++      this.errorMessage = null;
++    }
++  }
++
+   public void setFieldValue(_Fields field, Object value) {
+     switch (field) {
+     case STATUS:
+@@ -228,6 +331,30 @@ public void setFieldValue(_Fields field, Object value) {
+       }
+       break;
+ 
++    case SQL_STATE:
++      if (value == null) {
++        unsetSqlState();
++      } else {
++        setSqlState((String)value);
++      }
++      break;
++
++    case ERROR_CODE:
++      if (value == null) {
++        unsetErrorCode();
++      } else {
++        setErrorCode((Integer)value);
++      }
++      break;
++
++    case ERROR_MESSAGE:
++      if (value == null) {
++        unsetErrorMessage();
++      } else {
++        setErrorMessage((String)value);
++      }
++      break;
++
+     }
+   }
+ 
+@@ -239,6 +366,15 @@ public Object getFieldValue(_Fields field) {
+     case OPERATION_STATE:
+       return getOperationState();
+ 
++    case SQL_STATE:
++      return getSqlState();
++
++    case ERROR_CODE:
++      return Integer.valueOf(getErrorCode());
++
++    case ERROR_MESSAGE:
++      return getErrorMessage();
++
+     }
+     throw new IllegalStateException();
+   }
+@@ -254,6 +390,12 @@ public boolean isSet(_Fields field) {
+       return isSetStatus();
+     case OPERATION_STATE:
+       return isSetOperationState();
++    case SQL_STATE:
++      return isSetSqlState();
++    case ERROR_CODE:
++      return isSetErrorCode();
++    case ERROR_MESSAGE:
++      return isSetErrorMessage();
+     }
+     throw new IllegalStateException();
+   }
+@@ -289,6 +431,33 @@ public boolean equals(TGetOperationStatusResp that) {
+         return false;
+     }
+ 
++    boolean this_present_sqlState = true && this.isSetSqlState();
++    boolean that_present_sqlState = true && that.isSetSqlState();
++    if (this_present_sqlState || that_present_sqlState) {
++      if (!(this_present_sqlState && that_present_sqlState))
++        return false;
++      if (!this.sqlState.equals(that.sqlState))
++        return false;
++    }
++
++    boolean this_present_errorCode = true && this.isSetErrorCode();
++    boolean that_present_errorCode = true && that.isSetErrorCode();
++    if (this_present_errorCode || that_present_errorCode) {
++      if (!(this_present_errorCode && that_present_errorCode))
++        return false;
++      if (this.errorCode != that.errorCode)
++        return false;
++    }
++
++    boolean this_present_errorMessage = true && this.isSetErrorMessage();
++    boolean that_present_errorMessage = true && that.isSetErrorMessage();
++    if (this_present_errorMessage || that_present_errorMessage) {
++      if (!(this_present_errorMessage && that_present_errorMessage))
++        return false;
++      if (!this.errorMessage.equals(that.errorMessage))
++        return false;
++    }
++
+     return true;
+   }
+ 
+@@ -306,6 +475,21 @@ public int hashCode() {
+     if (present_operationState)
+       builder.append(operationState.getValue());
+ 
++    boolean present_sqlState = true && (isSetSqlState());
++    builder.append(present_sqlState);
++    if (present_sqlState)
++      builder.append(sqlState);
++
++    boolean present_errorCode = true && (isSetErrorCode());
++    builder.append(present_errorCode);
++    if (present_errorCode)
++      builder.append(errorCode);
++
++    boolean present_errorMessage = true && (isSetErrorMessage());
++    builder.append(present_errorMessage);
++    if (present_errorMessage)
++      builder.append(errorMessage);
++
+     return builder.toHashCode();
+   }
+ 
+@@ -337,6 +521,36 @@ public int compareTo(TGetOperationStatusResp other) {
+         return lastComparison;
+       }
+     }
++    lastComparison = Boolean.valueOf(isSetSqlState()).compareTo(typedOther.isSetSqlState());
++    if (lastComparison != 0) {
++      return lastComparison;
++    }
++    if (isSetSqlState()) {
++      lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.sqlState, typedOther.sqlState);
++      if (lastComparison != 0) {
++        return lastComparison;
++      }
++    }
++    lastComparison = Boolean.valueOf(isSetErrorCode()).compareTo(typedOther.isSetErrorCode());
++    if (lastComparison != 0) {
++      return lastComparison;
++    }
++    if (isSetErrorCode()) {
++      lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.errorCode, typedOther.errorCode);
++      if (lastComparison != 0) {
++        return lastComparison;
++      }
++    }
++    lastComparison = Boolean.valueOf(isSetErrorMessage()).compareTo(typedOther.isSetErrorMessage());
++    if (lastComparison != 0) {
++      return lastComparison;
++    }
++    if (isSetErrorMessage()) {
++      lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.errorMessage, typedOther.errorMessage);
++      if (lastComparison != 0) {
++        return lastComparison;
++      }
++    }
+     return 0;
+   }
+ 
+@@ -374,6 +588,32 @@ public String toString() {
+       }
+       first = false;
+     }
++    if (isSetSqlState()) {
++      if (!first) sb.append(", ");
++      sb.append("sqlState:");
++      if (this.sqlState == null) {
++        sb.append("null");
++      } else {
++        sb.append(this.sqlState);
++      }
++      first = false;
++    }
++    if (isSetErrorCode()) {
++      if (!first) sb.append(", ");
++      sb.append("errorCode:");
++      sb.append(this.errorCode);
++      first = false;
++    }
++    if (isSetErrorMessage()) {
++      if (!first) sb.append(", ");
++      sb.append("errorMessage:");
++      if (this.errorMessage == null) {
++        sb.append("null");
++      } else {
++        sb.append(this.errorMessage);
++      }
++      first = false;
++    }
+     sb.append(")");
+     return sb.toString();
+   }
+@@ -400,6 +640,8 @@ private void writeObject(java.io.ObjectOutputStream out) throws java.io.IOExcept
+ 
+   private void readObject(java.io.ObjectInputStream in) throws java.io.IOException, ClassNotFoundException {
+     try {
++      // it doesn't seem like you should have to do this, but java serialization is wacky, and doesn't call the default constructor.
++      __isset_bitfield = 0;
+       read(new org.apache.thrift.protocol.TCompactProtocol(new org.apache.thrift.transport.TIOStreamTransport(in)));
+     } catch (org.apache.thrift.TException te) {
+       throw new java.io.IOException(te);
+@@ -441,6 +683,30 @@ public void read(org.apache.thrift.protocol.TProtocol iprot, TGetOperationStatus
+               org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
+             }
+             break;
++          case 3: // SQL_STATE
++            if (schemeField.type == org.apache.thrift.protocol.TType.STRING) {
++              struct.sqlState = iprot.readString();
++              struct.setSqlStateIsSet(true);
++            } else { 
++              org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
++            }
++            break;
++          case 4: // ERROR_CODE
++            if (schemeField.type == org.apache.thrift.protocol.TType.I32) {
++              struct.errorCode = iprot.readI32();
++              struct.setErrorCodeIsSet(true);
++            } else { 
++              org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
++            }
++            break;
++          case 5: // ERROR_MESSAGE
++            if (schemeField.type == org.apache.thrift.protocol.TType.STRING) {
++              struct.errorMessage = iprot.readString();
++              struct.setErrorMessageIsSet(true);
++            } else { 
++              org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
++            }
++            break;
+           default:
+             org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
+         }
+@@ -466,6 +732,25 @@ public void write(org.apache.thrift.protocol.TProtocol oprot, TGetOperationStatu
+           oprot.writeFieldEnd();
+         }
+       }
++      if (struct.sqlState != null) {
++        if (struct.isSetSqlState()) {
++          oprot.writeFieldBegin(SQL_STATE_FIELD_DESC);
++          oprot.writeString(struct.sqlState);
++          oprot.writeFieldEnd();
++        }
++      }
++      if (struct.isSetErrorCode()) {
++        oprot.writeFieldBegin(ERROR_CODE_FIELD_DESC);
++        oprot.writeI32(struct.errorCode);
++        oprot.writeFieldEnd();
++      }
++      if (struct.errorMessage != null) {
++        if (struct.isSetErrorMessage()) {
++          oprot.writeFieldBegin(ERROR_MESSAGE_FIELD_DESC);
++          oprot.writeString(struct.errorMessage);
++          oprot.writeFieldEnd();
++        }
++      }
+       oprot.writeFieldStop();
+       oprot.writeStructEnd();
+     }
+@@ -488,10 +773,28 @@ public void write(org.apache.thrift.protocol.TProtocol prot, TGetOperationStatus
+       if (struct.isSetOperationState()) {
+         optionals.set(0);
+       }
+-      oprot.writeBitSet(optionals, 1);
++      if (struct.isSetSqlState()) {
++        optionals.set(1);
++      }
++      if (struct.isSetErrorCode()) {
++        optionals.set(2);
++      }
++      if (struct.isSetErrorMessage()) {
++        optionals.set(3);
++      }
++      oprot.writeBitSet(optionals, 4);
+       if (struct.isSetOperationState()) {
+         oprot.writeI32(struct.operationState.getValue());
+       }
++      if (struct.isSetSqlState()) {
++        oprot.writeString(struct.sqlState);
++      }
++      if (struct.isSetErrorCode()) {
++        oprot.writeI32(struct.errorCode);
++      }
++      if (struct.isSetErrorMessage()) {
++        oprot.writeString(struct.errorMessage);
++      }
+     }
+ 
+     @Override
+@@ -500,11 +803,23 @@ public void read(org.apache.thrift.protocol.TProtocol prot, TGetOperationStatusR
+       struct.status = new TStatus();
+       struct.status.read(iprot);
+       struct.setStatusIsSet(true);
+-      BitSet incoming = iprot.readBitSet(1);
++      BitSet incoming = iprot.readBitSet(4);
+       if (incoming.get(0)) {
+         struct.operationState = TOperationState.findByValue(iprot.readI32());
+         struct.setOperationStateIsSet(true);
+       }
++      if (incoming.get(1)) {
++        struct.sqlState = iprot.readString();
++        struct.setSqlStateIsSet(true);
++      }
++      if (incoming.get(2)) {
++        struct.errorCode = iprot.readI32();
++        struct.setErrorCodeIsSet(true);
++      }
++      if (incoming.get(3)) {
++        struct.errorMessage = iprot.readString();
++        struct.setErrorMessageIsSet(true);
++      }
+     }
+   }
+ 
+diff --git a/src/service/src/gen/thrift/gen-javabean/org/apache/hive/service/cli/thrift/TOpenSessionReq.java b/src/service/src/gen/thrift/gen-javabean/org/apache/hive/service/cli/thrift/TOpenSessionReq.java
+index 8ab8297..ed335b1 100644
+--- a/src/service/src/gen/thrift/gen-javabean/org/apache/hive/service/cli/thrift/TOpenSessionReq.java
++++ b/src/service/src/gen/thrift/gen-javabean/org/apache/hive/service/cli/thrift/TOpenSessionReq.java
+@@ -141,7 +141,7 @@ public String getFieldName() {
+   }
+ 
+   public TOpenSessionReq() {
+-    this.client_protocol = org.apache.hive.service.cli.thrift.TProtocolVersion.HIVE_CLI_SERVICE_PROTOCOL_V3;
++    this.client_protocol = org.apache.hive.service.cli.thrift.TProtocolVersion.HIVE_CLI_SERVICE_PROTOCOL_V5;
+ 
+   }
+ 
+@@ -188,7 +188,7 @@ public TOpenSessionReq deepCopy() {
+ 
+   @Override
+   public void clear() {
+-    this.client_protocol = org.apache.hive.service.cli.thrift.TProtocolVersion.HIVE_CLI_SERVICE_PROTOCOL_V3;
++    this.client_protocol = org.apache.hive.service.cli.thrift.TProtocolVersion.HIVE_CLI_SERVICE_PROTOCOL_V5;
+ 
+     this.username = null;
+     this.password = null;
+diff --git a/src/service/src/gen/thrift/gen-javabean/org/apache/hive/service/cli/thrift/TOpenSessionResp.java b/src/service/src/gen/thrift/gen-javabean/org/apache/hive/service/cli/thrift/TOpenSessionResp.java
+index 688f790..95f9aed 100644
+--- a/src/service/src/gen/thrift/gen-javabean/org/apache/hive/service/cli/thrift/TOpenSessionResp.java
++++ b/src/service/src/gen/thrift/gen-javabean/org/apache/hive/service/cli/thrift/TOpenSessionResp.java
+@@ -141,7 +141,7 @@ public String getFieldName() {
+   }
+ 
+   public TOpenSessionResp() {
+-    this.serverProtocolVersion = org.apache.hive.service.cli.thrift.TProtocolVersion.HIVE_CLI_SERVICE_PROTOCOL_V4;
++    this.serverProtocolVersion = org.apache.hive.service.cli.thrift.TProtocolVersion.HIVE_CLI_SERVICE_PROTOCOL_V5;
+ 
+   }
+ 
+@@ -191,7 +191,7 @@ public TOpenSessionResp deepCopy() {
+   @Override
+   public void clear() {
+     this.status = null;
+-    this.serverProtocolVersion = org.apache.hive.service.cli.thrift.TProtocolVersion.HIVE_CLI_SERVICE_PROTOCOL_V4;
++    this.serverProtocolVersion = org.apache.hive.service.cli.thrift.TProtocolVersion.HIVE_CLI_SERVICE_PROTOCOL_V5;
+ 
+     this.sessionHandle = null;
+     this.configuration = null;
+diff --git a/src/service/src/gen/thrift/gen-javabean/org/apache/hive/service/cli/thrift/TProtocolVersion.java b/src/service/src/gen/thrift/gen-javabean/org/apache/hive/service/cli/thrift/TProtocolVersion.java
+index 8c6c4f0..b68911c 100644
+--- a/src/service/src/gen/thrift/gen-javabean/org/apache/hive/service/cli/thrift/TProtocolVersion.java
++++ b/src/service/src/gen/thrift/gen-javabean/org/apache/hive/service/cli/thrift/TProtocolVersion.java
+@@ -15,7 +15,8 @@
+   HIVE_CLI_SERVICE_PROTOCOL_V1(0),
+   HIVE_CLI_SERVICE_PROTOCOL_V2(1),
+   HIVE_CLI_SERVICE_PROTOCOL_V3(2),
+-  HIVE_CLI_SERVICE_PROTOCOL_V4(3);
++  HIVE_CLI_SERVICE_PROTOCOL_V4(3),
++  HIVE_CLI_SERVICE_PROTOCOL_V5(4);
+ 
+   private final int value;
+ 
+@@ -44,6 +45,8 @@ public static TProtocolVersion findByValue(int value) {
+         return HIVE_CLI_SERVICE_PROTOCOL_V3;
+       case 3:
+         return HIVE_CLI_SERVICE_PROTOCOL_V4;
++      case 4:
++        return HIVE_CLI_SERVICE_PROTOCOL_V5;
+       default:
+         return null;
+     }
+diff --git a/src/service/src/gen/thrift/gen-py/TCLIService/ttypes.py b/src/service/src/gen/thrift/gen-py/TCLIService/ttypes.py
+index ae26061..31a018d 100644
+--- a/src/service/src/gen/thrift/gen-py/TCLIService/ttypes.py
++++ b/src/service/src/gen/thrift/gen-py/TCLIService/ttypes.py
+@@ -21,12 +21,14 @@ class TProtocolVersion:
+   HIVE_CLI_SERVICE_PROTOCOL_V2 = 1
+   HIVE_CLI_SERVICE_PROTOCOL_V3 = 2
+   HIVE_CLI_SERVICE_PROTOCOL_V4 = 3
++  HIVE_CLI_SERVICE_PROTOCOL_V5 = 4
+ 
+   _VALUES_TO_NAMES = {
+     0: "HIVE_CLI_SERVICE_PROTOCOL_V1",
+     1: "HIVE_CLI_SERVICE_PROTOCOL_V2",
+     2: "HIVE_CLI_SERVICE_PROTOCOL_V3",
+     3: "HIVE_CLI_SERVICE_PROTOCOL_V4",
++    4: "HIVE_CLI_SERVICE_PROTOCOL_V5",
+   }
+ 
+   _NAMES_TO_VALUES = {
+@@ -34,6 +36,7 @@ class TProtocolVersion:
+     "HIVE_CLI_SERVICE_PROTOCOL_V2": 1,
+     "HIVE_CLI_SERVICE_PROTOCOL_V3": 2,
+     "HIVE_CLI_SERVICE_PROTOCOL_V4": 3,
++    "HIVE_CLI_SERVICE_PROTOCOL_V5": 4,
+   }
+ 
+ class TTypeId:
+@@ -2607,7 +2610,7 @@ class TOpenSessionReq:
+ 
+   thrift_spec = (
+     None, # 0
+-    (1, TType.I32, 'client_protocol', None,     2, ), # 1
++    (1, TType.I32, 'client_protocol', None,     4, ), # 1
+     (2, TType.STRING, 'username', None, None, ), # 2
+     (3, TType.STRING, 'password', None, None, ), # 3
+     (4, TType.MAP, 'configuration', (TType.STRING,None,TType.STRING,None), None, ), # 4
+@@ -2716,7 +2719,7 @@ class TOpenSessionResp:
+   thrift_spec = (
+     None, # 0
+     (1, TType.STRUCT, 'status', (TStatus, TStatus.thrift_spec), None, ), # 1
+-    (2, TType.I32, 'serverProtocolVersion', None,     3, ), # 2
++    (2, TType.I32, 'serverProtocolVersion', None,     4, ), # 2
+     (3, TType.STRUCT, 'sessionHandle', (TSessionHandle, TSessionHandle.thrift_spec), None, ), # 3
+     (4, TType.MAP, 'configuration', (TType.STRING,None,TType.STRING,None), None, ), # 4
+   )
+@@ -4611,17 +4614,26 @@ class TGetOperationStatusResp:
+   Attributes:
+    - status
+    - operationState
++   - sqlState
++   - errorCode
++   - errorMessage
+   """
+ 
+   thrift_spec = (
+     None, # 0
+     (1, TType.STRUCT, 'status', (TStatus, TStatus.thrift_spec), None, ), # 1
+     (2, TType.I32, 'operationState', None, None, ), # 2
++    (3, TType.STRING, 'sqlState', None, None, ), # 3
++    (4, TType.I32, 'errorCode', None, None, ), # 4
++    (5, TType.STRING, 'errorMessage', None, None, ), # 5
+   )
+ 
+-  def __init__(self, status=None, operationState=None,):
++  def __init__(self, status=None, operationState=None, sqlState=None, errorCode=None, errorMessage=None,):
+     self.status = status
+     self.operationState = operationState
++    self.sqlState = sqlState
++    self.errorCode = errorCode
++    self.errorMessage = errorMessage
+ 
+   def read(self, iprot):
+     if iprot.__class__ == TBinaryProtocol.TBinaryProtocolAccelerated and isinstance(iprot.trans, TTransport.CReadableTransport) and self.thrift_spec is not None and fastbinary is not None:
+@@ -4643,6 +4655,21 @@ def read(self, iprot):
+           self.operationState = iprot.readI32();
+         else:
+           iprot.skip(ftype)
++      elif fid == 3:
++        if ftype == TType.STRING:
++          self.sqlState = iprot.readString();
++        else:
++          iprot.skip(ftype)
++      elif fid == 4:
++        if ftype == TType.I32:
++          self.errorCode = iprot.readI32();
++        else:
++          iprot.skip(ftype)
++      elif fid == 5:
++        if ftype == TType.STRING:
++          self.errorMessage = iprot.readString();
++        else:
++          iprot.skip(ftype)
+       else:
+         iprot.skip(ftype)
+       iprot.readFieldEnd()
+@@ -4661,6 +4688,18 @@ def write(self, oprot):
+       oprot.writeFieldBegin('operationState', TType.I32, 2)
+       oprot.writeI32(self.operationState)
+       oprot.writeFieldEnd()
++    if self.sqlState is not None:
++      oprot.writeFieldBegin('sqlState', TType.STRING, 3)
++      oprot.writeString(self.sqlState)
++      oprot.writeFieldEnd()
++    if self.errorCode is not None:
++      oprot.writeFieldBegin('errorCode', TType.I32, 4)
++      oprot.writeI32(self.errorCode)
++      oprot.writeFieldEnd()
++    if self.errorMessage is not None:
++      oprot.writeFieldBegin('errorMessage', TType.STRING, 5)
++      oprot.writeString(self.errorMessage)
++      oprot.writeFieldEnd()
+     oprot.writeFieldStop()
+     oprot.writeStructEnd()
+ 
+diff --git a/src/service/src/gen/thrift/gen-rb/t_c_l_i_service_types.rb b/src/service/src/gen/thrift/gen-rb/t_c_l_i_service_types.rb
+index 7bbb388..4db6c14 100644
+--- a/src/service/src/gen/thrift/gen-rb/t_c_l_i_service_types.rb
++++ b/src/service/src/gen/thrift/gen-rb/t_c_l_i_service_types.rb
+@@ -11,8 +11,9 @@ module TProtocolVersion
+   HIVE_CLI_SERVICE_PROTOCOL_V2 = 1
+   HIVE_CLI_SERVICE_PROTOCOL_V3 = 2
+   HIVE_CLI_SERVICE_PROTOCOL_V4 = 3
+-  VALUE_MAP = {0 => "HIVE_CLI_SERVICE_PROTOCOL_V1", 1 => "HIVE_CLI_SERVICE_PROTOCOL_V2", 2 => "HIVE_CLI_SERVICE_PROTOCOL_V3", 3 => "HIVE_CLI_SERVICE_PROTOCOL_V4"}
+-  VALID_VALUES = Set.new([HIVE_CLI_SERVICE_PROTOCOL_V1, HIVE_CLI_SERVICE_PROTOCOL_V2, HIVE_CLI_SERVICE_PROTOCOL_V3, HIVE_CLI_SERVICE_PROTOCOL_V4]).freeze
++  HIVE_CLI_SERVICE_PROTOCOL_V5 = 4
++  VALUE_MAP = {0 => "HIVE_CLI_SERVICE_PROTOCOL_V1", 1 => "HIVE_CLI_SERVICE_PROTOCOL_V2", 2 => "HIVE_CLI_SERVICE_PROTOCOL_V3", 3 => "HIVE_CLI_SERVICE_PROTOCOL_V4", 4 => "HIVE_CLI_SERVICE_PROTOCOL_V5"}
++  VALID_VALUES = Set.new([HIVE_CLI_SERVICE_PROTOCOL_V1, HIVE_CLI_SERVICE_PROTOCOL_V2, HIVE_CLI_SERVICE_PROTOCOL_V3, HIVE_CLI_SERVICE_PROTOCOL_V4, HIVE_CLI_SERVICE_PROTOCOL_V5]).freeze
+ end
+ 
+ module TTypeId
+@@ -778,7 +779,7 @@ class TOpenSessionReq
+   CONFIGURATION = 4
+ 
+   FIELDS = {
+-    CLIENT_PROTOCOL => {:type => ::Thrift::Types::I32, :name => 'client_protocol', :default =>     2, :enum_class => ::TProtocolVersion},
++    CLIENT_PROTOCOL => {:type => ::Thrift::Types::I32, :name => 'client_protocol', :default =>     4, :enum_class => ::TProtocolVersion},
+     USERNAME => {:type => ::Thrift::Types::STRING, :name => 'username', :optional => true},
+     PASSWORD => {:type => ::Thrift::Types::STRING, :name => 'password', :optional => true},
+     CONFIGURATION => {:type => ::Thrift::Types::MAP, :name => 'configuration', :key => {:type => ::Thrift::Types::STRING}, :value => {:type => ::Thrift::Types::STRING}, :optional => true}
+@@ -805,7 +806,7 @@ class TOpenSessionResp
+ 
+   FIELDS = {
+     STATUS => {:type => ::Thrift::Types::STRUCT, :name => 'status', :class => ::TStatus},
+-    SERVERPROTOCOLVERSION => {:type => ::Thrift::Types::I32, :name => 'serverProtocolVersion', :default =>     3, :enum_class => ::TProtocolVersion},
++    SERVERPROTOCOLVERSION => {:type => ::Thrift::Types::I32, :name => 'serverProtocolVersion', :default =>     4, :enum_class => ::TProtocolVersion},
+     SESSIONHANDLE => {:type => ::Thrift::Types::STRUCT, :name => 'sessionHandle', :class => ::TSessionHandle, :optional => true},
+     CONFIGURATION => {:type => ::Thrift::Types::MAP, :name => 'configuration', :key => {:type => ::Thrift::Types::STRING}, :value => {:type => ::Thrift::Types::STRING}, :optional => true}
+   }
+@@ -1296,10 +1297,16 @@ class TGetOperationStatusResp
+   include ::Thrift::Struct, ::Thrift::Struct_Union
+   STATUS = 1
+   OPERATIONSTATE = 2
++  SQLSTATE = 3
++  ERRORCODE = 4
++  ERRORMESSAGE = 5
+ 
+   FIELDS = {
+     STATUS => {:type => ::Thrift::Types::STRUCT, :name => 'status', :class => ::TStatus},
+-    OPERATIONSTATE => {:type => ::Thrift::Types::I32, :name => 'operationState', :optional => true, :enum_class => ::TOperationState}
++    OPERATIONSTATE => {:type => ::Thrift::Types::I32, :name => 'operationState', :optional => true, :enum_class => ::TOperationState},
++    SQLSTATE => {:type => ::Thrift::Types::STRING, :name => 'sqlState', :optional => true},
++    ERRORCODE => {:type => ::Thrift::Types::I32, :name => 'errorCode', :optional => true},
++    ERRORMESSAGE => {:type => ::Thrift::Types::STRING, :name => 'errorMessage', :optional => true}
+   }
+ 
+   def struct_fields; FIELDS; end
+diff --git a/src/service/src/java/org/apache/hive/service/cli/CLIService.java b/src/service/src/java/org/apache/hive/service/cli/CLIService.java
+index cfbd3e8..b1b6617 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/CLIService.java
++++ b/src/service/src/java/org/apache/hive/service/cli/CLIService.java
+@@ -126,9 +126,9 @@ public SessionHandle openSession(String username, String password, Map<String, S
+    */
+   @Override
+   public SessionHandle openSessionWithImpersonation(String username, String password, Map<String, String> configuration,
+-       String delegationToken) throws HiveSQLException {
++      String delegationToken) throws HiveSQLException {
+     SessionHandle sessionHandle = sessionManager.openSession(username, password, configuration,
+-          true, delegationToken);
++        true, delegationToken);
+     LOG.info(sessionHandle + ": openSession()");
+     return sessionHandle;
+   }
+@@ -150,7 +150,8 @@ public void closeSession(SessionHandle sessionHandle)
+   @Override
+   public GetInfoValue getInfo(SessionHandle sessionHandle, GetInfoType getInfoType)
+       throws HiveSQLException {
+-    GetInfoValue infoValue = sessionManager.getSession(sessionHandle).getInfo(getInfoType);
++    GetInfoValue infoValue = sessionManager.getSession(sessionHandle)
++        .getInfo(getInfoType);
+     LOG.info(sessionHandle + ": getInfo()");
+     sessionManager.clearIpAddress();
+     return infoValue;
+@@ -163,7 +164,7 @@ public GetInfoValue getInfo(SessionHandle sessionHandle, GetInfoType getInfoType
+   @Override
+   public OperationHandle executeStatement(SessionHandle sessionHandle, String statement,
+       Map<String, String> confOverlay)
+-      throws HiveSQLException {
++          throws HiveSQLException {
+     OperationHandle opHandle = sessionManager.getSession(sessionHandle)
+         .executeStatement(statement, confOverlay);
+     LOG.info(sessionHandle + ": executeStatement()");
+@@ -191,7 +192,8 @@ public OperationHandle executeStatementAsync(SessionHandle sessionHandle, String
+   @Override
+   public OperationHandle getTypeInfo(SessionHandle sessionHandle)
+       throws HiveSQLException {
+-    OperationHandle opHandle = sessionManager.getSession(sessionHandle).getTypeInfo();
++    OperationHandle opHandle = sessionManager.getSession(sessionHandle)
++        .getTypeInfo();
+     LOG.info(sessionHandle + ": getTypeInfo()");
+     sessionManager.clearIpAddress();
+     return opHandle;
+@@ -203,7 +205,8 @@ public OperationHandle getTypeInfo(SessionHandle sessionHandle)
+   @Override
+   public OperationHandle getCatalogs(SessionHandle sessionHandle)
+       throws HiveSQLException {
+-    OperationHandle opHandle = sessionManager.getSession(sessionHandle).getCatalogs();
++    OperationHandle opHandle = sessionManager.getSession(sessionHandle)
++        .getCatalogs();
+     LOG.info(sessionHandle + ": getCatalogs()");
+     sessionManager.clearIpAddress();
+     return opHandle;
+@@ -215,7 +218,7 @@ public OperationHandle getCatalogs(SessionHandle sessionHandle)
+   @Override
+   public OperationHandle getSchemas(SessionHandle sessionHandle,
+       String catalogName, String schemaName)
+-      throws HiveSQLException {
++          throws HiveSQLException {
+     OperationHandle opHandle = sessionManager.getSession(sessionHandle)
+         .getSchemas(catalogName, schemaName);
+     LOG.info(sessionHandle + ": getSchemas()");
+@@ -229,9 +232,9 @@ public OperationHandle getSchemas(SessionHandle sessionHandle,
+   @Override
+   public OperationHandle getTables(SessionHandle sessionHandle,
+       String catalogName, String schemaName, String tableName, List<String> tableTypes)
+-      throws HiveSQLException {
+-    OperationHandle opHandle = sessionManager
+-        .getSession(sessionHandle).getTables(catalogName, schemaName, tableName, tableTypes);
++          throws HiveSQLException {
++    OperationHandle opHandle = sessionManager.getSession(sessionHandle)
++        .getTables(catalogName, schemaName, tableName, tableTypes);
+     LOG.info(sessionHandle + ": getTables()");
+     sessionManager.clearIpAddress();
+     return opHandle;
+@@ -243,7 +246,8 @@ public OperationHandle getTables(SessionHandle sessionHandle,
+   @Override
+   public OperationHandle getTableTypes(SessionHandle sessionHandle)
+       throws HiveSQLException {
+-    OperationHandle opHandle = sessionManager.getSession(sessionHandle).getTableTypes();
++    OperationHandle opHandle = sessionManager.getSession(sessionHandle)
++        .getTableTypes();
+     LOG.info(sessionHandle + ": getTableTypes()");
+     sessionManager.clearIpAddress();
+     return opHandle;
+@@ -255,7 +259,7 @@ public OperationHandle getTableTypes(SessionHandle sessionHandle)
+   @Override
+   public OperationHandle getColumns(SessionHandle sessionHandle,
+       String catalogName, String schemaName, String tableName, String columnName)
+-      throws HiveSQLException {
++          throws HiveSQLException {
+     OperationHandle opHandle = sessionManager.getSession(sessionHandle)
+         .getColumns(catalogName, schemaName, tableName, columnName);
+     LOG.info(sessionHandle + ": getColumns()");
+@@ -269,7 +273,7 @@ public OperationHandle getColumns(SessionHandle sessionHandle,
+   @Override
+   public OperationHandle getFunctions(SessionHandle sessionHandle,
+       String catalogName, String schemaName, String functionName)
+-      throws HiveSQLException {
++          throws HiveSQLException {
+     OperationHandle opHandle = sessionManager.getSession(sessionHandle)
+         .getFunctions(catalogName, schemaName, functionName);
+     LOG.info(sessionHandle + ": getFunctions()");
+@@ -281,14 +285,15 @@ public OperationHandle getFunctions(SessionHandle sessionHandle,
+    * @see org.apache.hive.service.cli.ICLIService#getOperationStatus(org.apache.hive.service.cli.OperationHandle)
+    */
+   @Override
+-  public OperationState getOperationStatus(OperationHandle opHandle)
++  public OperationStatus getOperationStatus(OperationHandle opHandle)
+       throws HiveSQLException {
+     startLogCapture(opHandle);
+-    OperationState opState = sessionManager.getOperationManager().getOperationState(opHandle);
++    OperationStatus opStatus = sessionManager.getOperationManager()
++        .getOperationStatus(opHandle);
+     LOG.info(opHandle + ": getOperationStatus()");
+     sessionManager.clearIpAddress();
+     stopLogCapture();
+-    return opState;
++    return opStatus;
+   }
+ 
+   /* (non-Javadoc)
+@@ -298,8 +303,8 @@ public OperationState getOperationStatus(OperationHandle opHandle)
+   public void cancelOperation(OperationHandle opHandle)
+       throws HiveSQLException {
+     startLogCapture(opHandle);
+-    sessionManager.getOperationManager().getOperation(opHandle).
+-        getParentSession().cancelOperation(opHandle);
++    sessionManager.getOperationManager().getOperation(opHandle)
++        .getParentSession().cancelOperation(opHandle);
+     LOG.info(opHandle + ": cancelOperation()");
+     sessionManager.clearIpAddress();
+     stopLogCapture();
+@@ -312,8 +317,8 @@ public void cancelOperation(OperationHandle opHandle)
+   public void closeOperation(OperationHandle opHandle)
+       throws HiveSQLException {
+     startLogCapture(opHandle);
+-    sessionManager.getOperationManager().getOperation(opHandle).
+-        getParentSession().closeOperation(opHandle);
++    sessionManager.getOperationManager().getOperation(opHandle)
++        .getParentSession().closeOperation(opHandle);
+     LOG.info(opHandle + ": closeOperation");
+     sessionManager.clearIpAddress();
+     sessionManager.getLogManager().destroyOperationLog(opHandle);
+@@ -327,8 +332,8 @@ public void closeOperation(OperationHandle opHandle)
+   public TableSchema getResultSetMetadata(OperationHandle opHandle)
+       throws HiveSQLException {
+     startLogCapture(opHandle);
+-    TableSchema tableSchema = sessionManager.getOperationManager().getOperation(opHandle).
+-        getParentSession().getResultSetMetadata(opHandle);
++    TableSchema tableSchema = sessionManager.getOperationManager()
++        .getOperation(opHandle).getParentSession().getResultSetMetadata(opHandle);
+     LOG.info(opHandle + ": getResultSetMetadata()");
+     sessionManager.clearIpAddress();
+     stopLogCapture();
+@@ -342,8 +347,8 @@ public TableSchema getResultSetMetadata(OperationHandle opHandle)
+   public RowSet fetchResults(OperationHandle opHandle, FetchOrientation orientation, long maxRows)
+       throws HiveSQLException {
+     startLogCapture(opHandle);
+-    RowSet rowSet = sessionManager.getOperationManager().getOperation(opHandle).
+-        getParentSession().fetchResults(opHandle, orientation, maxRows);
++    RowSet rowSet = sessionManager.getOperationManager().getOperation(opHandle)
++        .getParentSession().fetchResults(opHandle, orientation, maxRows);
+     LOG.info(opHandle + ": fetchResults()");
+     sessionManager.clearIpAddress();
+     stopLogCapture();
+@@ -357,8 +362,8 @@ public RowSet fetchResults(OperationHandle opHandle, FetchOrientation orientatio
+   public RowSet fetchResults(OperationHandle opHandle)
+       throws HiveSQLException {
+     startLogCapture(opHandle);
+-    RowSet rowSet = sessionManager.getOperationManager().getOperation(opHandle).
+-        getParentSession().fetchResults(opHandle);
++    RowSet rowSet = sessionManager.getOperationManager().getOperation(opHandle)
++        .getParentSession().fetchResults(opHandle);
+     LOG.info(opHandle + ": fetchResults()");
+     sessionManager.clearIpAddress();
+     stopLogCapture();
+@@ -382,7 +387,7 @@ public synchronized String getDelegationTokenFromMetaStore(String owner)
+     if (!hiveConf.getBoolVar(HiveConf.ConfVars.METASTORE_USE_THRIFT_SASL) ||
+         !hiveConf.getBoolVar(HiveConf.ConfVars.HIVE_SERVER2_ENABLE_DOAS)) {
+       throw new UnsupportedOperationException(
+-        "delegation token is can only be obtained for a secure remote metastore");
++          "delegation token is can only be obtained for a secure remote metastore");
+     }
+ 
+     try {
+diff --git a/src/service/src/java/org/apache/hive/service/cli/CLIServiceClient.java b/src/service/src/java/org/apache/hive/service/cli/CLIServiceClient.java
+index ddea1e7..879e04e 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/CLIServiceClient.java
++++ b/src/service/src/java/org/apache/hive/service/cli/CLIServiceClient.java
+@@ -19,8 +19,6 @@
+ package org.apache.hive.service.cli;
+ 
+ import java.util.Collections;
+-import java.util.List;
+-import java.util.Map;
+ 
+ import org.apache.hive.service.auth.HiveAuthFactory;
+ 
+@@ -31,127 +29,12 @@
+  */
+ public abstract class CLIServiceClient implements ICLIService {
+ 
+-  /* (non-Javadoc)
+-   * @see org.apache.hive.service.cli.ICLIService#openSession(java.lang.String, java.lang.String, java.util.Map)
+-   */
+-  @Override
+-  public abstract SessionHandle openSession(String username, String password,
+-      Map<String, String> configuration) throws HiveSQLException;
+-
+-
+   public SessionHandle openSession(String username, String password)
+       throws HiveSQLException {
+     return openSession(username, password, Collections.<String, String>emptyMap());
+   }
+ 
+   /* (non-Javadoc)
+-   * @see org.apache.hive.service.cli.ICLIService#closeSession(org.apache.hive.service.cli.SessionHandle)
+-   */
+-  @Override
+-  public abstract void closeSession(SessionHandle sessionHandle) throws HiveSQLException;
+-
+-  /* (non-Javadoc)
+-   * @see org.apache.hive.service.cli.ICLIService#getInfo(org.apache.hive.service.cli.SessionHandle, java.util.List)
+-   */
+-  @Override
+-  public abstract GetInfoValue getInfo(SessionHandle sessionHandle, GetInfoType getInfoType)
+-      throws HiveSQLException;
+-
+-  /* (non-Javadoc)
+-   * @see org.apache.hive.service.cli.ICLIService#executeStatement(org.apache.hive.service.cli.SessionHandle,
+-   *  java.lang.String, java.util.Map)
+-   */
+-  @Override
+-  public abstract OperationHandle executeStatement(SessionHandle sessionHandle, String statement,
+-      Map<String, String> confOverlay) throws HiveSQLException;
+-
+-  /* (non-Javadoc)
+-   * @see org.apache.hive.service.cli.ICLIService#executeStatementAsync(org.apache.hive.service.cli.SessionHandle,
+-   *  java.lang.String, java.util.Map)
+-   */
+-  @Override
+-  public abstract OperationHandle executeStatementAsync(SessionHandle sessionHandle, String statement,
+-      Map<String, String> confOverlay) throws HiveSQLException;
+-
+-  /* (non-Javadoc)
+-   * @see org.apache.hive.service.cli.ICLIService#getTypeInfo(org.apache.hive.service.cli.SessionHandle)
+-   */
+-  @Override
+-  public abstract OperationHandle getTypeInfo(SessionHandle sessionHandle) throws HiveSQLException;
+-
+-  /* (non-Javadoc)
+-   * @see org.apache.hive.service.cli.ICLIService#getCatalogs(org.apache.hive.service.cli.SessionHandle)
+-   */
+-  @Override
+-  public abstract OperationHandle getCatalogs(SessionHandle sessionHandle) throws HiveSQLException;
+-
+-  /* (non-Javadoc)
+-   * @see org.apache.hive.service.cli.ICLIService#getSchemas(org.apache.hive.service.cli.SessionHandle, java.lang.String, java.lang.String)
+-   */
+-  @Override
+-  public abstract OperationHandle getSchemas(SessionHandle sessionHandle, String catalogName,
+-      String schemaName) throws HiveSQLException;
+-
+-  /* (non-Javadoc)
+-   * @see org.apache.hive.service.cli.ICLIService#getTables(org.apache.hive.service.cli.SessionHandle, java.lang.String, java.lang.String, java.lang.String, java.util.List)
+-   */
+-  @Override
+-  public abstract OperationHandle getTables(SessionHandle sessionHandle, String catalogName,
+-      String schemaName, String tableName, List<String> tableTypes) throws HiveSQLException;
+-
+-  /* (non-Javadoc)
+-   * @see org.apache.hive.service.cli.ICLIService#getTableTypes(org.apache.hive.service.cli.SessionHandle)
+-   */
+-  @Override
+-  public abstract OperationHandle getTableTypes(SessionHandle sessionHandle) throws HiveSQLException;
+-
+-  /* (non-Javadoc)
+-   * @see org.apache.hive.service.cli.ICLIService#getColumns(org.apache.hive.service.cli.SessionHandle, java.lang.String, java.lang.String, java.lang.String, java.lang.String)
+-   */
+-  @Override
+-  public abstract OperationHandle getColumns(SessionHandle sessionHandle, String catalogName,
+-      String schemaName, String tableName, String columnName) throws HiveSQLException;
+-
+-  /* (non-Javadoc)
+-   * @see org.apache.hive.service.cli.ICLIService#getFunctions(org.apache.hive.service.cli.SessionHandle, java.lang.String)
+-   */
+-  @Override
+-  public abstract OperationHandle getFunctions(SessionHandle sessionHandle,
+-      String catalogName, String schemaName, String functionName)
+-      throws HiveSQLException;
+-
+-  /* (non-Javadoc)
+-   * @see org.apache.hive.service.cli.ICLIService#getOperationStatus(org.apache.hive.service.cli.OperationHandle)
+-   */
+-  @Override
+-  public abstract OperationState getOperationStatus(OperationHandle opHandle) throws HiveSQLException;
+-
+-  /* (non-Javadoc)
+-   * @see org.apache.hive.service.cli.ICLIService#cancelOperation(org.apache.hive.service.cli.OperationHandle)
+-   */
+-  @Override
+-  public abstract void cancelOperation(OperationHandle opHandle) throws HiveSQLException;
+-
+-  /* (non-Javadoc)
+-   * @see org.apache.hive.service.cli.ICLIService#closeOperation(org.apache.hive.service.cli.OperationHandle)
+-   */
+-  @Override
+-  public abstract void closeOperation(OperationHandle opHandle) throws HiveSQLException;
+-
+-  /* (non-Javadoc)
+-   * @see org.apache.hive.service.cli.ICLIService#getResultSetMetadata(org.apache.hive.service.cli.OperationHandle)
+-   */
+-  @Override
+-  public abstract TableSchema getResultSetMetadata(OperationHandle opHandle) throws HiveSQLException;
+-
+-  /* (non-Javadoc)
+-   * @see org.apache.hive.service.cli.ICLIService#fetchResults(org.apache.hive.service.cli.OperationHandle, org.apache.hive.service.cli.FetchOrientation, long)
+-   */
+-  @Override
+-  public abstract RowSet fetchResults(OperationHandle opHandle, FetchOrientation orientation, long maxRows)
+-      throws HiveSQLException;
+-
+-  /* (non-Javadoc)
+    * @see org.apache.hive.service.cli.ICLIService#fetchResults(org.apache.hive.service.cli.OperationHandle)
+    */
+   @Override
+diff --git a/src/service/src/java/org/apache/hive/service/cli/EmbeddedCLIServiceClient.java b/src/service/src/java/org/apache/hive/service/cli/EmbeddedCLIServiceClient.java
+index 50e1405..fc7de0c 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/EmbeddedCLIServiceClient.java
++++ b/src/service/src/java/org/apache/hive/service/cli/EmbeddedCLIServiceClient.java
+@@ -145,7 +145,7 @@ public OperationHandle getColumns(SessionHandle sessionHandle, String catalogNam
+   @Override
+   public OperationHandle getFunctions(SessionHandle sessionHandle,
+       String catalogName, String schemaName, String functionName)
+-      throws HiveSQLException {
++          throws HiveSQLException {
+     return cliService.getFunctions(sessionHandle, catalogName, schemaName, functionName);
+   }
+ 
+@@ -153,7 +153,7 @@ public OperationHandle getFunctions(SessionHandle sessionHandle,
+    * @see org.apache.hive.service.cli.CLIServiceClient#getOperationStatus(org.apache.hive.service.cli.OperationHandle)
+    */
+   @Override
+-  public OperationState getOperationStatus(OperationHandle opHandle) throws HiveSQLException {
++  public OperationStatus getOperationStatus(OperationHandle opHandle) throws HiveSQLException {
+     return cliService.getOperationStatus(opHandle);
+   }
+ 
+diff --git a/src/service/src/java/org/apache/hive/service/cli/ICLIService.java b/src/service/src/java/org/apache/hive/service/cli/ICLIService.java
+index be85e0a..e9cd0a4 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/ICLIService.java
++++ b/src/service/src/java/org/apache/hive/service/cli/ICLIService.java
+@@ -29,11 +29,11 @@
+ 
+   public abstract SessionHandle openSession(String username, String password,
+       Map<String, String> configuration)
+-      throws HiveSQLException;
++          throws HiveSQLException;
+ 
+   public abstract SessionHandle openSessionWithImpersonation(String username, String password,
+       Map<String, String> configuration, String delegationToken)
+-      throws HiveSQLException;
++          throws HiveSQLException;
+ 
+   public abstract void closeSession(SessionHandle sessionHandle)
+       throws HiveSQLException;
+@@ -43,11 +43,11 @@ public abstract GetInfoValue getInfo(SessionHandle sessionHandle, GetInfoType in
+ 
+   public abstract OperationHandle executeStatement(SessionHandle sessionHandle, String statement,
+       Map<String, String> confOverlay)
+-      throws HiveSQLException;
++          throws HiveSQLException;
+ 
+   public abstract OperationHandle executeStatementAsync(SessionHandle sessionHandle,
+       String statement, Map<String, String> confOverlay)
+-      throws HiveSQLException;
++          throws HiveSQLException;
+ 
+   public abstract OperationHandle getTypeInfo(SessionHandle sessionHandle)
+       throws HiveSQLException;
+@@ -57,24 +57,24 @@ public abstract OperationHandle getCatalogs(SessionHandle sessionHandle)
+ 
+   public abstract OperationHandle getSchemas(SessionHandle sessionHandle,
+       String catalogName, String schemaName)
+-      throws HiveSQLException;
++          throws HiveSQLException;
+ 
+   public abstract OperationHandle getTables(SessionHandle sessionHandle,
+       String catalogName, String schemaName, String tableName, List<String> tableTypes)
+-      throws HiveSQLException;
++          throws HiveSQLException;
+ 
+   public abstract OperationHandle getTableTypes(SessionHandle sessionHandle)
+       throws HiveSQLException;
+ 
+   public abstract OperationHandle getColumns(SessionHandle sessionHandle,
+       String catalogName, String schemaName, String tableName, String columnName)
+-      throws HiveSQLException;
++          throws HiveSQLException;
+ 
+   public abstract OperationHandle getFunctions(SessionHandle sessionHandle,
+       String catalogName, String schemaName, String functionName)
+-      throws HiveSQLException;
++          throws HiveSQLException;
+ 
+-  public abstract OperationState getOperationStatus(OperationHandle opHandle)
++  public abstract OperationStatus getOperationStatus(OperationHandle opHandle)
+       throws HiveSQLException;
+ 
+   public abstract void cancelOperation(OperationHandle opHandle)
+@@ -88,7 +88,7 @@ public abstract TableSchema getResultSetMetadata(OperationHandle opHandle)
+ 
+   public abstract RowSet fetchResults(OperationHandle opHandle, FetchOrientation orientation,
+       long maxRows)
+-      throws HiveSQLException;
++          throws HiveSQLException;
+ 
+   public abstract RowSet fetchResults(OperationHandle opHandle)
+       throws HiveSQLException;
+diff --git a/src/service/src/java/org/apache/hive/service/cli/OperationState.java b/src/service/src/java/org/apache/hive/service/cli/OperationState.java
+index 1ec6bd1..a023908 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/OperationState.java
++++ b/src/service/src/java/org/apache/hive/service/cli/OperationState.java
+@@ -94,7 +94,7 @@ public static void validateTransition(OperationState oldState, OperationState ne
+   }
+ 
+   public void validateTransition(OperationState newState)
+-  throws HiveSQLException {
++      throws HiveSQLException {
+     validateTransition(this, newState);
+   }
+ 
+diff --git a/src/service/src/java/org/apache/hive/service/cli/OperationStatus.java b/src/service/src/java/org/apache/hive/service/cli/OperationStatus.java
+new file mode 100644
+index 0000000..e45b828
+--- /dev/null
++++ b/src/service/src/java/org/apache/hive/service/cli/OperationStatus.java
+@@ -0,0 +1,43 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package org.apache.hive.service.cli;
++
++/**
++ * OperationStatus
++ *
++ */
++public class OperationStatus {
++
++  private final OperationState state;
++  private final HiveSQLException operationException;
++
++  public OperationStatus(OperationState state, HiveSQLException operationException) {
++    this.state = state;
++    this.operationException = operationException;
++  }
++
++  public OperationState getState() {
++    return state;
++  }
++
++  public HiveSQLException getOperationException() {
++    return operationException;
++  }
++
++}
+diff --git a/src/service/src/java/org/apache/hive/service/cli/operation/Operation.java b/src/service/src/java/org/apache/hive/service/cli/operation/Operation.java
+index 5d1dd5f..162bd56 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/operation/Operation.java
++++ b/src/service/src/java/org/apache/hive/service/cli/operation/Operation.java
+@@ -26,6 +26,7 @@
+ import org.apache.hive.service.cli.HiveSQLException;
+ import org.apache.hive.service.cli.OperationHandle;
+ import org.apache.hive.service.cli.OperationState;
++import org.apache.hive.service.cli.OperationStatus;
+ import org.apache.hive.service.cli.OperationType;
+ import org.apache.hive.service.cli.RowSet;
+ import org.apache.hive.service.cli.TableSchema;
+@@ -41,6 +42,7 @@
+   public static final Log LOG = LogFactory.getLog(Operation.class.getName());
+   public static final long DEFAULT_FETCH_MAX_ROWS = 100;
+   protected boolean hasResultSet;
++  protected volatile HiveSQLException operationException;
+ 
+   protected static final EnumSet<FetchOrientation> DEFAULT_FETCH_ORIENTATION_SET =
+       EnumSet.of(FetchOrientation.FETCH_NEXT,FetchOrientation.FETCH_FIRST);
+@@ -71,8 +73,8 @@ public OperationType getType() {
+     return opHandle.getOperationType();
+   }
+ 
+-  public OperationState getState() {
+-    return state;
++  public OperationStatus getStatus() {
++    return new OperationStatus(state, operationException);
+   }
+ 
+   public boolean hasResultSet() {
+@@ -90,6 +92,10 @@ protected final OperationState setState(OperationState newState) throws HiveSQLE
+     return this.state;
+   }
+ 
++  protected void setOperationException(HiveSQLException operationException) {
++    this.operationException = operationException;
++  }
++
+   protected final void assertState(OperationState state) throws HiveSQLException {
+     if (this.state != state) {
+       throw new HiveSQLException("Expected state " + state + ", but found " + this.state);
+@@ -97,19 +103,19 @@ protected final void assertState(OperationState state) throws HiveSQLException {
+   }
+ 
+   public boolean isRunning() {
+-    return OperationState.RUNNING.equals(getState());
++    return OperationState.RUNNING.equals(state);
+   }
+ 
+   public boolean isFinished() {
+-    return OperationState.FINISHED.equals(getState());
++    return OperationState.FINISHED.equals(state);
+   }
+ 
+   public boolean isCanceled() {
+-    return OperationState.CANCELED.equals(getState());
++    return OperationState.CANCELED.equals(state);
+   }
+ 
+   public boolean isFailed() {
+-    return OperationState.ERROR.equals(getState());
++    return OperationState.ERROR.equals(state);
+   }
+ 
+   public abstract void run() throws HiveSQLException;
+diff --git a/src/service/src/java/org/apache/hive/service/cli/operation/OperationManager.java b/src/service/src/java/org/apache/hive/service/cli/operation/OperationManager.java
+index 8254565..c02b2a1 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/operation/OperationManager.java
++++ b/src/service/src/java/org/apache/hive/service/cli/operation/OperationManager.java
+@@ -27,7 +27,7 @@
+ import org.apache.hive.service.cli.FetchOrientation;
+ import org.apache.hive.service.cli.HiveSQLException;
+ import org.apache.hive.service.cli.OperationHandle;
+-import org.apache.hive.service.cli.OperationState;
++import org.apache.hive.service.cli.OperationStatus;
+ import org.apache.hive.service.cli.RowSet;
+ import org.apache.hive.service.cli.TableSchema;
+ import org.apache.hive.service.cli.session.HiveSession;
+@@ -76,7 +76,7 @@ public SessionManager getSessionManager() {
+   }
+   public ExecuteStatementOperation newExecuteStatementOperation(HiveSession parentSession,
+       String statement, Map<String, String> confOverlay, boolean runAsync)
+-    throws HiveSQLException {
++          throws HiveSQLException {
+     ExecuteStatementOperation executeStatementOperation = ExecuteStatementOperation
+         .newExecuteStatementOperation(parentSession, statement, confOverlay, runAsync);
+     addOperation(executeStatementOperation);
+@@ -149,8 +149,8 @@ private synchronized Operation removeOperation(OperationHandle opHandle) {
+     return handleToOperation.remove(opHandle);
+   }
+ 
+-  public OperationState getOperationState(OperationHandle opHandle) throws HiveSQLException {
+-    return getOperation(opHandle).getState();
++  public OperationStatus getOperationStatus(OperationHandle opHandle) throws HiveSQLException {
++    return getOperation(opHandle).getStatus();
+   }
+ 
+   public void cancelOperation(OperationHandle opHandle) throws HiveSQLException {
+@@ -176,7 +176,7 @@ public RowSet getOperationNextRowSet(OperationHandle opHandle) throws HiveSQLExc
+ 
+   public RowSet getOperationNextRowSet(OperationHandle opHandle,
+       FetchOrientation orientation, long maxRows)
+-      throws HiveSQLException {
++          throws HiveSQLException {
+     return getOperation(opHandle).getNextRowSet(orientation, maxRows);
+  }
+ }
+diff --git a/src/service/src/java/org/apache/hive/service/cli/operation/SQLOperation.java b/src/service/src/java/org/apache/hive/service/cli/operation/SQLOperation.java
+index c7f37e5..11d1f70 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/operation/SQLOperation.java
++++ b/src/service/src/java/org/apache/hive/service/cli/operation/SQLOperation.java
+@@ -52,6 +52,7 @@
+ import org.apache.hive.service.cli.FetchOrientation;
+ import org.apache.hive.service.cli.HiveSQLException;
+ import org.apache.hive.service.cli.OperationState;
++import org.apache.hive.service.cli.OperationStatus;
+ import org.apache.hive.service.cli.RowSet;
+ import org.apache.hive.service.cli.TableSchema;
+ import org.apache.hive.service.cli.session.HiveSession;
+@@ -68,7 +69,7 @@
+   private Schema mResultSchema = null;
+   private SerDe serde = null;
+   private final boolean runAsync;
+-  private Future<?> backgroundHandle;
++  private volatile Future<?> backgroundHandle;
+   private boolean fetchStarted = false;
+ 
+   public SQLOperation(HiveSession parentSession, String statement, Map<String,
+@@ -160,7 +161,7 @@ private void runInternal(HiveConf sqlOperationConf) throws HiveSQLException {
+   public void run() throws HiveSQLException {
+     setState(OperationState.PENDING);
+     prepare(getConfigForOperation());
+-    if (!shouldRunAsync()) {
++    if (!runAsync) {
+       runInternal(getConfigForOperation());
+     } else {
+       Runnable backgroundOperation = new Runnable() {
+@@ -171,16 +172,15 @@ public void run() {
+           try {
+             runInternal(getConfigForOperation());
+           } catch (HiveSQLException e) {
++            setOperationException(e);
+             LOG.error("Error: ", e);
+-            // TODO: Return a more detailed error to the client,
+-            // currently the async thread only writes to the log and sets the OperationState
+           }
+         }
+       };
+       try {
+         // This submit blocks if no background threads are available to run this operation
+         backgroundHandle =
+-          getParentSession().getSessionManager().submitBackgroundOperation(backgroundOperation);
++            getParentSession().getSessionManager().submitBackgroundOperation(backgroundOperation);
+       } catch (RejectedExecutionException rejected) {
+         setState(OperationState.ERROR);
+         throw new HiveSQLException("All the asynchronous threads are currently busy, " +
+@@ -191,7 +191,7 @@ public void run() {
+ 
+   private void cleanup(OperationState state) throws HiveSQLException {
+     setState(state);
+-    if (shouldRunAsync()) {
++    if (runAsync) {
+       if (backgroundHandle != null) {
+         backgroundHandle.cancel(true);
+       }
+@@ -341,10 +341,6 @@ private SerDe getSerDe() throws SQLException {
+     return serde;
+   }
+ 
+-  private boolean shouldRunAsync() {
+-    return runAsync;
+-  }
+-
+   /**
+    * If there are query specific settings to overlay, then create a copy of config
+    * There are two cases we need to clone the session config that's being passed to hive driver
+@@ -357,7 +353,7 @@ private boolean shouldRunAsync() {
+    */
+   private HiveConf getConfigForOperation() throws HiveSQLException {
+     HiveConf sqlOperationConf = getParentSession().getHiveConf();
+-    if (!getConfOverlay().isEmpty() || shouldRunAsync()) {
++    if (!getConfOverlay().isEmpty() || runAsync) {
+       // clone the partent session config for this query
+       sqlOperationConf = new HiveConf(sqlOperationConf);
+ 
+diff --git a/src/service/src/java/org/apache/hive/service/cli/session/HiveSessionImpl.java b/src/service/src/java/org/apache/hive/service/cli/session/HiveSessionImpl.java
+index 62bcb18..129b550 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/session/HiveSessionImpl.java
++++ b/src/service/src/java/org/apache/hive/service/cli/session/HiveSessionImpl.java
+@@ -208,7 +208,11 @@ private OperationHandle executeStatementInternal(String statement, Map<String, S
+       opHandleSet.add(opHandle);
+       return opHandle;
+     } catch (HiveSQLException e) {
+-      operationManager.closeOperation(opHandle);
++      // Cleanup opHandle in case the query is synchronous
++      // Async query needs to retain and pass back the opHandle for error reporting
++      if (!runAsync) {
++        operationManager.closeOperation(opHandle);
++      }
+       throw e;
+     } finally {
+       release();
+diff --git a/src/service/src/java/org/apache/hive/service/cli/session/SessionManager.java b/src/service/src/java/org/apache/hive/service/cli/session/SessionManager.java
+index b3bbd01..b3fc07d 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/session/SessionManager.java
++++ b/src/service/src/java/org/apache/hive/service/cli/session/SessionManager.java
+@@ -18,9 +18,11 @@
+ 
+ package org.apache.hive.service.cli.session;
+ 
+-import java.util.HashMap;
+ import java.util.List;
+ import java.util.Map;
++import java.util.concurrent.ConcurrentHashMap;
++import java.util.concurrent.ExecutorService;
++import java.util.concurrent.Executors;
+ import java.util.concurrent.Future;
+ import java.util.concurrent.LinkedBlockingQueue;
+ import java.util.concurrent.ThreadPoolExecutor;
+@@ -47,8 +49,9 @@
+ public class SessionManager extends CompositeService {
+   private static final Log LOG = LogFactory.getLog(CompositeService.class);
+   private HiveConf hiveConf;
+-  private final Map<SessionHandle, HiveSession> handleToSession = new HashMap<SessionHandle, HiveSession>();
+-  private OperationManager operationManager = new OperationManager();
++  private final Map<SessionHandle, HiveSession> handleToSession =
++      new ConcurrentHashMap<SessionHandle, HiveSession>();
++  private final OperationManager operationManager = new OperationManager();
+   private LogManager logManager = new LogManager();
+   private static final Object sessionMapLock = new Object();
+   private ThreadPoolExecutor backgroundOperationPool;
+@@ -60,7 +63,6 @@ public SessionManager() {
+   @Override
+   public synchronized void init(HiveConf hiveConf) {
+     this.hiveConf = hiveConf;
+-    operationManager = new OperationManager();
+     int backgroundPoolSize = hiveConf.getIntVar(ConfVars.HIVE_SERVER2_ASYNC_EXEC_THREADS);
+     LOG.info("HiveServer2: Async execution thread pool size: " + backgroundPoolSize);
+     int backgroundPoolQueueSize = hiveConf.getIntVar(ConfVars.HIVE_SERVER2_ASYNC_EXEC_WAIT_QUEUE_SIZE);
+@@ -102,17 +104,20 @@ public synchronized void stop() {
+   }
+ 
+   public SessionHandle openSession(String username, String password, Map<String, String> sessionConf)
+-          throws HiveSQLException {
+-     return openSession(username, password, sessionConf, false, null);
++      throws HiveSQLException {
++    return openSession(username, password, sessionConf, false, null);
+   }
+ 
+   public SessionHandle openSession(String username, String password, Map<String, String> sessionConf,
+-          boolean withImpersonation, String delegationToken) throws HiveSQLException {
++      boolean withImpersonation, String delegationToken) throws HiveSQLException {
+     HiveSession session;
++    if (username == null) {
++      username = threadLocalUserName.get();
++    }
+     if (withImpersonation) {
+       HiveSessionImplwithUGI hiveSessionUgi = new HiveSessionImplwithUGI(username, password, sessionConf,
+           threadLocalIpAddress.get(), delegationToken);
+-      session = (HiveSession)HiveSessionProxy.getProxy(hiveSessionUgi, hiveSessionUgi.getSessionUgi());
++      session = HiveSessionProxy.getProxy(hiveSessionUgi, hiveSessionUgi.getSessionUgi());
+       hiveSessionUgi.setProxySession(session);
+     } else {
+       session = new HiveSessionImpl(username, password, sessionConf, threadLocalIpAddress.get());
+diff --git a/src/service/src/java/org/apache/hive/service/cli/thrift/ThriftCLIService.java b/src/service/src/java/org/apache/hive/service/cli/thrift/ThriftCLIService.java
+index 4c605d7..64b916e 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/thrift/ThriftCLIService.java
++++ b/src/service/src/java/org/apache/hive/service/cli/thrift/ThriftCLIService.java
+@@ -39,7 +39,7 @@
+ import org.apache.hive.service.cli.GetInfoValue;
+ import org.apache.hive.service.cli.HiveSQLException;
+ import org.apache.hive.service.cli.OperationHandle;
+-import org.apache.hive.service.cli.OperationState;
++import org.apache.hive.service.cli.OperationStatus;
+ import org.apache.hive.service.cli.RowSet;
+ import org.apache.hive.service.cli.SessionHandle;
+ import org.apache.hive.service.cli.TableSchema;
+@@ -199,6 +199,7 @@ public TGetLogResp GetLog(TGetLogReq req) throws TException {
+ 
+   @Override
+   public TOpenSessionResp OpenSession(TOpenSessionReq req) throws TException {
++    LOG.info("Client protocol version: " + req.getClient_protocol());
+     TOpenSessionResp resp = new TOpenSessionResp();
+     try {
+       SessionHandle sessionHandle = getSessionHandle(req);
+@@ -310,8 +311,8 @@ public TExecuteStatementResp ExecuteStatement(TExecuteStatementReq req) throws T
+           resp.setOperationHandle(operationHandle.toTOperationHandle());
+           resp.setStatus(OK_STATUS);
+     } catch (Exception e) {
+-       LOG.warn("Error fetching results: ", e);
+-       resp.setStatus(HiveSQLException.toTStatus(e));
++      LOG.warn("Error executing statement: ", e);
++      resp.setStatus(HiveSQLException.toTStatus(e));
+     }
+     return resp;
+   }
+@@ -428,8 +429,15 @@ public TGetFunctionsResp GetFunctions(TGetFunctionsReq req) throws TException {
+   public TGetOperationStatusResp GetOperationStatus(TGetOperationStatusReq req) throws TException {
+     TGetOperationStatusResp resp = new TGetOperationStatusResp();
+     try {
+-      OperationState operationState = cliService.getOperationStatus(new OperationHandle(req.getOperationHandle()));
+-      resp.setOperationState(operationState.toTOperationState());
++      OperationStatus operationStatus = cliService.getOperationStatus(
++          new OperationHandle(req.getOperationHandle()));
++      resp.setOperationState(operationStatus.getState().toTOperationState());
++      HiveSQLException opException = operationStatus.getOperationException();
++      if (opException != null) {
++        resp.setSqlState(opException.getSQLState());
++        resp.setErrorCode(opException.getErrorCode());
++        resp.setErrorMessage(opException.getMessage());
++      }
+       resp.setStatus(OK_STATUS);
+     } catch (Exception e) {
+       LOG.warn("Error getting functions: ", e);
+diff --git a/src/service/src/java/org/apache/hive/service/cli/thrift/ThriftCLIServiceClient.java b/src/service/src/java/org/apache/hive/service/cli/thrift/ThriftCLIServiceClient.java
+index 09ab531..d8c5970 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/thrift/ThriftCLIServiceClient.java
++++ b/src/service/src/java/org/apache/hive/service/cli/thrift/ThriftCLIServiceClient.java
+@@ -29,6 +29,7 @@
+ import org.apache.hive.service.cli.HiveSQLException;
+ import org.apache.hive.service.cli.OperationHandle;
+ import org.apache.hive.service.cli.OperationState;
++import org.apache.hive.service.cli.OperationStatus;
+ import org.apache.hive.service.cli.RowSet;
+ import org.apache.hive.service.cli.SessionHandle;
+ import org.apache.hive.service.cli.TableSchema;
+@@ -297,12 +298,18 @@ public OperationHandle getFunctions(SessionHandle sessionHandle,
+    * @see org.apache.hive.service.cli.ICLIService#getOperationStatus(org.apache.hive.service.cli.OperationHandle)
+    */
+   @Override
+-  public OperationState getOperationStatus(OperationHandle opHandle) throws HiveSQLException {
++  public OperationStatus getOperationStatus(OperationHandle opHandle) throws HiveSQLException {
+     try {
+       TGetOperationStatusReq req = new TGetOperationStatusReq(opHandle.toTOperationHandle());
+       TGetOperationStatusResp resp = cliService.GetOperationStatus(req);
++      // Checks the status of the RPC call, throws an exception in case of error
+       checkStatus(resp.getStatus());
+-      return OperationState.getOperationState(resp.getOperationState());
++      OperationState opState = OperationState.getOperationState(resp.getOperationState());
++      HiveSQLException opException = null;
++      if (opState == OperationState.ERROR) {
++        opException = new HiveSQLException(resp.getErrorMessage(), resp.getSqlState(), resp.getErrorCode());
++      }
++      return new OperationStatus(opState, opException);
+     } catch (HiveSQLException e) {
+       throw e;
+     } catch (Exception e) {
+diff --git a/src/service/src/test/org/apache/hive/service/cli/CLIServiceTest.java b/src/service/src/test/org/apache/hive/service/cli/CLIServiceTest.java
+index 44d3130..8ec8d43 100644
+--- a/src/service/src/test/org/apache/hive/service/cli/CLIServiceTest.java
++++ b/src/service/src/test/org/apache/hive/service/cli/CLIServiceTest.java
+@@ -20,6 +20,7 @@
+ 
+ import static org.junit.Assert.assertEquals;
+ import static org.junit.Assert.assertNotNull;
++import static org.junit.Assert.assertTrue;
+ import static org.junit.Assert.fail;
+ import static org.junit.Assert.assertTrue;
+ 
+@@ -28,6 +29,7 @@
+ import java.util.Map;
+ 
+ import org.apache.hadoop.hive.conf.HiveConf;
++import org.apache.hadoop.hive.ql.ErrorMsg;
+ import org.junit.After;
+ import org.junit.Before;
+ import org.junit.Test;
+@@ -56,8 +58,8 @@ public void tearDown() throws Exception {
+ 
+   @Test
+   public void openSessionTest() throws Exception {
+-    SessionHandle sessionHandle = client
+-        .openSession("tom", "password", Collections.<String, String>emptyMap());
++    SessionHandle sessionHandle = client.openSession(
++        "tom", "password", Collections.<String, String>emptyMap());
+     assertNotNull(sessionHandle);
+     client.closeSession(sessionHandle);
+ 
+@@ -68,8 +70,9 @@ public void openSessionTest() throws Exception {
+ 
+   @Test
+   public void getFunctionsTest() throws Exception {
+-    SessionHandle sessionHandle = client.openSession("tom", "password", new HashMap<String, String>());
++    SessionHandle sessionHandle = client.openSession("tom", "password");
+     assertNotNull(sessionHandle);
++
+     OperationHandle opHandle = client.getFunctions(sessionHandle, null, null, "*");
+     TableSchema schema = client.getResultSetMetadata(opHandle);
+ 
+@@ -97,13 +100,15 @@ public void getFunctionsTest() throws Exception {
+     assertEquals("SPECIFIC_NAME", columnDesc.getName());
+     assertEquals(Type.STRING_TYPE, columnDesc.getType());
+ 
++    // Cleanup
+     client.closeOperation(opHandle);
+     client.closeSession(sessionHandle);
+   }
+ 
+   @Test
+   public void getInfoTest() throws Exception {
+-    SessionHandle sessionHandle = client.openSession("tom", "password", new HashMap<String, String>());
++    SessionHandle sessionHandle = client.openSession(
++        "tom", "password", Collections.<String, String>emptyMap());
+     assertNotNull(sessionHandle);
+ 
+     GetInfoValue value = client.getInfo(sessionHandle, GetInfoType.CLI_DBMS_NAME);
+@@ -121,30 +126,39 @@ public void getInfoTest() throws Exception {
+   @Test
+   public void testExecuteStatement() throws Exception {
+     HashMap<String, String> confOverlay = new HashMap<String, String>();
+-    SessionHandle sessionHandle = client.openSession("tom", "password",
+-        new HashMap<String, String>());
++    SessionHandle sessionHandle = client.openSession(
++        "tom", "password", new HashMap<String, String>());
+     assertNotNull(sessionHandle);
+ 
+-    // Change lock manager, otherwise unit-test doesn't go through
+-    String queryString = "SET hive.lock.manager=" +
+-        "org.apache.hadoop.hive.ql.lockmgr.EmbeddedLockManager";
+-    client.executeStatement(sessionHandle, queryString, confOverlay);
++    OperationHandle opHandle;
++
++    String queryString = "SET " + HiveConf.ConfVars.HIVE_SUPPORT_CONCURRENCY.varname
++        + " = false";
++    opHandle = client.executeStatement(sessionHandle, queryString, confOverlay);
++    client.closeOperation(opHandle);
+ 
+-    // Drop the table if it exists
+     queryString = "DROP TABLE IF EXISTS TEST_EXEC";
+-    client.executeStatement(sessionHandle, queryString, confOverlay);
++    opHandle = client.executeStatement(sessionHandle, queryString, confOverlay);
++    client.closeOperation(opHandle);
+ 
+     // Create a test table
+     queryString = "CREATE TABLE TEST_EXEC(ID STRING)";
+-    client.executeStatement(sessionHandle, queryString, confOverlay);
++    opHandle = client.executeStatement(sessionHandle, queryString, confOverlay);
++    client.closeOperation(opHandle);
+ 
+     // Blocking execute
+     queryString = "SELECT ID FROM TEST_EXEC";
+-    OperationHandle ophandle = client.executeStatement(sessionHandle, queryString, confOverlay);
+-
++    opHandle = client.executeStatement(sessionHandle, queryString, confOverlay);
+     // Expect query to be completed now
+     assertEquals("Query should be finished",
+-        OperationState.FINISHED, client.getOperationStatus(ophandle));
++        OperationState.FINISHED, client.getOperationStatus(opHandle).getState());
++    client.closeOperation(opHandle);
++
++    // Cleanup
++    queryString = "DROP TABLE IF EXISTS TEST_EXEC";
++    opHandle = client.executeStatement(sessionHandle, queryString, confOverlay);
++    client.closeOperation(opHandle);
++    client.closeSession(sessionHandle);
+   }
+ 
+   @Test
+@@ -156,32 +170,40 @@ public void testExecuteStatementAsync() throws Exception {
+     long pollTimeout = System.currentTimeMillis() + 100000;
+     assertNotNull(sessionHandle);
+     OperationState state = null;
+-    OperationHandle ophandle = null;
++    OperationHandle opHandle;
++    OperationStatus opStatus = null;
+ 
+     // Change lock manager, otherwise unit-test doesn't go through
+-    String queryString = "SET hive.lock.manager=" +
+-        "org.apache.hadoop.hive.ql.lockmgr.EmbeddedLockManager";
+-    client.executeStatement(sessionHandle, queryString, confOverlay);
++    String queryString = "SET " + HiveConf.ConfVars.HIVE_SUPPORT_CONCURRENCY.varname
++        + " = false";
++    opHandle = client.executeStatement(sessionHandle, queryString, confOverlay);
++    client.closeOperation(opHandle);
+ 
+     // Drop the table if it exists
+     queryString = "DROP TABLE IF EXISTS TEST_EXEC_ASYNC";
+-    client.executeStatement(sessionHandle, queryString, confOverlay);
++    opHandle = client.executeStatement(sessionHandle, queryString, confOverlay);
++    client.closeOperation(opHandle);
+ 
+     // Create a test table
+     queryString = "CREATE TABLE TEST_EXEC_ASYNC(ID STRING)";
+-    client.executeStatement(sessionHandle, queryString, confOverlay);
++    opHandle = client.executeStatement(sessionHandle, queryString, confOverlay);
++    client.closeOperation(opHandle);
+ 
+     // Test async execution response when query is malformed
+-    String wrongQuery = "SELECT NAME FROM TEST_EXEC";
++    // Compile time error
++    // This query will error out during compilation (which is done synchronous as of now)
++    String wrongQueryString = "SELECT NON_EXISTANT_COLUMN FROM TEST_EXEC_ASYNC";
+     try {
+-      ophandle = client.executeStatementAsync(sessionHandle, wrongQuery, confOverlay);
++      opHandle = client.executeStatementAsync(sessionHandle, wrongQueryString, confOverlay);
+       fail("Async syntax excution should fail");
+     } catch (HiveSQLException e) {
+       // expected error
+     }
++    
+ 
+-    wrongQuery = "CREATE TABLE NON_EXISTING_TAB (ID STRING) location 'hdfs://fooNN:10000/a/b/c'";
+-    ophandle = client.executeStatementAsync(sessionHandle, wrongQuery, confOverlay);
++    // Runtime error
++    wrongQueryString = "CREATE TABLE NON_EXISTING_TAB (ID STRING) location 'hdfs://fooNN:10000/a/b/c'";
++    opHandle = client.executeStatementAsync(sessionHandle, wrongQueryString, confOverlay);
+ 
+     int count = 0;
+     while (true) {
+@@ -190,25 +212,28 @@ public void testExecuteStatementAsync() throws Exception {
+         System.out.println("Polling timed out");
+         break;
+       }
+-      state = client.getOperationStatus(ophandle);
+-      System.out.println("Polling: " + ophandle + " count=" + (++count)
++      opStatus = client.getOperationStatus(opHandle);
++      state = opStatus.getState();
++      System.out.println("Polling: " + opHandle + " count=" + (++count)
+           + " state=" + state);
+ 
+-      if (OperationState.CANCELED == state || state == OperationState.CLOSED
++      if (state == OperationState.CANCELED || state == OperationState.CLOSED
+           || state == OperationState.FINISHED || state == OperationState.ERROR) {
+         break;
+       }
+       Thread.sleep(1000);
+     }
+-    assertEquals("Query should return an error state",
+-        OperationState.ERROR, client.getOperationStatus(ophandle));
+-
++    assertEquals("Operation should be in error state", OperationState.ERROR, state);
++    // sqlState, errorCode should be set
++    assertEquals(opStatus.getOperationException().getSQLState(), "08S01");
++    assertEquals(opStatus.getOperationException().getErrorCode(), 1);
++    client.closeOperation(opHandle);
++    
+     // Test async execution when query is well formed
+     queryString = "SELECT ID FROM TEST_EXEC_ASYNC";
+-    ophandle =
+-        client.executeStatementAsync(sessionHandle, queryString, confOverlay);
+-
+-    assertTrue(ophandle.hasResultSet());
++    opHandle = client.executeStatementAsync(sessionHandle, queryString, confOverlay);
++    assertTrue(opHandle.hasResultSet());
++    
+     count = 0;
+     while (true) {
+       // Break if polling times out
+@@ -216,26 +241,33 @@ public void testExecuteStatementAsync() throws Exception {
+         System.out.println("Polling timed out");
+         break;
+       }
+-      state = client.getOperationStatus(ophandle);
+-      System.out.println("Polling: " + ophandle + " count=" + (++count)
++      opStatus = client.getOperationStatus(opHandle);
++      state = opStatus.getState();
++      System.out.println("Polling: " + opHandle + " count=" + (++count)
+           + " state=" + state);
+ 
+-      if (OperationState.CANCELED == state || state == OperationState.CLOSED
++      if (state == OperationState.CANCELED || state == OperationState.CLOSED
+           || state == OperationState.FINISHED || state == OperationState.ERROR) {
+         break;
+       }
+       Thread.sleep(1000);
+     }
+-    assertEquals("Query should be finished",
+-        OperationState.FINISHED, client.getOperationStatus(ophandle));
++    assertEquals("Query should be finished", OperationState.FINISHED, state);
++    client.closeOperation(opHandle);
+ 
+     // Cancellation test
+-    ophandle = client.executeStatementAsync(sessionHandle, queryString, confOverlay);
+-    System.out.println("cancelling " + ophandle);
+-    client.cancelOperation(ophandle);
+-    state = client.getOperationStatus(ophandle);
+-    System.out.println(ophandle + " after cancelling, state= " + state);
++    opHandle = client.executeStatementAsync(sessionHandle, queryString, confOverlay);
++    System.out.println("cancelling " + opHandle);
++    client.cancelOperation(opHandle);
++    state = client.getOperationStatus(opHandle).getState();
++    System.out.println(opHandle + " after cancelling, state= " + state);
+     assertEquals("Query should be cancelled", OperationState.CANCELED, state);
++
++    // Cleanup
++    queryString = "DROP TABLE IF EXISTS TEST_EXEC_ASYNC";
++    opHandle = client.executeStatement(sessionHandle, queryString, confOverlay);
++    client.closeOperation(opHandle);
++    client.closeSession(sessionHandle);
+   }
+ 
+   /**
+@@ -271,7 +303,7 @@ public void testConfOverlay() throws Exception {
+     assertNotNull(opHandle);
+     // query should pass and create the table
+     assertEquals("Query should be finished",
+-        OperationState.FINISHED, client.getOperationStatus(opHandle));
++        OperationState.FINISHED, client.getOperationStatus(opHandle).getState());
+     client.closeOperation(opHandle);
+ 
+     // select from  the new table should pass
+@@ -280,10 +312,10 @@ public void testConfOverlay() throws Exception {
+     assertNotNull(opHandle);
+     // query should pass and create the table
+     assertEquals("Query should be finished",
+-        OperationState.FINISHED, client.getOperationStatus(opHandle));
++        OperationState.FINISHED, client.getOperationStatus(opHandle).getState());
+     client.closeOperation(opHandle);
+ 
+-    // the settings in confoverly should not be part of session config
++    // the settings in conf overlay should not be part of session config
+     // another query referring that property with the conf overlay should fail
+     selectTab = "SELECT * FROM ${hiveconf:" + tabNameVar + "}";
+     try {
+@@ -297,8 +329,6 @@ public void testConfOverlay() throws Exception {
+     dropTable = "DROP TABLE IF EXISTS " + tabName;
+     opHandle = client.executeStatement(sessionHandle, dropTable, null);
+     client.closeOperation(opHandle);
+-
+-
+     client.closeSession(sessionHandle);
+   }
+ }
+diff --git a/src/service/src/test/org/apache/hive/service/cli/thrift/ThriftCLIServiceTest.java b/src/service/src/test/org/apache/hive/service/cli/thrift/ThriftCLIServiceTest.java
+index ff7166d..249148d 100644
+--- a/src/service/src/test/org/apache/hive/service/cli/thrift/ThriftCLIServiceTest.java
++++ b/src/service/src/test/org/apache/hive/service/cli/thrift/ThriftCLIServiceTest.java
+@@ -31,12 +31,12 @@
+ import org.apache.hadoop.hive.conf.HiveConf;
+ import org.apache.hadoop.hive.conf.HiveConf.ConfVars;
+ import org.apache.hadoop.hive.metastore.MetaStoreUtils;
++import org.apache.hadoop.hive.ql.ErrorMsg;
+ import org.apache.hive.service.Service;
+ import org.apache.hive.service.auth.HiveAuthFactory;
+ import org.apache.hive.service.auth.PlainSaslHelper;
+ import org.apache.hive.service.cli.CLIService;
+ import org.apache.hive.service.cli.HiveSQLException;
+-import org.apache.hive.service.cli.OperationState;
+ import org.apache.hive.service.cli.SessionHandle;
+ import org.apache.hive.service.cli.session.HiveSession;
+ import org.apache.hive.service.cli.session.SessionManager;
+@@ -67,8 +67,6 @@
+   protected static String anonymousUser = "anonymous";
+   protected static String anonymousPasswd = "anonymous";
+ 
+-
+-
+   /**
+    * @throws java.lang.Exception
+    */
+@@ -162,6 +160,10 @@ public void testGetFunctions() throws Exception {
+     client.CloseSession(closeReq);
+   }
+ 
++  /**
++   * Test synchronous query execution
++   * @throws Exception
++   */
+   @Test
+   public void testExecuteStatement() throws Exception {
+     // Create a new request object
+@@ -172,19 +174,19 @@ public void testExecuteStatement() throws Exception {
+     // Change lock manager to embedded mode
+     String queryString = "SET hive.lock.manager=" +
+         "org.apache.hadoop.hive.ql.lockmgr.EmbeddedLockManager";
+-    executeQuerySync(queryString, sessHandle);
++    executeQuery(queryString, sessHandle, false);
+ 
+     // Drop the table if it exists
+     queryString = "DROP TABLE IF EXISTS TEST_EXEC_THRIFT";
+-    executeQuerySync(queryString, sessHandle);
++    executeQuery(queryString, sessHandle, false);
+ 
+     // Create a test table
+     queryString = "CREATE TABLE TEST_EXEC_THRIFT(ID STRING)";
+-    executeQuerySync(queryString, sessHandle);
++    executeQuery(queryString, sessHandle, false);
+ 
+-    // Execute another query to test
++    // Execute another query
+     queryString = "SELECT ID FROM TEST_EXEC_THRIFT";
+-    TExecuteStatementResp execResp = executeQuerySync(queryString, sessHandle);
++    TExecuteStatementResp execResp = executeQuery(queryString, sessHandle, false);
+     TOperationHandle operationHandle = execResp.getOperationHandle();
+     assertNotNull(operationHandle);
+ 
+@@ -192,28 +194,133 @@ public void testExecuteStatement() throws Exception {
+     opStatusReq.setOperationHandle(operationHandle);
+     assertNotNull(opStatusReq);
+     TGetOperationStatusResp opStatusResp = client.GetOperationStatus(opStatusReq);
+-
++    TOperationState state = opStatusResp.getOperationState();
+     // Expect query to be completed now
+-    assertEquals("Query should be finished",
+-        OperationState.FINISHED, OperationState.getOperationState(opStatusResp.getOperationState()));
++    assertEquals("Query should be finished", TOperationState.FINISHED_STATE, state);
+ 
++    // Cleanup
+     queryString = "DROP TABLE TEST_EXEC_THRIFT";
+-    executeQuerySync(queryString, sessHandle);
++    executeQuery(queryString, sessHandle, false);
++
++    // Close the session; ignore exception if any
++    TCloseSessionReq closeReq = new TCloseSessionReq(sessHandle);
++    client.CloseSession(closeReq);
++  }
++
++  /**
++   * Test asynchronous query execution and error message reporting to the client
++   * @throws Exception
++   */
++  @Test
++  public void testExecuteStatementAsync() throws Exception {
++    // Create a new request object
++    TOpenSessionReq openReq = new TOpenSessionReq();
++    TSessionHandle sessHandle = client.OpenSession(openReq).getSessionHandle();
++    assertNotNull(sessHandle);
++
++    // Change lock manager to embedded mode
++    String queryString = "SET hive.lock.manager=" +
++        "org.apache.hadoop.hive.ql.lockmgr.EmbeddedLockManager";
++    executeQuery(queryString, sessHandle, false);
++
++    // Drop the table if it exists
++    queryString = "DROP TABLE IF EXISTS TEST_EXEC_ASYNC_THRIFT";
++    executeQuery(queryString, sessHandle, false);
++
++    // Create a test table
++    queryString = "CREATE TABLE TEST_EXEC_ASYNC_THRIFT(ID STRING)";
++    executeQuery(queryString, sessHandle, false);
++
++    // Execute another query
++    queryString = "SELECT ID FROM TEST_EXEC_ASYNC_THRIFT";
++    System.out.println("Will attempt to execute: " + queryString);
++    TExecuteStatementResp execResp = executeQuery(queryString, sessHandle, true);
++    TOperationHandle operationHandle = execResp.getOperationHandle();
++    assertNotNull(operationHandle);
++
++    // Poll on the operation status till the query is completed
++    boolean isQueryRunning = true;
++    TGetOperationStatusReq opStatusReq;
++    TGetOperationStatusResp opStatusResp = null;
++    TOperationState state = null;
++    long pollTimeout = System.currentTimeMillis() + 100000;
++
++    while(isQueryRunning) {
++      // Break if polling times out
++      if (System.currentTimeMillis() > pollTimeout) {
++        System.out.println("Polling timed out");
++        break;
++      }
++      opStatusReq = new TGetOperationStatusReq();
++      opStatusReq.setOperationHandle(operationHandle);
++      assertNotNull(opStatusReq);
++      opStatusResp = client.GetOperationStatus(opStatusReq);
++      state = opStatusResp.getOperationState();
++      System.out.println("Current state: " + state);
++
++      if (state == TOperationState.CANCELED_STATE || state == TOperationState.CLOSED_STATE
++          || state == TOperationState.FINISHED_STATE || state == TOperationState.ERROR_STATE) {
++        isQueryRunning = false;
++      }
++      Thread.sleep(1000);
++    }
++
++    // Expect query to be successfully completed now
++    assertEquals("Query should be finished",
++        TOperationState.FINISHED_STATE, state);
++
++    // Execute a malformed query
++    // This query will give a runtime error
++    queryString = "CREATE TABLE NON_EXISTING_TAB (ID STRING) location 'hdfs://fooNN:10000/a/b/c'";
++    System.out.println("Will attempt to execute: " + queryString);
++    execResp = executeQuery(queryString, sessHandle, true);
++    operationHandle = execResp.getOperationHandle();
++    assertNotNull(operationHandle);
++    isQueryRunning = true;
++    while(isQueryRunning) {
++      // Break if polling times out
++      if (System.currentTimeMillis() > pollTimeout) {
++        System.out.println("Polling timed out");
++        break;
++      }
++      opStatusReq = new TGetOperationStatusReq();
++      opStatusReq.setOperationHandle(operationHandle);
++      assertNotNull(opStatusReq);
++      opStatusResp = client.GetOperationStatus(opStatusReq);
++      state = opStatusResp.getOperationState();
++      System.out.println("Current state: " + state);
++
++      if (state == TOperationState.CANCELED_STATE || state == TOperationState.CLOSED_STATE
++          || state == TOperationState.FINISHED_STATE || state == TOperationState.ERROR_STATE) {
++        isQueryRunning = false;
++      }
++      Thread.sleep(1000);
++    }
++
++    // Expect query to return an error state
++    assertEquals("Operation should be in error state", TOperationState.ERROR_STATE, state);
++
++    // sqlState, errorCode should be set to appropriate values
++    assertEquals(opStatusResp.getSqlState(), "08S01");
++    assertEquals(opStatusResp.getErrorCode(), 1);
++
++    // Cleanup
++    queryString = "DROP TABLE TEST_EXEC_ASYNC_THRIFT";
++    executeQuery(queryString, sessHandle, false);
+ 
+     // Close the session; ignore exception if any
+     TCloseSessionReq closeReq = new TCloseSessionReq(sessHandle);
+     client.CloseSession(closeReq);
+   }
+ 
+-  private TExecuteStatementResp executeQuerySync(String queryString, TSessionHandle sessHandle)
++  private TExecuteStatementResp executeQuery(String queryString, TSessionHandle sessHandle, boolean runAsync)
+       throws Exception {
+     TExecuteStatementReq execReq = new TExecuteStatementReq();
+     execReq.setSessionHandle(sessHandle);
+     execReq.setStatement(queryString);
+-    execReq.setRunAsync(false);
++    execReq.setRunAsync(runAsync);
+     TExecuteStatementResp execResp = client.ExecuteStatement(execReq);
+     assertNotNull(execResp);
+-    assertFalse(execResp.getStatus().getStatusCode() == TStatusCode.ERROR_STATUS);
+     return execResp;
+   }
+ 
+-- 
+1.7.0.4
+

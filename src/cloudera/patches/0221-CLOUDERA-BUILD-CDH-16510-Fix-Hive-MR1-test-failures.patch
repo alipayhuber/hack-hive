@@ -1,0 +1,25 @@
+From 114165a67d19815b1915454257345ed886c2f054 Mon Sep 17 00:00:00 2001
+From: Prasad Mujumdar <prasadm@cloudera.com>
+Date: Wed, 8 Jan 2014 22:12:04 -0800
+Subject: [PATCH 221/375] CLOUDERA-BUILD: CDH-16510 - Fix Hive MR1 test failures
+
+---
+ itests/qtest/pom.xml |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+
+diff --git a/src/itests/qtest/pom.xml b/src/itests/qtest/pom.xml
+index 4a63526..26cbf79 100644
+--- a/src/itests/qtest/pom.xml
++++ b/src/itests/qtest/pom.xml
+@@ -123,7 +123,7 @@
+       </activation>
+       <properties>
+         <active.hadoop.version>${hadoop-20S.version}</active.hadoop.version>
+-        <test.dfs.mkdir>-mkdir</test.dfs.mkdir>
++        <test.dfs.mkdir>-mkdir -p</test.dfs.mkdir>
+       </properties>
+       <dependencies>
+         <dependency>
+-- 
+1.7.0.4
+

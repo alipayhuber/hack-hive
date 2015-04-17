@@ -1,0 +1,346 @@
+From 9b41f0ca6eedb6c38596ba15df092d47c86b12f1 Mon Sep 17 00:00:00 2001
+From: Brock Noland <brock@apache.org>
+Date: Thu, 20 Mar 2014 06:22:40 -0700
+Subject: [PATCH 313/375] CDH-17597 - Backport HIVE-5941 - SQL std auth - support 'show roles'
+
+---
+ .../org/apache/hadoop/hive/ql/exec/DDLTask.java    |   42 ++++++++++++-------
+ .../hadoop/hive/ql/parse/DDLSemanticAnalyzer.java  |   13 ++++++
+ .../org/apache/hadoop/hive/ql/parse/HiveLexer.g    |    1 +
+ .../org/apache/hadoop/hive/ql/parse/HiveParser.g   |    9 ++++
+ .../hadoop/hive/ql/parse/IdentifiersParser.g       |    2 +-
+ .../hive/ql/parse/SemanticAnalyzerFactory.java     |    2 +
+ .../apache/hadoop/hive/ql/plan/HiveOperation.java  |    1 +
+ .../apache/hadoop/hive/ql/plan/RoleDDLDesc.java    |    2 +-
+ ql/src/test/queries/clientpositive/show_roles.q    |    4 ++
+ .../test/results/clientpositive/show_roles.q.out   |   14 +++++++
+ 10 files changed, 72 insertions(+), 18 deletions(-)
+ create mode 100644 ql/src/test/queries/clientpositive/show_roles.q
+ create mode 100644 ql/src/test/results/clientpositive/show_roles.q.out
+
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/DDLTask.java b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/DDLTask.java
+index 63b9628..16fe53f 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/DDLTask.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/DDLTask.java
+@@ -22,7 +22,6 @@
+ import static org.apache.hadoop.util.StringUtils.stringifyException;
+ 
+ import java.io.BufferedWriter;
+-import java.io.DataOutput;
+ import java.io.DataOutputStream;
+ import java.io.FileNotFoundException;
+ import java.io.IOException;
+@@ -743,7 +742,7 @@ private int grantOrRevokePrivileges(List<PrincipalDesc> principals,
+ 
+   private int roleDDL(RoleDDLDesc roleDDLDesc) {
+     RoleDDLDesc.RoleOperation operation = roleDDLDesc.getOperation();
+-    DataOutput outStream = null;
++    DataOutputStream outStream = null;
+     try {
+       if (operation.equals(RoleDDLDesc.RoleOperation.CREATE_ROLE)) {
+         db.createRole(roleDDLDesc.getName(), roleDDLDesc.getRoleOwnerName());
+@@ -760,9 +759,20 @@ private int roleDDL(RoleDDLDesc roleDDLDesc) {
+             outStream.writeBytes(role.getRoleName());
+             outStream.write(terminator);
+           }
+-          ((FSDataOutputStream) outStream).close();
++          outStream.close();
+           outStream = null;
+         }
++      } else if (operation.equals(RoleDDLDesc.RoleOperation.SHOW_ROLES)) {
++        List<String> roleNames = db.getAllRoleNames();
++        Path resFile = new Path(roleDDLDesc.getResFile());
++        FileSystem fs = resFile.getFileSystem(conf);
++        outStream = fs.create(resFile);
++        for (String roleName : roleNames) {
++          outStream.writeBytes(roleName);
++          outStream.write(terminator);
++        }
++        outStream.close();
++        outStream = null;
+       } else {
+         throw new HiveException("Unkown role operation "
+             + operation.getOperationName());
+@@ -1850,7 +1860,7 @@ private int showCreateTable(Hive db, ShowCreateTableDesc showCreateTbl) throws H
+ 
+     String tableName = showCreateTbl.getTableName();
+     Table tbl = db.getTable(tableName, false);
+-    DataOutput outStream = null;
++    DataOutputStream outStream = null;
+     List<String> duplicateProps = new ArrayList<String>();
+     try {
+       Path resFile = new Path(showCreateTbl.getResFile());
+@@ -1860,7 +1870,7 @@ private int showCreateTable(Hive db, ShowCreateTableDesc showCreateTbl) throws H
+       if (tbl.isView()) {
+         String createTab_stmt = "CREATE VIEW `" + tableName + "` AS " + tbl.getViewExpandedText();
+         outStream.writeBytes(createTab_stmt.toString());
+-        ((FSDataOutputStream) outStream).close();
++        outStream.close();
+         outStream = null;
+         return 0;
+       }
+@@ -2047,7 +2057,7 @@ else if (sortCol.getOrder() == BaseSemanticAnalyzer.HIVE_COLUMN_ORDER_DESC) {
+       createTab_stmt.add(TBL_PROPERTIES, tbl_properties);
+ 
+       outStream.writeBytes(createTab_stmt.render());
+-      ((FSDataOutputStream) outStream).close();
++      outStream.close();
+       outStream = null;
+     } catch (FileNotFoundException e) {
+       LOG.info("show create table: " + stringifyException(e));
+@@ -2086,7 +2096,7 @@ private int showIndexes(Hive db, ShowIndexesDesc showIndexes) throws HiveExcepti
+     indexes = db.getIndexes(tbl.getDbName(), tbl.getTableName(), (short) -1);
+ 
+     // write the results in the file
+-    DataOutput outStream = null;
++    DataOutputStream outStream = null;
+     try {
+       Path resFile = new Path(showIndexes.getResFile());
+       FileSystem fs = resFile.getFileSystem(conf);
+@@ -2104,7 +2114,7 @@ private int showIndexes(Hive db, ShowIndexesDesc showIndexes) throws HiveExcepti
+         outStream.writeBytes(MetaDataFormatUtils.getAllColumnsInformation(index));
+       }
+ 
+-      ((FSDataOutputStream) outStream).close();
++      outStream.close();
+       outStream = null;
+ 
+     } catch (FileNotFoundException e) {
+@@ -2220,7 +2230,7 @@ public int showColumns(Hive db, ShowColumnsDesc showCols)
+     }
+ 
+     // write the results in the file
+-    DataOutput outStream = null;
++    DataOutputStream outStream = null;
+     try {
+       Path resFile = new Path(showCols.getResFile());
+       FileSystem fs = resFile.getFileSystem(conf);
+@@ -2230,7 +2240,7 @@ public int showColumns(Hive db, ShowColumnsDesc showCols)
+       cols.addAll(table.getPartCols());
+       outStream.writeBytes(
+           MetaDataFormatUtils.getAllColumnsInformation(cols, false));
+-      ((FSDataOutputStream) outStream).close();
++      outStream.close();
+       outStream = null;
+     } catch (IOException e) {
+       throw new HiveException(e, ErrorMsg.GENERIC_ERROR);
+@@ -2261,7 +2271,7 @@ private int showFunctions(ShowFunctionsDesc showFuncs) throws HiveException {
+     }
+ 
+     // write the results in the file
+-    DataOutput outStream = null;
++    DataOutputStream outStream = null;
+     try {
+       Path resFile = new Path(showFuncs.getResFile());
+       FileSystem fs = resFile.getFileSystem(conf);
+@@ -2276,7 +2286,7 @@ private int showFunctions(ShowFunctionsDesc showFuncs) throws HiveException {
+         outStream.writeBytes(iterFuncs.next());
+         outStream.write(terminator);
+       }
+-      ((FSDataOutputStream) outStream).close();
++      outStream.close();
+       outStream = null;
+     } catch (FileNotFoundException e) {
+       LOG.warn("show function: " + stringifyException(e));
+@@ -2310,7 +2320,7 @@ private int showLocks(ShowLocksDesc showLocks) throws HiveException {
+     }
+ 
+     // write the results in the file
+-    DataOutput outStream = null;
++    DataOutputStream outStream = null;
+     try {
+       Path resFile = new Path(showLocks.getResFile());
+       FileSystem fs = resFile.getFileSystem(conf);
+@@ -2368,7 +2378,7 @@ public int compare(HiveLock o1, HiveLock o2) {
+         }
+         outStream.write(terminator);
+       }
+-      ((FSDataOutputStream) outStream).close();
++      outStream.close();
+       outStream = null;
+     } catch (FileNotFoundException e) {
+       LOG.warn("show function: " + stringifyException(e));
+@@ -2498,7 +2508,7 @@ private int describeFunction(DescFunctionDesc descFunc) throws HiveException {
+     String funcName = descFunc.getName();
+ 
+     // write the results in the file
+-    DataOutput outStream = null;
++    DataOutputStream outStream = null;
+     try {
+       Path resFile = new Path(descFunc.getResFile());
+       FileSystem fs = resFile.getFileSystem(conf);
+@@ -2537,7 +2547,7 @@ private int describeFunction(DescFunctionDesc descFunc) throws HiveException {
+ 
+       outStream.write(terminator);
+ 
+-      ((FSDataOutputStream) outStream).close();
++      outStream.close();
+       outStream = null;
+     } catch (FileNotFoundException e) {
+       LOG.warn("describe function: " + stringifyException(e));
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/DDLSemanticAnalyzer.java b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/DDLSemanticAnalyzer.java
+index b8de0dd..042b707 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/DDLSemanticAnalyzer.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/DDLSemanticAnalyzer.java
+@@ -413,6 +413,10 @@ public void analyzeInternal(ASTNode ast) throws SemanticException {
+       ctx.setResFile(new Path(ctx.getLocalTmpFileURI()));
+       analyzeShowRoleGrant(ast);
+       break;
++    case HiveParser.TOK_SHOW_ROLES:
++      ctx.setResFile(new Path(ctx.getLocalTmpFileURI()));
++      analyzeShowRoles(ast);
++      break;
+     case HiveParser.TOK_GRANT_ROLE:
+       analyzeGrantRevokeRole(true, ast);
+       break;
+@@ -503,6 +507,15 @@ private void analyzeShowRoleGrant(ASTNode ast) throws SemanticException {
+     }
+   }
+ 
++  private void analyzeShowRoles(ASTNode ast) {
++    RoleDDLDesc showRolesDesc = new RoleDDLDesc(null, null,
++        RoleDDLDesc.RoleOperation.SHOW_ROLES, null);
++    showRolesDesc.setResFile(ctx.getResFile().toString());
++    rootTasks.add(TaskFactory.get(new DDLWork(getInputs(), getOutputs(),
++        showRolesDesc), conf));
++    setFetchTask(createFetchTask(RoleDDLDesc.getSchema()));
++  }
++
+   private void analyzeAlterDatabase(ASTNode ast) throws SemanticException {
+ 
+     String dbName = unescapeIdentifier(ast.getChild(0).getText());
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/HiveLexer.g b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/HiveLexer.g
+index 923b93c..b8d3804 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/HiveLexer.g
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/HiveLexer.g
+@@ -263,6 +263,7 @@ KW_NOSCAN: 'NOSCAN';
+ KW_PARTIALSCAN: 'PARTIALSCAN';
+ KW_USER: 'USER';
+ KW_ROLE: 'ROLE';
++KW_ROLES: 'ROLES';
+ KW_INNER: 'INNER';
+ KW_EXCHANGE: 'EXCHANGE';
+ 
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/HiveParser.g b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/HiveParser.g
+index c1a36fb..8ddc576 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/HiveParser.g
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/HiveParser.g
+@@ -274,6 +274,7 @@ TOK_PRIV_OBJECT_COL;
+ TOK_GRANT_ROLE;
+ TOK_REVOKE_ROLE;
+ TOK_SHOW_ROLE_GRANT;
++TOK_SHOW_ROLES;
+ TOK_SHOWINDEXES;
+ TOK_INDEXCOMMENT;
+ TOK_DESCDATABASE;
+@@ -629,6 +630,7 @@ ddlStatement
+     | revokePrivileges
+     | showGrants
+     | showRoleGrants
++    | showRoles
+     | grantRole
+     | revokeRole
+     ;
+@@ -1311,6 +1313,13 @@ showRoleGrants
+     -> ^(TOK_SHOW_ROLE_GRANT principalName)
+     ;
+ 
++showRoles
++@init {msgs.push("show roles");}
++@after {msgs.pop();}
++    : KW_SHOW KW_ROLES
++    -> ^(TOK_SHOW_ROLES)
++    ;
++
+ showGrants
+ @init {msgs.push("show grants");}
+ @after {msgs.pop();}
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/IdentifiersParser.g b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/IdentifiersParser.g
+index 67aa49a..7359eaf 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/IdentifiersParser.g
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/IdentifiersParser.g
+@@ -525,5 +525,5 @@ identifier
+     
+ nonReserved
+     :
+-    KW_TRUE | KW_FALSE | KW_LIKE | KW_EXISTS | KW_ASC | KW_DESC | KW_ORDER | KW_GROUP | KW_BY | KW_AS | KW_INSERT | KW_OVERWRITE | KW_OUTER | KW_LEFT | KW_RIGHT | KW_FULL | KW_PARTITION | KW_PARTITIONS | KW_TABLE | KW_TABLES | KW_COLUMNS | KW_INDEX | KW_INDEXES | KW_REBUILD | KW_FUNCTIONS | KW_SHOW | KW_MSCK | KW_REPAIR | KW_DIRECTORY | KW_LOCAL | KW_USING | KW_CLUSTER | KW_DISTRIBUTE | KW_SORT | KW_UNION | KW_LOAD | KW_EXPORT | KW_IMPORT | KW_DATA | KW_INPATH | KW_IS | KW_NULL | KW_CREATE | KW_EXTERNAL | KW_ALTER | KW_CHANGE | KW_FIRST | KW_AFTER | KW_DESCRIBE | KW_DROP | KW_RENAME | KW_IGNORE | KW_PROTECTION | KW_TO | KW_COMMENT | KW_BOOLEAN | KW_TINYINT | KW_SMALLINT | KW_INT | KW_BIGINT | KW_FLOAT | KW_DOUBLE | KW_DATE | KW_DATETIME | KW_TIMESTAMP | KW_DECIMAL | KW_STRING | KW_ARRAY | KW_STRUCT | KW_UNIONTYPE | KW_PARTITIONED | KW_CLUSTERED | KW_SORTED | KW_INTO | KW_BUCKETS | KW_ROW | KW_ROWS | KW_FORMAT | KW_DELIMITED | KW_FIELDS | KW_TERMINATED | KW_ESCAPED | KW_COLLECTION | KW_ITEMS | KW_KEYS | KW_KEY_TYPE | KW_LINES | KW_STORED | KW_FILEFORMAT | KW_SEQUENCEFILE | KW_TEXTFILE | KW_RCFILE | KW_ORCFILE | KW_INPUTFORMAT | KW_OUTPUTFORMAT | KW_INPUTDRIVER | KW_OUTPUTDRIVER | KW_OFFLINE | KW_ENABLE | KW_DISABLE | KW_READONLY | KW_NO_DROP | KW_LOCATION | KW_BUCKET | KW_OUT | KW_OF | KW_PERCENT | KW_ADD | KW_REPLACE | KW_RLIKE | KW_REGEXP | KW_TEMPORARY | KW_EXPLAIN | KW_FORMATTED | KW_PRETTY | KW_DEPENDENCY | KW_LOGICAL | KW_SERDE | KW_WITH | KW_DEFERRED | KW_SERDEPROPERTIES | KW_DBPROPERTIES | KW_LIMIT | KW_SET | KW_UNSET | KW_TBLPROPERTIES | KW_IDXPROPERTIES | KW_VALUE_TYPE | KW_ELEM_TYPE | KW_MAPJOIN | KW_STREAMTABLE | KW_HOLD_DDLTIME | KW_CLUSTERSTATUS | KW_UTC | KW_UTCTIMESTAMP | KW_LONG | KW_DELETE | KW_PLUS | KW_MINUS | KW_FETCH | KW_INTERSECT | KW_VIEW | KW_IN | KW_DATABASES | KW_MATERIALIZED | KW_SCHEMA | KW_SCHEMAS | KW_GRANT | KW_REVOKE | KW_SSL | KW_UNDO | KW_LOCK | KW_LOCKS | KW_UNLOCK | KW_SHARED | KW_EXCLUSIVE | KW_PROCEDURE | KW_UNSIGNED | KW_WHILE | KW_READ | KW_READS | KW_PURGE | KW_RANGE | KW_ANALYZE | KW_BEFORE | KW_BETWEEN | KW_BOTH | KW_BINARY | KW_CONTINUE | KW_CURSOR | KW_TRIGGER | KW_RECORDREADER | KW_RECORDWRITER | KW_SEMI | KW_LATERAL | KW_TOUCH | KW_ARCHIVE | KW_UNARCHIVE | KW_COMPUTE | KW_STATISTICS | KW_USE | KW_OPTION | KW_CONCATENATE | KW_SHOW_DATABASE | KW_UPDATE | KW_RESTRICT | KW_CASCADE | KW_SKEWED | KW_ROLLUP | KW_CUBE | KW_DIRECTORIES | KW_FOR | KW_GROUPING | KW_SETS | KW_TRUNCATE | KW_NOSCAN | KW_USER | KW_ROLE | KW_INNER | KW_DEFINED
++    KW_TRUE | KW_FALSE | KW_LIKE | KW_EXISTS | KW_ASC | KW_DESC | KW_ORDER | KW_GROUP | KW_BY | KW_AS | KW_INSERT | KW_OVERWRITE | KW_OUTER | KW_LEFT | KW_RIGHT | KW_FULL | KW_PARTITION | KW_PARTITIONS | KW_TABLE | KW_TABLES | KW_COLUMNS | KW_INDEX | KW_INDEXES | KW_REBUILD | KW_FUNCTIONS | KW_SHOW | KW_MSCK | KW_REPAIR | KW_DIRECTORY | KW_LOCAL | KW_USING | KW_CLUSTER | KW_DISTRIBUTE | KW_SORT | KW_UNION | KW_LOAD | KW_EXPORT | KW_IMPORT | KW_DATA | KW_INPATH | KW_IS | KW_NULL | KW_CREATE | KW_EXTERNAL | KW_ALTER | KW_CHANGE | KW_FIRST | KW_AFTER | KW_DESCRIBE | KW_DROP | KW_RENAME | KW_IGNORE | KW_PROTECTION | KW_TO | KW_COMMENT | KW_BOOLEAN | KW_TINYINT | KW_SMALLINT | KW_INT | KW_BIGINT | KW_FLOAT | KW_DOUBLE | KW_DATE | KW_DATETIME | KW_TIMESTAMP | KW_DECIMAL | KW_STRING | KW_ARRAY | KW_STRUCT | KW_UNIONTYPE | KW_PARTITIONED | KW_CLUSTERED | KW_SORTED | KW_INTO | KW_BUCKETS | KW_ROW | KW_ROWS | KW_FORMAT | KW_DELIMITED | KW_FIELDS | KW_TERMINATED | KW_ESCAPED | KW_COLLECTION | KW_ITEMS | KW_KEYS | KW_KEY_TYPE | KW_LINES | KW_STORED | KW_FILEFORMAT | KW_SEQUENCEFILE | KW_TEXTFILE | KW_RCFILE | KW_ORCFILE | KW_INPUTFORMAT | KW_OUTPUTFORMAT | KW_INPUTDRIVER | KW_OUTPUTDRIVER | KW_OFFLINE | KW_ENABLE | KW_DISABLE | KW_READONLY | KW_NO_DROP | KW_LOCATION | KW_BUCKET | KW_OUT | KW_OF | KW_PERCENT | KW_ADD | KW_REPLACE | KW_RLIKE | KW_REGEXP | KW_TEMPORARY | KW_EXPLAIN | KW_FORMATTED | KW_PRETTY | KW_DEPENDENCY | KW_LOGICAL | KW_SERDE | KW_WITH | KW_DEFERRED | KW_SERDEPROPERTIES | KW_DBPROPERTIES | KW_LIMIT | KW_SET | KW_UNSET | KW_TBLPROPERTIES | KW_IDXPROPERTIES | KW_VALUE_TYPE | KW_ELEM_TYPE | KW_MAPJOIN | KW_STREAMTABLE | KW_HOLD_DDLTIME | KW_CLUSTERSTATUS | KW_UTC | KW_UTCTIMESTAMP | KW_LONG | KW_DELETE | KW_PLUS | KW_MINUS | KW_FETCH | KW_INTERSECT | KW_VIEW | KW_IN | KW_DATABASES | KW_MATERIALIZED | KW_SCHEMA | KW_SCHEMAS | KW_GRANT | KW_REVOKE | KW_SSL | KW_UNDO | KW_LOCK | KW_LOCKS | KW_UNLOCK | KW_SHARED | KW_EXCLUSIVE | KW_PROCEDURE | KW_UNSIGNED | KW_WHILE | KW_READ | KW_READS | KW_PURGE | KW_RANGE | KW_ANALYZE | KW_BEFORE | KW_BETWEEN | KW_BOTH | KW_BINARY | KW_CONTINUE | KW_CURSOR | KW_TRIGGER | KW_RECORDREADER | KW_RECORDWRITER | KW_SEMI | KW_LATERAL | KW_TOUCH | KW_ARCHIVE | KW_UNARCHIVE | KW_COMPUTE | KW_STATISTICS | KW_USE | KW_OPTION | KW_CONCATENATE | KW_SHOW_DATABASE | KW_UPDATE | KW_RESTRICT | KW_CASCADE | KW_SKEWED | KW_ROLLUP | KW_CUBE | KW_DIRECTORIES | KW_FOR | KW_GROUPING | KW_SETS | KW_TRUNCATE | KW_NOSCAN | KW_USER | KW_ROLE | KW_ROLES | KW_INNER | KW_DEFINED
+     ;
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/SemanticAnalyzerFactory.java b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/SemanticAnalyzerFactory.java
+index 97454e4..a658d2e 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/SemanticAnalyzerFactory.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/SemanticAnalyzerFactory.java
+@@ -92,6 +92,7 @@
+     commandType.put(HiveParser.TOK_SHOW_GRANT, HiveOperation.SHOW_GRANT);
+     commandType.put(HiveParser.TOK_GRANT_ROLE, HiveOperation.GRANT_ROLE);
+     commandType.put(HiveParser.TOK_REVOKE_ROLE, HiveOperation.REVOKE_ROLE);
++    commandType.put(HiveParser.TOK_SHOW_ROLES, HiveOperation.SHOW_ROLES);
+     commandType.put(HiveParser.TOK_SHOW_ROLE_GRANT, HiveOperation.SHOW_ROLE_GRANT);
+     commandType.put(HiveParser.TOK_ALTERDATABASE_PROPERTIES, HiveOperation.ALTERDATABASE);
+     commandType.put(HiveParser.TOK_DESCDATABASE, HiveOperation.DESCDATABASE);
+@@ -202,6 +203,7 @@ public static BaseSemanticAnalyzer get(HiveConf conf, ASTNode tree)
+       case HiveParser.TOK_GRANT_ROLE:
+       case HiveParser.TOK_REVOKE_ROLE:
+       case HiveParser.TOK_SHOW_ROLE_GRANT:
++      case HiveParser.TOK_SHOW_ROLES:
+       case HiveParser.TOK_ALTERDATABASE_PROPERTIES:
+       case HiveParser.TOK_ALTERTABLE_SKEWED:
+       case HiveParser.TOK_TRUNCATETABLE:
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/plan/HiveOperation.java b/src/ql/src/java/org/apache/hadoop/hive/ql/plan/HiveOperation.java
+index 69cda05..1c77f99 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/plan/HiveOperation.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/plan/HiveOperation.java
+@@ -84,6 +84,7 @@
+   SHOW_GRANT("SHOW_GRANT", null, null),
+   GRANT_ROLE("GRANT_ROLE", null, null),
+   REVOKE_ROLE("REVOKE_ROLE", null, null),
++  SHOW_ROLES("SHOW_ROLES", null, null),
+   SHOW_ROLE_GRANT("SHOW_ROLE_GRANT", null, null),
+   ALTERTABLE_PROTECTMODE("ALTERTABLE_PROTECTMODE", new Privilege[]{Privilege.ALTER_METADATA}, null),
+   ALTERPARTITION_PROTECTMODE("ALTERPARTITION_PROTECTMODE", new Privilege[]{Privilege.ALTER_METADATA}, null),
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/plan/RoleDDLDesc.java b/src/ql/src/java/org/apache/hadoop/hive/ql/plan/RoleDDLDesc.java
+index 99dadb0..de323a9 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/plan/RoleDDLDesc.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/plan/RoleDDLDesc.java
+@@ -49,7 +49,7 @@ public static String getSchema() {
+   }
+ 
+   public static enum RoleOperation {
+-    DROP_ROLE("drop_role"), CREATE_ROLE("create_role"), SHOW_ROLE_GRANT("show_roles");
++    DROP_ROLE("drop_role"), CREATE_ROLE("create_role"), SHOW_ROLE_GRANT("show_role_grant"), SHOW_ROLES("show_roles");
+     private String operationName;
+ 
+     private RoleOperation() {
+diff --git a/src/ql/src/test/queries/clientpositive/show_roles.q b/src/ql/src/test/queries/clientpositive/show_roles.q
+new file mode 100644
+index 0000000..d8ce96a
+--- /dev/null
++++ b/src/ql/src/test/queries/clientpositive/show_roles.q
+@@ -0,0 +1,4 @@
++create role role1;
++create role role2;
++
++show roles;
+diff --git a/src/ql/src/test/results/clientpositive/show_roles.q.out b/src/ql/src/test/results/clientpositive/show_roles.q.out
+new file mode 100644
+index 0000000..f5efc59
+--- /dev/null
++++ b/src/ql/src/test/results/clientpositive/show_roles.q.out
+@@ -0,0 +1,14 @@
++PREHOOK: query: create role role1
++PREHOOK: type: CREATEROLE
++POSTHOOK: query: create role role1
++POSTHOOK: type: CREATEROLE
++PREHOOK: query: create role role2
++PREHOOK: type: CREATEROLE
++POSTHOOK: query: create role role2
++POSTHOOK: type: CREATEROLE
++PREHOOK: query: show roles
++PREHOOK: type: SHOW_ROLES
++POSTHOOK: query: show roles
++POSTHOOK: type: SHOW_ROLES
++role1
++role2
+-- 
+1.7.0.4
+

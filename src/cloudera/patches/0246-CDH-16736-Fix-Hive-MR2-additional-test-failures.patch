@@ -1,0 +1,36 @@
+From beedada23a4b7ee1deaa1383df242cb89fdca8f6 Mon Sep 17 00:00:00 2001
+From: xzhang <xzhang@xzdt.(none)>
+Date: Wed, 22 Jan 2014 16:35:30 -0800
+Subject: [PATCH 246/375] CDH-16736: Fix Hive MR2 additional test failures
+
+---
+ .../dynamic_partitions_with_whitelist.q            |    2 +-
+ .../dynamic_partitions_with_whitelist.q.out        |    2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/src/ql/src/test/queries/clientnegative/dynamic_partitions_with_whitelist.q b/src/ql/src/test/queries/clientnegative/dynamic_partitions_with_whitelist.q
+index 0ad99d1..12d9223 100644
+--- a/src/ql/src/test/queries/clientnegative/dynamic_partitions_with_whitelist.q
++++ b/src/ql/src/test/queries/clientnegative/dynamic_partitions_with_whitelist.q
+@@ -14,4 +14,4 @@ load data local inpath '../../data/files/srcbucket20.txt' INTO TABLE source_tabl
+ -- If the directory is not empty the hook will throw an error, instead the error should come from the metastore
+ -- This shows that no dynamic partitions were created and left behind or had directories created
+ 
+-insert overwrite table dest_table partition (ds, hr) select key, hr, ds, value from source_table where ds='2008-04-08' order by value asc;
++insert overwrite table dest_table partition (ds, hr) select key, hr, ds, value from source_table where ds='2008-04-08' AND ( value = 'val_129' OR instr(value, "9") = 0 ) order by value asc;
+diff --git a/src/ql/src/test/results/clientnegative/dynamic_partitions_with_whitelist.q.out b/src/ql/src/test/results/clientnegative/dynamic_partitions_with_whitelist.q.out
+index 3dd2121..69451d3 100644
+--- a/src/ql/src/test/results/clientnegative/dynamic_partitions_with_whitelist.q.out
++++ b/src/ql/src/test/results/clientnegative/dynamic_partitions_with_whitelist.q.out
+@@ -19,7 +19,7 @@ PREHOOK: query: -- Tests creating dynamic partitions with characters not in the
+ -- If the directory is not empty the hook will throw an error, instead the error should come from the metastore
+ -- This shows that no dynamic partitions were created and left behind or had directories created
+ 
+-insert overwrite table dest_table partition (ds, hr) select key, hr, ds, value from source_table where ds='2008-04-08' order by value asc
++insert overwrite table dest_table partition (ds, hr) select key, hr, ds, value from source_table where ds='2008-04-08' AND ( value = 'val_129' OR instr(value, "9") = 0 ) order by value asc
+ PREHOOK: type: QUERY
+ PREHOOK: Input: default@source_table
+ PREHOOK: Input: default@source_table@ds=2008-04-08/hr=11
+-- 
+1.7.0.4
+

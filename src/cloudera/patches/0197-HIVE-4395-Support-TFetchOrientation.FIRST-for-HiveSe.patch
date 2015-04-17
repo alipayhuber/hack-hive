@@ -1,0 +1,757 @@
+From 462f66037257f7ede988d3dbeec8aa2a3f03c709 Mon Sep 17 00:00:00 2001
+From: Prasad Suresh Mujumdar <prasadm@apache.org>
+Date: Thu, 12 Dec 2013 20:45:55 +0000
+Subject: [PATCH 197/375] HIVE-4395: Support TFetchOrientation.FIRST for HiveServer2 FetchResults (Prasad Mujumdar reviewed by Thejas Nair)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1550521 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../java/org/apache/hive/jdbc/TestJdbcDriver2.java |  117 ++++++++++++++++++++
+ .../java/org/apache/hive/jdbc/HiveConnection.java  |   13 ++-
+ .../org/apache/hive/jdbc/HiveQueryResultSet.java   |   65 +++++++++++-
+ .../java/org/apache/hive/jdbc/HiveStatement.java   |    8 ++
+ ql/src/java/org/apache/hadoop/hive/ql/Context.java |    7 +
+ ql/src/java/org/apache/hadoop/hive/ql/Driver.java  |   14 +++
+ .../org/apache/hadoop/hive/ql/exec/FetchTask.java  |    1 +
+ .../hadoop/hive/ql/processors/DfsProcessor.java    |   12 ++-
+ .../cli/operation/GetCatalogsOperation.java        |    6 +
+ .../service/cli/operation/GetColumnsOperation.java |    5 +
+ .../cli/operation/GetFunctionsOperation.java       |    5 +
+ .../service/cli/operation/GetSchemasOperation.java |    6 +
+ .../cli/operation/GetTableTypesOperation.java      |    5 +
+ .../service/cli/operation/GetTablesOperation.java  |    5 +
+ .../cli/operation/GetTypeInfoOperation.java        |    6 +
+ .../cli/operation/HiveCommandOperation.java        |   16 ++-
+ .../hive/service/cli/operation/Operation.java      |   29 +++++
+ .../hive/service/cli/operation/SQLOperation.java   |   10 ++
+ 18 files changed, 322 insertions(+), 8 deletions(-)
+
+diff --git a/src/itests/hive-unit/src/test/java/org/apache/hive/jdbc/TestJdbcDriver2.java b/src/itests/hive-unit/src/test/java/org/apache/hive/jdbc/TestJdbcDriver2.java
+index 3918f98..afc6844 100644
+--- a/src/itests/hive-unit/src/test/java/org/apache/hive/jdbc/TestJdbcDriver2.java
++++ b/src/itests/hive-unit/src/test/java/org/apache/hive/jdbc/TestJdbcDriver2.java
+@@ -48,6 +48,8 @@
+ import org.apache.hadoop.fs.Path;
+ import org.apache.hadoop.hive.conf.HiveConf;
+ import org.apache.hadoop.hive.metastore.TableType;
++import org.apache.hadoop.hive.ql.processors.DfsProcessor;
++import org.apache.hadoop.hive.ql.processors.SetProcessor;
+ import org.apache.hive.common.util.HiveVersionInfo;
+ import org.apache.hive.jdbc.Utils.JdbcConnectionParams;
+ import org.apache.hive.service.cli.operation.ClassicTableTypeMapping;
+@@ -1782,4 +1784,119 @@ public void testInvalidURL() throws Exception {
+     Connection conn = driver.connect("jdbc:derby://localhost:10000/default", new Properties());
+     assertNull(conn);
+   }
++
++  /**
++   * Test the cursor repositioning to start of resultset
++   * @throws Exception
++   */
++  public void testFetchFirstQuery() throws Exception {
++    execFetchFirst("select c4 from " + dataTypeTableName + " order by c1", "c4", false);
++    execFetchFirst("select c4 from " + dataTypeTableName + " order by c1", "c4",  true);
++  }
++
++  /**
++   * Test the cursor repositioning to start of resultset from non-mr query
++   * @throws Exception
++   */
++  public void testFetchFirstNonMR() throws Exception {
++    execFetchFirst("select * from " + dataTypeTableName, "c4", false);
++  }
++
++  /**
++   *  Test for cursor repositioning to start of resultset for non-sql commands
++   * @throws Exception
++   */
++  public void testFetchFirstSetCmds() throws Exception {
++    execFetchFirst("set -v", SetProcessor.SET_COLUMN_NAME, false);
++  }
++
++  /**
++   *  Test for cursor repositioning to start of resultset for non-sql commands
++   * @throws Exception
++   */
++  public void testFetchFirstDfsCmds() throws Exception {
++    String wareHouseDir = conf.get(HiveConf.ConfVars.METASTOREWAREHOUSE.varname);
++    execFetchFirst("dfs -ls " + wareHouseDir, DfsProcessor.DFS_RESULT_HEADER, false);
++  }
++
++
++  /**
++   * Negative Test for cursor repositioning to start of resultset
++   * Verify unsupported JDBC resultset attributes
++   * @throws Exception
++   */
++  public void testUnsupportedFetchTypes() throws Exception {
++    try {
++      con.createStatement(ResultSet.TYPE_SCROLL_SENSITIVE,
++        ResultSet.CONCUR_READ_ONLY);
++      fail("createStatement with TYPE_SCROLL_SENSITIVE should fail");
++    } catch(SQLException e) {
++      assertEquals("HYC00", e.getSQLState().trim());
++    }
++
++    try {
++      con.createStatement(ResultSet.TYPE_SCROLL_INSENSITIVE,
++        ResultSet.CONCUR_UPDATABLE);
++      fail("createStatement with CONCUR_UPDATABLE should fail");
++    } catch(SQLException e) {
++      assertEquals("HYC00", e.getSQLState().trim());
++    }
++  }
++
++  /**
++   * Negative Test for cursor repositioning to start of resultset
++   * Verify unsupported JDBC resultset methods
++   * @throws Exception
++   */
++  public void testFetchFirstError() throws Exception {
++    Statement stmt = con.createStatement();
++    ResultSet res = stmt.executeQuery("select * from " + tableName);
++    try {
++      res.beforeFirst();
++      fail("beforeFirst() should fail for normal resultset");
++    } catch (SQLException e) {
++      assertEquals("Method not supported for TYPE_FORWARD_ONLY resultset", e.getMessage());
++    }
++  }
++
++  /**
++   * Read the results locally. Then reset the read position to start and read the
++   * rows again verify that we get the same results next time.
++   * @param sqlStmt - SQL statement to execute
++   * @param colName - columns name to read
++   * @param oneRowOnly -  read and compare only one row from the resultset
++   * @throws Exception
++   */
++  private void execFetchFirst(String sqlStmt, String colName, boolean oneRowOnly)
++      throws Exception {
++    Statement stmt = con.createStatement(ResultSet.TYPE_SCROLL_INSENSITIVE,
++          ResultSet.CONCUR_READ_ONLY);
++    ResultSet res = stmt.executeQuery(sqlStmt);
++
++    List<String> results = new ArrayList<String> ();
++    assertTrue(res.isBeforeFirst());
++    int rowNum = 0;
++    while (res.next()) {
++      results.add(res.getString(colName));
++      assertEquals(++rowNum, res.getRow());
++      assertFalse(res.isBeforeFirst());
++      if (oneRowOnly) {
++        break;
++      }
++    }
++    // reposition at the begining
++    res.beforeFirst();
++    assertTrue(res.isBeforeFirst());
++    rowNum = 0;
++    while (res.next()) {
++      // compare the results fetched last time
++      assertEquals(results.get(rowNum++), res.getString(colName));
++      assertEquals(rowNum, res.getRow());
++      assertFalse(res.isBeforeFirst());
++      if (oneRowOnly) {
++        break;
++      }
++    }
++  }
++
+ }
+diff --git a/src/jdbc/src/java/org/apache/hive/jdbc/HiveConnection.java b/src/jdbc/src/java/org/apache/hive/jdbc/HiveConnection.java
+index 90394a6..c38dd5c 100644
+--- a/src/jdbc/src/java/org/apache/hive/jdbc/HiveConnection.java
++++ b/src/jdbc/src/java/org/apache/hive/jdbc/HiveConnection.java
+@@ -28,6 +28,7 @@
+ import java.sql.DriverManager;
+ import java.sql.NClob;
+ import java.sql.PreparedStatement;
++import java.sql.ResultSet;
+ import java.sql.SQLClientInfoException;
+ import java.sql.SQLException;
+ import java.sql.SQLWarning;
+@@ -554,8 +555,16 @@ public Statement createStatement() throws SQLException {
+ 
+   public Statement createStatement(int resultSetType, int resultSetConcurrency)
+       throws SQLException {
+-    // TODO Auto-generated method stub
+-    throw new SQLException("Method not supported");
++    if (resultSetConcurrency != ResultSet.CONCUR_READ_ONLY) {
++      throw new SQLException("Statement with resultset concurrency " +
++          resultSetConcurrency + " is not supported", "HYC00"); // Optional feature not implemented
++    }
++    if (resultSetType == ResultSet.TYPE_SCROLL_SENSITIVE) {
++      throw new SQLException("Statement with resultset type " + resultSetType +
++          " is not supported", "HYC00"); // Optional feature not implemented
++    }
++    return new HiveStatement(this, client, sessHandle,
++        resultSetType == ResultSet.TYPE_SCROLL_INSENSITIVE);
+   }
+ 
+   /*
+diff --git a/src/jdbc/src/java/org/apache/hive/jdbc/HiveQueryResultSet.java b/src/jdbc/src/java/org/apache/hive/jdbc/HiveQueryResultSet.java
+index 812ee56..061337d 100644
+--- a/src/jdbc/src/java/org/apache/hive/jdbc/HiveQueryResultSet.java
++++ b/src/jdbc/src/java/org/apache/hive/jdbc/HiveQueryResultSet.java
+@@ -20,6 +20,7 @@
+ 
+ import static org.apache.hive.service.cli.thrift.TCLIServiceConstants.TYPE_NAMES;
+ 
++import java.sql.ResultSet;
+ import java.sql.ResultSetMetaData;
+ import java.sql.Statement;
+ import java.sql.SQLException;
+@@ -66,6 +67,8 @@
+   private Iterator<TRow> fetchedRowsItr;
+   private boolean isClosed = false;
+   private boolean emptyResultSet = false;
++  private boolean isScrollable = false;
++  private boolean fetchFirst = false;
+ 
+   public static class Builder {
+ 
+@@ -86,6 +89,7 @@
+     private List<JdbcColumnAttributes> colAttributes;
+     private int fetchSize = 50;
+     private boolean emptyResultSet = false;
++    private boolean isScrollable = false;
+ 
+     public Builder(Statement statement) {
+       this.statement = statement;
+@@ -143,6 +147,11 @@ public Builder setEmptyResultSet(boolean emptyResultSet) {
+       return this;
+     }
+ 
++    public Builder setScrollable(boolean setScrollable) {
++      this.isScrollable = setScrollable;
++      return this;
++    }
++
+     public HiveQueryResultSet build() throws SQLException {
+       return new HiveQueryResultSet(this);
+     }
+@@ -168,6 +177,7 @@ protected HiveQueryResultSet(Builder builder) throws SQLException {
+     } else {
+       this.maxRows = builder.maxRows;
+     }
++    this.isScrollable = builder.isScrollable;
+   }
+ 
+   /**
+@@ -286,9 +296,18 @@ public boolean next() throws SQLException {
+     }
+ 
+     try {
++      TFetchOrientation orientation = TFetchOrientation.FETCH_NEXT;
++      if (fetchFirst) {
++        // If we are asked to start from begining, clear the current fetched resultset
++        orientation = TFetchOrientation.FETCH_FIRST;
++        fetchedRows = null;
++        fetchedRowsItr = null;
++        fetchFirst = false;
++      }
++
+       if (fetchedRows == null || !fetchedRowsItr.hasNext()) {
+         TFetchResultsReq fetchReq = new TFetchResultsReq(stmtHandle,
+-            TFetchOrientation.FETCH_NEXT, fetchSize);
++            orientation, fetchSize);
+         TFetchResultsResp fetchResp = client.FetchResults(fetchReq);
+         Utils.verifySuccessWithInfo(fetchResp.getStatus());
+         fetchedRows = fetchResp.getResults().getRows();
+@@ -334,6 +353,18 @@ public void setFetchSize(int rows) throws SQLException {
+   }
+ 
+   @Override
++  public int getType() throws SQLException {
++    if (isClosed) {
++      throw new SQLException("Resultset is closed");
++    }
++    if (isScrollable) {
++      return ResultSet.TYPE_SCROLL_INSENSITIVE;
++    } else {
++      return ResultSet.TYPE_FORWARD_ONLY;
++    }
++  }
++
++  @Override
+   public int getFetchSize() throws SQLException {
+     if (isClosed) {
+       throw new SQLException("Resultset is closed");
+@@ -350,4 +381,36 @@ public int getFetchSize() throws SQLException {
+     //JDK 1.7
+     throw new SQLException("Method not supported");
+   }
++
++  /**
++   * Moves the cursor before the first row of the resultset.
++   *
++   * @see java.sql.ResultSet#next()
++   * @throws SQLException
++   *           if a database access error occurs.
++   */
++  @Override
++  public void beforeFirst() throws SQLException {
++    if (isClosed) {
++      throw new SQLException("Resultset is closed");
++    }
++    if (!isScrollable) {
++      throw new SQLException("Method not supported for TYPE_FORWARD_ONLY resultset");
++    }
++    fetchFirst = true;
++    rowsFetched = 0;
++  }
++
++  @Override
++  public boolean isBeforeFirst() throws SQLException {
++    if (isClosed) {
++      throw new SQLException("Resultset is closed");
++    }
++    return (rowsFetched == 0);
++  }
++
++  @Override
++  public int getRow() throws SQLException {
++    return rowsFetched;
++  }
+ }
+diff --git a/src/jdbc/src/java/org/apache/hive/jdbc/HiveStatement.java b/src/jdbc/src/java/org/apache/hive/jdbc/HiveStatement.java
+index 6bf69ca..4a5be25 100644
+--- a/src/jdbc/src/java/org/apache/hive/jdbc/HiveStatement.java
++++ b/src/jdbc/src/java/org/apache/hive/jdbc/HiveStatement.java
+@@ -50,6 +50,7 @@
+   private final TSessionHandle sessHandle;
+   Map<String,String> sessConf = new HashMap<String,String>();
+   private int fetchSize = 50;
++  private boolean isScrollableResultset = false;
+   /**
+    * We need to keep a reference to the result set to support the following:
+    * <code>
+@@ -81,9 +82,15 @@
+    */
+   public HiveStatement(HiveConnection connection, TCLIService.Iface client,
+       TSessionHandle sessHandle) {
++    this(connection, client, sessHandle, false);
++  }
++
++  public HiveStatement(HiveConnection connection, TCLIService.Iface client,
++        TSessionHandle sessHandle, boolean isScrollableResultset) {
+     this.connection = connection;
+     this.client = client;
+     this.sessHandle = sessHandle;
++    this.isScrollableResultset = isScrollableResultset;
+   }
+ 
+   /*
+@@ -251,6 +258,7 @@ public boolean execute(String sql) throws SQLException {
+     }
+     resultSet =  new HiveQueryResultSet.Builder(this).setClient(client).setSessionHandle(sessHandle)
+         .setStmtHandle(stmtHandle).setMaxRows(maxRows).setFetchSize(fetchSize)
++        .setScrollable(isScrollableResultset)
+         .build();
+     return true;
+   }
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/Context.java b/src/ql/src/java/org/apache/hadoop/hive/ql/Context.java
+index ed502a7..fa79f53 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/Context.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/Context.java
+@@ -481,6 +481,13 @@ private DataInput getNextStream() {
+     return null;
+   }
+ 
++  public void resetStream() {
++    if (initialized) {
++      resDirFilesNum = 0;
++      initialized = false;
++    }
++  }
++
+   /**
+    * Little abbreviation for StringUtils.
+    */
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/Driver.java b/src/ql/src/java/org/apache/hadoop/hive/ql/Driver.java
+index b42006c..faf6ec9 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/Driver.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/Driver.java
+@@ -1627,6 +1627,20 @@ public boolean getResults(ArrayList<String> res) throws IOException, CommandNeed
+     return true;
+   }
+ 
++  public void resetFetch() throws IOException {
++    if (plan != null && plan.getFetchTask() != null) {
++      try {
++        plan.getFetchTask().clearFetch();
++      } catch (Exception e) {
++        throw new IOException("Error closing the current fetch task", e);
++      }
++      plan.getFetchTask().initialize(conf, plan, null);
++    } else {
++      ctx.resetStream();
++      resStream = null;
++    }
++  }
++
+   public int getTryCount() {
+     return tryCount;
+   }
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/FetchTask.java b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/FetchTask.java
+index 343f760..3021328 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/FetchTask.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/FetchTask.java
+@@ -78,6 +78,7 @@ public void initialize(HiveConf conf, QueryPlan queryPlan, DriverContext ctx) {
+       sink = work.getSink();
+       fetch = new FetchOperator(work, job, source, getVirtualColumns(source));
+       source.initialize(conf, new ObjectInspector[]{fetch.getOutputObjectInspector()});
++      totalRows = 0;
+ 
+     } catch (Exception e) {
+       // Bail out ungracefully - we should never hit
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/processors/DfsProcessor.java b/src/ql/src/java/org/apache/hadoop/hive/ql/processors/DfsProcessor.java
+index ce54e0c..d343a3c 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/processors/DfsProcessor.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/processors/DfsProcessor.java
+@@ -24,6 +24,8 @@
+ import org.apache.commons.logging.LogFactory;
+ import org.apache.hadoop.conf.Configuration;
+ import org.apache.hadoop.fs.FsShell;
++import org.apache.hadoop.hive.metastore.api.FieldSchema;
++import org.apache.hadoop.hive.metastore.api.Schema;
+ import org.apache.hadoop.hive.ql.parse.VariableSubstitution;
+ import org.apache.hadoop.hive.ql.session.SessionState;
+ import org.apache.hadoop.hive.ql.session.SessionState.LogHelper;
+@@ -36,11 +38,19 @@
+ 
+   public static final Log LOG = LogFactory.getLog(DfsProcessor.class.getName());
+   public static final LogHelper console = new LogHelper(LOG);
++  public static final String DFS_RESULT_HEADER = "DFS Output";
+ 
+   private final FsShell dfs;
++  private final Schema dfsSchema;
+ 
+   public DfsProcessor(Configuration conf) {
++    this(conf, false);
++  }
++
++  public DfsProcessor(Configuration conf, boolean addSchema) {
+     dfs = new FsShell(conf);
++    dfsSchema = new Schema();
++    dfsSchema.addToFieldSchemas(new FieldSchema(DFS_RESULT_HEADER, "string", ""));
+   }
+ 
+   public void init() {
+@@ -66,7 +76,7 @@ public CommandProcessorResponse run(String command) {
+       }
+ 
+       System.setOut(oldOut);
+-      return new CommandProcessorResponse(ret);
++      return new CommandProcessorResponse(ret, null, null, dfsSchema);
+ 
+     } catch (Exception e) {
+       console.printError("Exception raised from DFSShell.run "
+diff --git a/src/service/src/java/org/apache/hive/service/cli/operation/GetCatalogsOperation.java b/src/service/src/java/org/apache/hive/service/cli/operation/GetCatalogsOperation.java
+index 581e69c..70cabe3 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/operation/GetCatalogsOperation.java
++++ b/src/service/src/java/org/apache/hive/service/cli/operation/GetCatalogsOperation.java
+@@ -18,6 +18,8 @@
+ 
+ package org.apache.hive.service.cli.operation;
+ 
++import java.util.EnumSet;
++
+ import org.apache.hive.service.cli.FetchOrientation;
+ import org.apache.hive.service.cli.HiveSQLException;
+ import org.apache.hive.service.cli.OperationState;
+@@ -63,6 +65,10 @@ public TableSchema getResultSetSchema() throws HiveSQLException {
+   @Override
+   public RowSet getNextRowSet(FetchOrientation orientation, long maxRows) throws HiveSQLException {
+     assertState(OperationState.FINISHED);
++    validateDefaultFetchOrientation(orientation);
++    if (orientation.equals(FetchOrientation.FETCH_FIRST)) {
++      rowSet.setStartOffset(0);
++    }
+     return rowSet.extractSubset((int)maxRows);
+   }
+ }
+diff --git a/src/service/src/java/org/apache/hive/service/cli/operation/GetColumnsOperation.java b/src/service/src/java/org/apache/hive/service/cli/operation/GetColumnsOperation.java
+index 0e4893c..364f64f 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/operation/GetColumnsOperation.java
++++ b/src/service/src/java/org/apache/hive/service/cli/operation/GetColumnsOperation.java
+@@ -20,6 +20,7 @@
+ 
+ import java.sql.DatabaseMetaData;
+ import java.util.Collections;
++import java.util.EnumSet;
+ import java.util.List;
+ import java.util.regex.Pattern;
+ 
+@@ -197,6 +198,10 @@ public TableSchema getResultSetSchema() throws HiveSQLException {
+   @Override
+   public RowSet getNextRowSet(FetchOrientation orientation, long maxRows) throws HiveSQLException {
+     assertState(OperationState.FINISHED);
++    validateDefaultFetchOrientation(orientation);
++    if (orientation.equals(FetchOrientation.FETCH_FIRST)) {
++      rowSet.setStartOffset(0);
++    }
+     return rowSet.extractSubset((int)maxRows);
+   }
+ 
+diff --git a/src/service/src/java/org/apache/hive/service/cli/operation/GetFunctionsOperation.java b/src/service/src/java/org/apache/hive/service/cli/operation/GetFunctionsOperation.java
+index 0fe01c0..e3b161a 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/operation/GetFunctionsOperation.java
++++ b/src/service/src/java/org/apache/hive/service/cli/operation/GetFunctionsOperation.java
+@@ -19,6 +19,7 @@
+ package org.apache.hive.service.cli.operation;
+ 
+ import java.sql.DatabaseMetaData;
++import java.util.EnumSet;
+ import java.util.Set;
+ 
+ import org.apache.hadoop.hive.ql.exec.FunctionInfo;
+@@ -115,6 +116,10 @@ public TableSchema getResultSetSchema() throws HiveSQLException {
+   @Override
+   public RowSet getNextRowSet(FetchOrientation orientation, long maxRows) throws HiveSQLException {
+     assertState(OperationState.FINISHED);
++    validateDefaultFetchOrientation(orientation);
++    if (orientation.equals(FetchOrientation.FETCH_FIRST)) {
++      rowSet.setStartOffset(0);
++    }
+     return rowSet.extractSubset((int)maxRows);
+   }
+ }
+diff --git a/src/service/src/java/org/apache/hive/service/cli/operation/GetSchemasOperation.java b/src/service/src/java/org/apache/hive/service/cli/operation/GetSchemasOperation.java
+index 9462684..d4d35fc 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/operation/GetSchemasOperation.java
++++ b/src/service/src/java/org/apache/hive/service/cli/operation/GetSchemasOperation.java
+@@ -18,6 +18,8 @@
+ 
+ package org.apache.hive.service.cli.operation;
+ 
++import java.util.EnumSet;
++
+ import org.apache.hadoop.hive.metastore.IMetaStoreClient;
+ import org.apache.hive.service.cli.FetchOrientation;
+ import org.apache.hive.service.cli.HiveSQLException;
+@@ -96,6 +98,10 @@ public TableSchema getResultSetSchema() throws HiveSQLException {
+   @Override
+   public RowSet getNextRowSet(FetchOrientation orientation, long maxRows) throws HiveSQLException {
+     assertState(OperationState.FINISHED);
++    validateDefaultFetchOrientation(orientation);
++    if (orientation.equals(FetchOrientation.FETCH_FIRST)) {
++      rowSet.setStartOffset(0);
++    }
+     return rowSet.extractSubset((int)maxRows);
+   }
+ }
+diff --git a/src/service/src/java/org/apache/hive/service/cli/operation/GetTableTypesOperation.java b/src/service/src/java/org/apache/hive/service/cli/operation/GetTableTypesOperation.java
+index 2be018e..d168d5e 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/operation/GetTableTypesOperation.java
++++ b/src/service/src/java/org/apache/hive/service/cli/operation/GetTableTypesOperation.java
+@@ -18,6 +18,7 @@
+ 
+ package org.apache.hive.service.cli.operation;
+ 
++import java.util.EnumSet;
+ import org.apache.hadoop.hive.conf.HiveConf;
+ import org.apache.hadoop.hive.metastore.TableType;
+ import org.apache.hive.service.cli.FetchOrientation;
+@@ -82,6 +83,10 @@ public TableSchema getResultSetSchema() throws HiveSQLException {
+   @Override
+   public RowSet getNextRowSet(FetchOrientation orientation, long maxRows) throws HiveSQLException {
+     assertState(OperationState.FINISHED);
++    validateDefaultFetchOrientation(orientation);
++    if (orientation.equals(FetchOrientation.FETCH_FIRST)) {
++      rowSet.setStartOffset(0);
++    }
+     return rowSet.extractSubset((int)maxRows);
+   }
+ 
+diff --git a/src/service/src/java/org/apache/hive/service/cli/operation/GetTablesOperation.java b/src/service/src/java/org/apache/hive/service/cli/operation/GetTablesOperation.java
+index 2770b84..d5edc2e 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/operation/GetTablesOperation.java
++++ b/src/service/src/java/org/apache/hive/service/cli/operation/GetTablesOperation.java
+@@ -19,6 +19,7 @@
+ package org.apache.hive.service.cli.operation;
+ 
+ import java.util.ArrayList;
++import java.util.EnumSet;
+ import java.util.List;
+ 
+ import org.apache.hadoop.hive.conf.HiveConf;
+@@ -127,6 +128,10 @@ public TableSchema getResultSetSchema() throws HiveSQLException {
+   @Override
+   public RowSet getNextRowSet(FetchOrientation orientation, long maxRows) throws HiveSQLException {
+     assertState(OperationState.FINISHED);
++    validateDefaultFetchOrientation(orientation);
++    if (orientation.equals(FetchOrientation.FETCH_FIRST)) {
++      rowSet.setStartOffset(0);
++    }
+     return rowSet.extractSubset((int)maxRows);
+   }
+ }
+diff --git a/src/service/src/java/org/apache/hive/service/cli/operation/GetTypeInfoOperation.java b/src/service/src/java/org/apache/hive/service/cli/operation/GetTypeInfoOperation.java
+index 2daa9cd..a923199 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/operation/GetTypeInfoOperation.java
++++ b/src/service/src/java/org/apache/hive/service/cli/operation/GetTypeInfoOperation.java
+@@ -18,6 +18,8 @@
+ 
+ package org.apache.hive.service.cli.operation;
+ 
++import java.util.EnumSet;
++
+ import org.apache.hive.service.cli.FetchOrientation;
+ import org.apache.hive.service.cli.HiveSQLException;
+ import org.apache.hive.service.cli.OperationState;
+@@ -130,6 +132,10 @@ public TableSchema getResultSetSchema() throws HiveSQLException {
+   @Override
+   public RowSet getNextRowSet(FetchOrientation orientation, long maxRows) throws HiveSQLException {
+     assertState(OperationState.FINISHED);
++    validateDefaultFetchOrientation(orientation);
++    if (orientation.equals(FetchOrientation.FETCH_FIRST)) {
++      rowSet.setStartOffset(0);
++    }
+     return rowSet.extractSubset((int)maxRows);
+   }
+ }
+diff --git a/src/service/src/java/org/apache/hive/service/cli/operation/HiveCommandOperation.java b/src/service/src/java/org/apache/hive/service/cli/operation/HiveCommandOperation.java
+index a1ac55b..e5bfd92 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/operation/HiveCommandOperation.java
++++ b/src/service/src/java/org/apache/hive/service/cli/operation/HiveCommandOperation.java
+@@ -27,6 +27,7 @@
+ import java.io.PrintStream;
+ import java.io.UnsupportedEncodingException;
+ import java.util.ArrayList;
++import java.util.EnumSet;
+ import java.util.List;
+ import java.util.Map;
+ 
+@@ -152,6 +153,10 @@ public TableSchema getResultSetSchema() throws HiveSQLException {
+    */
+   @Override
+   public RowSet getNextRowSet(FetchOrientation orientation, long maxRows) throws HiveSQLException {
++    validateDefaultFetchOrientation(orientation);
++    if (orientation.equals(FetchOrientation.FETCH_FIRST)) {
++      resetResultReader();
++    }
+     List<String> rows = readResults((int) maxRows);
+     RowSet rowSet = new RowSet();
+ 
+@@ -178,7 +183,6 @@ public RowSet getNextRowSet(FetchOrientation orientation, long maxRows) throws H
+         throw new HiveSQLException(e);
+       }
+     }
+-
+     List<String> results = new ArrayList<String>();
+ 
+     for (int i = 0; i < nLines || nLines <= 0; ++i) {
+@@ -199,11 +203,15 @@ public RowSet getNextRowSet(FetchOrientation orientation, long maxRows) throws H
+   }
+ 
+   private void cleanTmpFile() {
++    resetResultReader();
++    SessionState sessionState = getParentSession().getSessionState();
++    File tmp = sessionState.getTmpOutputFile();
++    tmp.delete();
++  }
++
++  private void resetResultReader() {
+     if (resultReader != null) {
+-      SessionState sessionState = getParentSession().getSessionState();
+-      File tmp = sessionState.getTmpOutputFile();
+       IOUtils.cleanup(LOG, resultReader);
+-      tmp.delete();
+       resultReader = null;
+     }
+   }
+diff --git a/src/service/src/java/org/apache/hive/service/cli/operation/Operation.java b/src/service/src/java/org/apache/hive/service/cli/operation/Operation.java
+index 6f4b8dc..5d1dd5f 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/operation/Operation.java
++++ b/src/service/src/java/org/apache/hive/service/cli/operation/Operation.java
+@@ -17,6 +17,8 @@
+  */
+ package org.apache.hive.service.cli.operation;
+ 
++import java.util.EnumSet;
++
+ import org.apache.commons.logging.Log;
+ import org.apache.commons.logging.LogFactory;
+ import org.apache.hadoop.hive.conf.HiveConf;
+@@ -40,6 +42,9 @@
+   public static final long DEFAULT_FETCH_MAX_ROWS = 100;
+   protected boolean hasResultSet;
+ 
++  protected static final EnumSet<FetchOrientation> DEFAULT_FETCH_ORIENTATION_SET =
++      EnumSet.of(FetchOrientation.FETCH_NEXT,FetchOrientation.FETCH_FIRST);
++  
+   protected Operation(HiveSession parentSession, OperationType opType) {
+     super();
+     this.parentSession = parentSession;
+@@ -124,4 +129,28 @@ public void cancel() throws HiveSQLException {
+   public RowSet getNextRowSet() throws HiveSQLException {
+     return getNextRowSet(FetchOrientation.FETCH_NEXT, DEFAULT_FETCH_MAX_ROWS);
+   }
++
++  /**
++   * Verify if the given fetch orientation is part of the default orientation types.
++   * @param orientation
++   * @throws HiveSQLException
++   */
++  protected void validateDefaultFetchOrientation(FetchOrientation orientation)
++      throws HiveSQLException {
++    validateFetchOrientation(orientation, DEFAULT_FETCH_ORIENTATION_SET);
++  }
++
++  /**
++   * Verify if the given fetch orientation is part of the supported orientation types.
++   * @param orientation
++   * @param supportedOrientations
++   * @throws HiveSQLException
++   */
++  protected void validateFetchOrientation(FetchOrientation orientation,
++      EnumSet<FetchOrientation> supportedOrientations) throws HiveSQLException {
++    if (!supportedOrientations.contains(orientation)) {
++      throw new HiveSQLException("The fetch type " + orientation.toString() +
++        " is not supported for this resultset", "HY106");
++    }
++  }
+ }
+diff --git a/src/service/src/java/org/apache/hive/service/cli/operation/SQLOperation.java b/src/service/src/java/org/apache/hive/service/cli/operation/SQLOperation.java
+index f052dd2..ff83151 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/operation/SQLOperation.java
++++ b/src/service/src/java/org/apache/hive/service/cli/operation/SQLOperation.java
+@@ -22,6 +22,7 @@
+ import java.io.Serializable;
+ import java.sql.SQLException;
+ import java.util.ArrayList;
++import java.util.EnumSet;
+ import java.util.List;
+ import java.util.Map;
+ import java.util.Properties;
+@@ -68,6 +69,7 @@
+   private SerDe serde = null;
+   private final boolean runAsync;
+   private Future<?> backgroundHandle;
++  private boolean fetchStarted = false;
+ 
+   public SQLOperation(HiveSession parentSession, String statement, Map<String,
+       String> confOverlay, boolean runInBackground) {
+@@ -227,10 +229,18 @@ public TableSchema getResultSetSchema() throws HiveSQLException {
+   @Override
+   public RowSet getNextRowSet(FetchOrientation orientation, long maxRows) throws HiveSQLException {
+     assertState(OperationState.FINISHED);
++    validateDefaultFetchOrientation(orientation);
+     ArrayList<String> rows = new ArrayList<String>();
+     driver.setMaxRows((int)maxRows);
+ 
+     try {
++      /* if client is requesting fetch-from-start and its not the first time reading from this operation
++       * then reset the fetch position to beginging
++       */
++      if (orientation.equals(FetchOrientation.FETCH_FIRST) && fetchStarted) {
++        driver.resetFetch();
++      }
++      fetchStarted = true;
+       driver.getResults(rows);
+ 
+       getSerDe();
+-- 
+1.7.0.4
+

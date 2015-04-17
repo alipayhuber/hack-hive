@@ -1,0 +1,46 @@
+From 5b117fd88460ca2c4aa715a14d5dafd43fb9861b Mon Sep 17 00:00:00 2001
+From: Prasad Mujumdar <prasadm@cloudera.com>
+Date: Wed, 22 Jan 2014 11:24:48 -0800
+Subject: [PATCH 245/375] CDH-16929: Add jersey-servlet as dependency for MR1 MiniMR tests
+
+---
+ itests/qtest/pom.xml |    6 ++++++
+ pom.xml              |    5 +++++
+ 2 files changed, 11 insertions(+), 0 deletions(-)
+
+diff --git a/src/itests/qtest/pom.xml b/src/itests/qtest/pom.xml
+index 8996037..6d8d19b 100644
+--- a/src/itests/qtest/pom.xml
++++ b/src/itests/qtest/pom.xml
+@@ -209,6 +209,12 @@
+           <classifier>tests</classifier>
+           <scope>test</scope>
+         </dependency>
++        <dependency>
++          <groupId>com.sun.jersey</groupId>
++          <artifactId>jersey-servlet</artifactId>
++          <version>${jersey.version}</version>
++          <scope>test</scope>
++        </dependency>
+       </dependencies>
+     </profile>
+     <profile>
+diff --git a/src/pom.xml b/src/pom.xml
+index 1c48158..2fe8a15 100644
+--- a/src/pom.xml
++++ b/src/pom.xml
+@@ -260,6 +260,11 @@
+         <version>${jersey.version}</version>
+       </dependency>
+       <dependency>
++        <groupId>com.sun.jersey</groupId>
++        <artifactId>jersey-servlet</artifactId>
++        <version>${jersey.version}</version>
++      </dependency>
++      <dependency>
+         <groupId>com.sun.jersey.contribs</groupId>
+         <artifactId>wadl-resourcedoc-doclet</artifactId>
+         <version>${wadl-resourcedoc-doclet.version}</version>
+-- 
+1.7.0.4
+

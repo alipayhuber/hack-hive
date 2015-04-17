@@ -1,0 +1,147 @@
+From 8204d1c33d19861bb88752d32215b92ee473e848 Mon Sep 17 00:00:00 2001
+From: Prasad Mujumdar <prasadm@cloudera.com>
+Date: Fri, 18 Apr 2014 18:14:21 -0700
+Subject: [PATCH 334/375] Proposed CDH-18384, CDH-18385: Insert, URI and Server privilege support
+
+---
+ .../org/apache/hadoop/hive/ql/parse/HiveLexer.g    |    2 ++
+ .../org/apache/hadoop/hive/ql/parse/HiveParser.g   |    6 ++++++
+ .../hadoop/hive/ql/parse/IdentifiersParser.g       |    2 +-
+ .../hive/ql/security/authorization/Privilege.java  |   11 +++++++++++
+ .../security/authorization/PrivilegeRegistry.java  |    1 +
+ 5 files changed, 21 insertions(+), 1 deletions(-)
+
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/HiveLexer.g b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/HiveLexer.g
+index 08aee48..69bb771 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/HiveLexer.g
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/HiveLexer.g
+@@ -268,6 +268,8 @@ KW_ROLE: 'ROLE';
+ KW_ROLES: 'ROLES';
+ KW_INNER: 'INNER';
+ KW_EXCHANGE: 'EXCHANGE';
++KW_SERVER: 'SERVER';
++KW_URI: 'URI';
+ 
+ // Operators
+ // NOTE: if you add a new function/operator, add it to sysFuncNames so that describe function _FUNC_ will work.
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/HiveParser.g b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/HiveParser.g
+index 94e70e1..fcd1d39 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/HiveParser.g
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/HiveParser.g
+@@ -265,6 +265,7 @@ TOK_PRIV_ALTER_METADATA;
+ TOK_PRIV_ALTER_DATA;
+ TOK_PRIV_DROP;
+ TOK_PRIV_INDEX;
++TOK_PRIV_INSERT;
+ TOK_PRIV_LOCK;
+ TOK_PRIV_SELECT;
+ TOK_PRIV_SHOW_DATABASE;
+@@ -306,6 +307,8 @@ TOK_WINDOWVALUES;
+ TOK_WINDOWRANGE;
+ TOK_IGNOREPROTECTION;
+ TOK_EXCHANGEPARTITION;
++TOK_SERVER;
++TOK_URI;
+ }
+ 
+ 
+@@ -1358,6 +1361,8 @@ privilegeObject
+ @after {msgs.pop();}
+     : KW_ON (table=KW_TABLE|KW_DATABASE) identifier partitionSpec?
+     -> ^(TOK_PRIV_OBJECT identifier $table? partitionSpec?)
++    | KW_ON KW_URI (path=StringLiteral) -> ^(TOK_PRIV_OBJECT $path TOK_URI)
++    | KW_ON KW_SERVER identifier -> ^(TOK_PRIV_OBJECT identifier TOK_SERVER)
+     ;
+ 
+ privilegeList
+@@ -1386,6 +1391,7 @@ privilegeType
+     | KW_LOCK -> ^(TOK_PRIV_LOCK)
+     | KW_SELECT -> ^(TOK_PRIV_SELECT)
+     | KW_SHOW_DATABASE -> ^(TOK_PRIV_SHOW_DATABASE)
++    | KW_INSERT -> ^(TOK_PRIV_INSERT)
+     ;
+ 
+ principalSpecification
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/IdentifiersParser.g b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/IdentifiersParser.g
+index 7418a2f..834a925 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/IdentifiersParser.g
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/IdentifiersParser.g
+@@ -525,5 +525,5 @@ identifier
+     
+ nonReserved
+     :
+-    KW_TRUE | KW_FALSE | KW_LIKE | KW_EXISTS | KW_ASC | KW_DESC | KW_ORDER | KW_GROUP | KW_BY | KW_AS | KW_INSERT | KW_OVERWRITE | KW_OUTER | KW_LEFT | KW_RIGHT | KW_FULL | KW_PARTITION | KW_PARTITIONS | KW_TABLE | KW_TABLES | KW_COLUMNS | KW_INDEX | KW_INDEXES | KW_REBUILD | KW_FUNCTIONS | KW_SHOW | KW_MSCK | KW_REPAIR | KW_DIRECTORY | KW_LOCAL | KW_USING | KW_CLUSTER | KW_DISTRIBUTE | KW_SORT | KW_UNION | KW_LOAD | KW_EXPORT | KW_IMPORT | KW_DATA | KW_INPATH | KW_IS | KW_NULL | KW_CREATE | KW_EXTERNAL | KW_ALTER | KW_CHANGE | KW_FIRST | KW_AFTER | KW_DESCRIBE | KW_DROP | KW_RENAME | KW_IGNORE | KW_PROTECTION | KW_TO | KW_COMMENT | KW_BOOLEAN | KW_TINYINT | KW_SMALLINT | KW_INT | KW_BIGINT | KW_FLOAT | KW_DOUBLE | KW_DATE | KW_DATETIME | KW_TIMESTAMP | KW_DECIMAL | KW_STRING | KW_ARRAY | KW_STRUCT | KW_UNIONTYPE | KW_PARTITIONED | KW_CLUSTERED | KW_SORTED | KW_INTO | KW_BUCKETS | KW_ROW | KW_ROWS | KW_FORMAT | KW_DELIMITED | KW_FIELDS | KW_TERMINATED | KW_ESCAPED | KW_COLLECTION | KW_ITEMS | KW_KEYS | KW_KEY_TYPE | KW_LINES | KW_STORED | KW_FILEFORMAT | KW_SEQUENCEFILE | KW_TEXTFILE | KW_RCFILE | KW_ORCFILE | KW_INPUTFORMAT | KW_OUTPUTFORMAT | KW_INPUTDRIVER | KW_OUTPUTDRIVER | KW_OFFLINE | KW_ENABLE | KW_DISABLE | KW_READONLY | KW_NO_DROP | KW_LOCATION | KW_BUCKET | KW_OUT | KW_OF | KW_PERCENT | KW_ADD | KW_REPLACE | KW_RLIKE | KW_REGEXP | KW_TEMPORARY | KW_EXPLAIN | KW_FORMATTED | KW_PRETTY | KW_DEPENDENCY | KW_LOGICAL | KW_SERDE | KW_WITH | KW_DEFERRED | KW_SERDEPROPERTIES | KW_DBPROPERTIES | KW_LIMIT | KW_SET | KW_UNSET | KW_TBLPROPERTIES | KW_IDXPROPERTIES | KW_VALUE_TYPE | KW_ELEM_TYPE | KW_MAPJOIN | KW_STREAMTABLE | KW_HOLD_DDLTIME | KW_CLUSTERSTATUS | KW_UTC | KW_UTCTIMESTAMP | KW_LONG | KW_DELETE | KW_PLUS | KW_MINUS | KW_FETCH | KW_INTERSECT | KW_VIEW | KW_IN | KW_DATABASES | KW_MATERIALIZED | KW_SCHEMA | KW_SCHEMAS | KW_GRANT | KW_REVOKE | KW_SSL | KW_UNDO | KW_LOCK | KW_LOCKS | KW_UNLOCK | KW_SHARED | KW_EXCLUSIVE | KW_PROCEDURE | KW_UNSIGNED | KW_WHILE | KW_READ | KW_READS | KW_PURGE | KW_RANGE | KW_ANALYZE | KW_BEFORE | KW_BETWEEN | KW_BOTH | KW_BINARY | KW_CONTINUE | KW_CURSOR | KW_TRIGGER | KW_RECORDREADER | KW_RECORDWRITER | KW_SEMI | KW_LATERAL | KW_TOUCH | KW_ARCHIVE | KW_UNARCHIVE | KW_COMPUTE | KW_STATISTICS | KW_USE | KW_OPTION | KW_CONCATENATE | KW_SHOW_DATABASE | KW_UPDATE | KW_RESTRICT | KW_CASCADE | KW_SKEWED | KW_ROLLUP | KW_CUBE | KW_DIRECTORIES | KW_FOR | KW_GROUPING | KW_SETS | KW_TRUNCATE | KW_NOSCAN | KW_USER | KW_ROLE | KW_ROLES | KW_INNER | KW_DEFINED | KW_ALL | KW_DEFAULT | KW_NONE
++    KW_TRUE | KW_FALSE | KW_LIKE | KW_EXISTS | KW_ASC | KW_DESC | KW_ORDER | KW_GROUP | KW_BY | KW_AS | KW_INSERT | KW_OVERWRITE | KW_OUTER | KW_LEFT | KW_RIGHT | KW_FULL | KW_PARTITION | KW_PARTITIONS | KW_TABLE | KW_TABLES | KW_COLUMNS | KW_INDEX | KW_INDEXES | KW_REBUILD | KW_FUNCTIONS | KW_SHOW | KW_MSCK | KW_REPAIR | KW_DIRECTORY | KW_LOCAL | KW_USING | KW_CLUSTER | KW_DISTRIBUTE | KW_SORT | KW_UNION | KW_LOAD | KW_EXPORT | KW_IMPORT | KW_DATA | KW_INPATH | KW_IS | KW_NULL | KW_CREATE | KW_EXTERNAL | KW_ALTER | KW_CHANGE | KW_FIRST | KW_AFTER | KW_DESCRIBE | KW_DROP | KW_RENAME | KW_IGNORE | KW_PROTECTION | KW_TO | KW_COMMENT | KW_BOOLEAN | KW_TINYINT | KW_SMALLINT | KW_INT | KW_BIGINT | KW_FLOAT | KW_DOUBLE | KW_DATE | KW_DATETIME | KW_TIMESTAMP | KW_DECIMAL | KW_STRING | KW_ARRAY | KW_STRUCT | KW_UNIONTYPE | KW_PARTITIONED | KW_CLUSTERED | KW_SORTED | KW_INTO | KW_BUCKETS | KW_ROW | KW_ROWS | KW_FORMAT | KW_DELIMITED | KW_FIELDS | KW_TERMINATED | KW_ESCAPED | KW_COLLECTION | KW_ITEMS | KW_KEYS | KW_KEY_TYPE | KW_LINES | KW_STORED | KW_FILEFORMAT | KW_SEQUENCEFILE | KW_TEXTFILE | KW_RCFILE | KW_ORCFILE | KW_INPUTFORMAT | KW_OUTPUTFORMAT | KW_INPUTDRIVER | KW_OUTPUTDRIVER | KW_OFFLINE | KW_ENABLE | KW_DISABLE | KW_READONLY | KW_NO_DROP | KW_LOCATION | KW_BUCKET | KW_OUT | KW_OF | KW_PERCENT | KW_ADD | KW_REPLACE | KW_RLIKE | KW_REGEXP | KW_TEMPORARY | KW_EXPLAIN | KW_FORMATTED | KW_PRETTY | KW_DEPENDENCY | KW_LOGICAL | KW_SERDE | KW_WITH | KW_DEFERRED | KW_SERDEPROPERTIES | KW_DBPROPERTIES | KW_LIMIT | KW_SET | KW_UNSET | KW_TBLPROPERTIES | KW_IDXPROPERTIES | KW_VALUE_TYPE | KW_ELEM_TYPE | KW_MAPJOIN | KW_STREAMTABLE | KW_HOLD_DDLTIME | KW_CLUSTERSTATUS | KW_UTC | KW_UTCTIMESTAMP | KW_LONG | KW_DELETE | KW_PLUS | KW_MINUS | KW_FETCH | KW_INTERSECT | KW_VIEW | KW_IN | KW_DATABASES | KW_MATERIALIZED | KW_SCHEMA | KW_SCHEMAS | KW_GRANT | KW_REVOKE | KW_SSL | KW_UNDO | KW_LOCK | KW_LOCKS | KW_UNLOCK | KW_SHARED | KW_EXCLUSIVE | KW_PROCEDURE | KW_UNSIGNED | KW_WHILE | KW_READ | KW_READS | KW_PURGE | KW_RANGE | KW_ANALYZE | KW_BEFORE | KW_BETWEEN | KW_BOTH | KW_BINARY | KW_CONTINUE | KW_CURSOR | KW_TRIGGER | KW_RECORDREADER | KW_RECORDWRITER | KW_SEMI | KW_LATERAL | KW_TOUCH | KW_ARCHIVE | KW_UNARCHIVE | KW_COMPUTE | KW_STATISTICS | KW_USE | KW_OPTION | KW_CONCATENATE | KW_SHOW_DATABASE | KW_UPDATE | KW_RESTRICT | KW_CASCADE | KW_SKEWED | KW_ROLLUP | KW_CUBE | KW_DIRECTORIES | KW_FOR | KW_GROUPING | KW_SETS | KW_TRUNCATE | KW_NOSCAN | KW_USER | KW_ROLE | KW_ROLES | KW_INNER | KW_DEFINED | KW_ALL | KW_DEFAULT | KW_NONE | KW_URI | KW_SERVER
+     ;
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/security/authorization/Privilege.java b/src/ql/src/java/org/apache/hadoop/hive/ql/security/authorization/Privilege.java
+index dbbe210..bcf30d7 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/security/authorization/Privilege.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/security/authorization/Privilege.java
+@@ -19,6 +19,7 @@
+ package org.apache.hadoop.hive.ql.security.authorization;
+ 
+ import java.util.EnumSet;
++
+ import org.apache.hadoop.hive.ql.parse.HiveParser;
+ 
+ /**
+@@ -34,6 +35,7 @@
+     CREATE,
+     DROP,
+     INDEX,
++    INSERT,
+     LOCK,
+     SELECT,
+     SHOW_DATABASE,
+@@ -55,6 +57,8 @@ public static PrivilegeType getPrivTypeByToken(int token) {
+       return PrivilegeType.DROP;
+     case HiveParser.TOK_PRIV_INDEX:
+       return PrivilegeType.INDEX;
++    case HiveParser.TOK_PRIV_INSERT:
++      return PrivilegeType.INSERT;
+     case HiveParser.TOK_PRIV_LOCK:
+       return PrivilegeType.LOCK;
+     case HiveParser.TOK_PRIV_SELECT:
+@@ -80,6 +84,8 @@ public static PrivilegeType getPrivTypeByName(String privilegeName) {
+       return PrivilegeType.DROP;
+     } else if (canonicalizedName.equals("index")) {
+       return PrivilegeType.INDEX;
++    } else if (canonicalizedName.equals("insert")) {
++      return PrivilegeType.INSERT;
+     } else if (canonicalizedName.equals("lock")) {
+       return PrivilegeType.LOCK;
+     } else if (canonicalizedName.equals("select")) {
+@@ -145,6 +151,8 @@ public String toString() {
+       return "Drop";
+     case INDEX:
+       return "Index";
++    case INSERT:
++      return "Insert";
+     case LOCK:
+       return "Lock";
+     case SELECT:
+@@ -177,6 +185,9 @@ public Privilege() {
+   public static Privilege INDEX = new Privilege(PrivilegeType.INDEX,
+       PrivilegeScope.ALLSCOPE);
+ 
++  public static Privilege INSERT = new Privilege(PrivilegeType.INSERT,
++      PrivilegeScope.ALLSCOPE);
++
+   public static Privilege LOCK = new Privilege(PrivilegeType.LOCK,
+       PrivilegeScope.ALLSCOPE_EXCEPT_COLUMN);
+ 
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/security/authorization/PrivilegeRegistry.java b/src/ql/src/java/org/apache/hadoop/hive/ql/security/authorization/PrivilegeRegistry.java
+index 960f291..6724a09 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/security/authorization/PrivilegeRegistry.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/security/authorization/PrivilegeRegistry.java
+@@ -37,6 +37,7 @@
+     Registry.put(Privilege.CREATE.getPriv(), Privilege.CREATE);
+     Registry.put(Privilege.DROP.getPriv(), Privilege.DROP);
+     Registry.put(Privilege.INDEX.getPriv(), Privilege.INDEX);
++    Registry.put(Privilege.INSERT.getPriv(), Privilege.INSERT);
+     Registry.put(Privilege.LOCK.getPriv(), Privilege.LOCK);
+     Registry.put(Privilege.SELECT.getPriv(), Privilege.SELECT);
+     Registry.put(Privilege.SHOW_DATABASE.getPriv(),
+-- 
+1.7.0.4
+

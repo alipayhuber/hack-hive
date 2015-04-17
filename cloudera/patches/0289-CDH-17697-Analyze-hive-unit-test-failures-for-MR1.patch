@@ -1,0 +1,507 @@
+From 241164b792bb3854839b2a09844c192f424575a2 Mon Sep 17 00:00:00 2001
+From: Szehon Ho <szehon@cloudera.com>
+Date: Wed, 26 Feb 2014 14:32:36 -0800
+Subject: [PATCH 289/375] CDH-17697: Analyze hive unit test failures for MR1
+
+---
+ common/pom.xml                          |   13 ++--
+ common/src/test/resources/core-site.xml |    4 +
+ contrib/pom.xml                         |   13 ++--
+ hcatalog/core/pom.xml                   |  101 +++++++++++++++----------------
+ hcatalog/storage-handlers/hbase/pom.xml |   29 +++++----
+ hcatalog/webhcat/svr/pom.xml            |   31 +++++-----
+ hwi/pom.xml                             |   16 ++---
+ itests/hcatalog-unit/pom.xml            |   57 ++++++++----------
+ serde/pom.xml                           |    5 ++
+ service/pom.xml                         |   13 ++--
+ 10 files changed, 142 insertions(+), 140 deletions(-)
+
+diff --git a/src/common/pom.xml b/src/common/pom.xml
+index e4bcf12..3585a3b 100644
+--- a/src/common/pom.xml
++++ b/src/common/pom.xml
+@@ -72,6 +72,13 @@
+       <version>${junit.version}</version>
+       <scope>test</scope>
+     </dependency>
++    <!-- Following have only one version, which is cdh.hadoop.version -->
++    <dependency>
++      <groupId>org.apache.hadoop</groupId>
++      <artifactId>hadoop-common</artifactId>
++      <version>${hadoop-23.version}</version>
++      <optional>true</optional>
++    </dependency>
+   </dependencies>
+ 
+   <profiles>
+@@ -94,12 +101,6 @@
+       <dependencies>
+         <dependency>
+           <groupId>org.apache.hadoop</groupId>
+-          <artifactId>hadoop-common</artifactId>
+-          <version>${hadoop-23.version}</version>
+-          <optional>true</optional>
+-        </dependency>
+-        <dependency>
+-          <groupId>org.apache.hadoop</groupId>
+           <artifactId>hadoop-mapreduce-client-core</artifactId>
+           <version>${hadoop-23.version}</version>
+           <optional>true</optional>
+diff --git a/src/common/src/test/resources/core-site.xml b/src/common/src/test/resources/core-site.xml
+index ffe9747..ba53a17 100644
+--- a/src/common/src/test/resources/core-site.xml
++++ b/src/common/src/test/resources/core-site.xml
+@@ -24,4 +24,8 @@
+     <name>fs.default.name</name>
+     <value>core-site.xml</value>
+   </property>
++    <property>
++    <name>mapred.reduce.tasks</name>
++    <value>1</value>
++  </property>
+ </configuration>
+diff --git a/src/contrib/pom.xml b/src/contrib/pom.xml
+index ae1a77d..651eb36 100644
+--- a/src/contrib/pom.xml
++++ b/src/contrib/pom.xml
+@@ -67,6 +67,13 @@
+       <version>${junit.version}</version>
+       <scope>test</scope>
+     </dependency>
++    <!-- Following have only one version, which is cdh.hadoop.version -->
++    <dependency>
++      <groupId>org.apache.hadoop</groupId>
++      <artifactId>hadoop-common</artifactId>
++      <version>${hadoop-23.version}</version>
++      <optional>true</optional>
++    </dependency>
+   </dependencies>
+ 
+   <profiles>
+@@ -89,12 +96,6 @@
+       <dependencies>
+         <dependency>
+           <groupId>org.apache.hadoop</groupId>
+-          <artifactId>hadoop-common</artifactId>
+-          <version>${hadoop-23.version}</version>
+-          <optional>true</optional>
+-        </dependency>
+-        <dependency>
+-          <groupId>org.apache.hadoop</groupId>
+           <artifactId>hadoop-mapreduce-client-core</artifactId>
+           <version>${hadoop-23.version}</version>
+           <optional>true</optional>
+diff --git a/src/hcatalog/core/pom.xml b/src/hcatalog/core/pom.xml
+index 000ab25..dc457cd 100644
+--- a/src/hcatalog/core/pom.xml
++++ b/src/hcatalog/core/pom.xml
+@@ -71,6 +71,54 @@
+       <artifactId>jackson-mapper-asl</artifactId>
+       <version>${jackson.version}</version>
+     </dependency>
++      <dependency>
++      <groupId>com.sun.jersey</groupId>
++      <artifactId>jersey-servlet</artifactId>
++      <version>${jersey.version}</version>
++      <scope>test</scope>
++    </dependency>
++    <!-- Following have only one version, which is cdh.hadoop.version -->
++    <dependency>
++      <groupId>org.apache.hadoop</groupId>
++      <artifactId>hadoop-annotations</artifactId>
++      <version>${hadoop-23.version}</version>
++    </dependency>
++    <dependency>
++      <groupId>org.apache.hadoop</groupId>
++      <artifactId>hadoop-archives</artifactId>
++      <version>${hadoop-23.version}</version>
++    </dependency>
++    <dependency>
++      <groupId>org.apache.hadoop</groupId>
++      <artifactId>hadoop-common</artifactId>
++      <version>${hadoop-23.version}</version>
++    </dependency>
++    <dependency>
++      <groupId>org.apache.hadoop</groupId>
++      <artifactId>hadoop-common</artifactId>
++      <version>${hadoop-23.version}</version>
++      <classifier>tests</classifier>
++      <scope>test</scope>
++    </dependency>
++    <dependency>
++      <groupId>org.apache.hadoop</groupId>
++      <artifactId>hadoop-hdfs</artifactId>
++      <version>${hadoop-23.version}</version>
++      <scope>test</scope>
++    </dependency>
++    <dependency>
++      <groupId>org.apache.hadoop</groupId>
++      <artifactId>hadoop-hdfs</artifactId>
++      <version>${hadoop-23.version}</version>
++      <classifier>tests</classifier>
++      <scope>test</scope>
++    </dependency>
++    <dependency>
++      <groupId>org.apache.pig</groupId>
++      <artifactId>pig</artifactId>
++      <version>${pig.version}</version>
++      <scope>test</scope>
++    </dependency>
+   </dependencies>
+ 
+   <profiles>
+@@ -97,12 +145,6 @@
+           <version>${hadoop-20S.version}</version>
+           <scope>test</scope>
+         </dependency>
+-        <dependency>
+-          <groupId>org.apache.pig</groupId>
+-          <artifactId>pig</artifactId>
+-          <version>${pig.version}</version>
+-          <scope>test</scope>
+-        </dependency>
+       </dependencies>
+     </profile>
+    <profile>
+@@ -110,52 +152,11 @@
+       <dependencies>
+         <dependency>
+           <groupId>org.apache.hadoop</groupId>
+-          <artifactId>hadoop-annotations</artifactId>
+-          <version>${hadoop-23.version}</version>
+-        </dependency>
+-        <dependency>
+-          <groupId>org.apache.hadoop</groupId>
+-          <artifactId>hadoop-archives</artifactId>
+-          <version>${hadoop-23.version}</version>
+-        </dependency>
+-        <dependency>
+-          <groupId>org.apache.hadoop</groupId>
+-          <artifactId>hadoop-common</artifactId>
+-          <version>${hadoop-23.version}</version>
+-        </dependency>
+-        <dependency>
+-          <groupId>org.apache.hadoop</groupId>
+           <artifactId>hadoop-mapreduce-client-core</artifactId>
+           <version>${hadoop-23.version}</version>
+         </dependency>
+         <!-- test -->
+         <dependency>
+-          <groupId>com.sun.jersey</groupId>
+-          <artifactId>jersey-servlet</artifactId>
+-          <version>${jersey.version}</version>
+-          <scope>test</scope>
+-        </dependency>
+-        <dependency>
+-          <groupId>org.apache.hadoop</groupId>
+-          <artifactId>hadoop-common</artifactId>
+-          <version>${hadoop-23.version}</version>
+-          <classifier>tests</classifier>
+-          <scope>test</scope>
+-        </dependency>
+-        <dependency>
+-          <groupId>org.apache.hadoop</groupId>
+-          <artifactId>hadoop-hdfs</artifactId>
+-          <version>${hadoop-23.version}</version>
+-          <scope>test</scope>
+-        </dependency>
+-        <dependency>
+-          <groupId>org.apache.hadoop</groupId>
+-          <artifactId>hadoop-hdfs</artifactId>
+-          <version>${hadoop-23.version}</version>
+-          <classifier>tests</classifier>
+-          <scope>test</scope>
+-        </dependency>
+-        <dependency>
+           <groupId>org.apache.hadoop</groupId>
+           <artifactId>hadoop-mapreduce-client-hs</artifactId>
+           <version>${hadoop-23.version}</version>
+@@ -181,12 +182,6 @@
+           <classifier>tests</classifier>
+           <scope>test</scope>
+         </dependency>
+-        <dependency>
+-          <groupId>org.apache.pig</groupId>
+-          <artifactId>pig</artifactId>
+-          <version>${pig.version}</version>
+-          <scope>test</scope>
+-        </dependency>
+       </dependencies>
+     </profile>
+   </profiles>
+diff --git a/src/hcatalog/storage-handlers/hbase/pom.xml b/src/hcatalog/storage-handlers/hbase/pom.xml
+index 3494c58..0417533 100644
+--- a/src/hcatalog/storage-handlers/hbase/pom.xml
++++ b/src/hcatalog/storage-handlers/hbase/pom.xml
+@@ -86,6 +86,21 @@
+       <classifier>tests</classifier>
+       <scope>test</scope>
+     </dependency>
++    <!-- Following have only one version, which is cdh.hadoop.version -->
++    <dependency>
++      <groupId>org.apache.hadoop</groupId>
++      <artifactId>hadoop-common</artifactId>
++      <version>${hadoop-23.version}</version>
++      <classifier>tests</classifier>
++      <scope>test</scope>
++    </dependency>
++    <dependency>
++      <groupId>org.apache.hadoop</groupId>
++      <artifactId>hadoop-hdfs</artifactId>
++      <version>${hadoop-23.version}</version>
++      <classifier>tests</classifier>
++      <scope>test</scope>
++    </dependency>
+   </dependencies>
+ 
+   <profiles>
+@@ -232,13 +247,6 @@
+         <!-- test -->
+         <dependency>
+           <groupId>org.apache.hadoop</groupId>
+-          <artifactId>hadoop-common</artifactId>
+-          <version>${hadoop-23.version}</version>
+-          <classifier>tests</classifier>
+-          <scope>test</scope>
+-        </dependency>
+-        <dependency>
+-          <groupId>org.apache.hadoop</groupId>
+           <artifactId>hadoop-mapreduce-client-hs</artifactId>
+           <version>${hadoop-23.version}</version>
+           <scope>test</scope>
+@@ -250,13 +258,6 @@
+           <classifier>tests</classifier>
+           <scope>test</scope>
+         </dependency>
+-        <dependency>
+-          <groupId>org.apache.hadoop</groupId>
+-          <artifactId>hadoop-hdfs</artifactId>
+-          <version>${hadoop-23.version}</version>
+-          <classifier>tests</classifier>
+-          <scope>test</scope>
+-        </dependency>
+        <dependency>
+          <groupId>org.apache.hadoop</groupId>
+          <artifactId>hadoop-yarn-server-tests</artifactId>
+diff --git a/src/hcatalog/webhcat/svr/pom.xml b/src/hcatalog/webhcat/svr/pom.xml
+index 0c2878a..a3ada75 100644
+--- a/src/hcatalog/webhcat/svr/pom.xml
++++ b/src/hcatalog/webhcat/svr/pom.xml
+@@ -99,6 +99,22 @@
+       <version>${junit.version}</version>
+       <scope>test</scope>
+     </dependency>
++    <!-- Following have only one version, which is cdh.hadoop.version -->
++    <dependency>
++      <groupId>org.apache.hadoop</groupId>
++      <artifactId>hadoop-auth</artifactId>
++      <version>${hadoop-23.version}</version>
++    </dependency>
++    <dependency>
++      <groupId>org.apache.hadoop</groupId>
++      <artifactId>hadoop-common</artifactId>
++      <version>${hadoop-23.version}</version>
++    </dependency>
++      <dependency>
++      <groupId>org.apache.hadoop</groupId>
++      <artifactId>hadoop-hdfs</artifactId>
++      <version>${hadoop-23.version}</version>
++      </dependency>
+   </dependencies>
+ 
+ 
+@@ -121,21 +137,6 @@
+       <dependencies>
+         <dependency>
+           <groupId>org.apache.hadoop</groupId>
+-          <artifactId>hadoop-auth</artifactId>
+-          <version>${hadoop-23.version}</version>
+-        </dependency>
+-        <dependency>
+-          <groupId>org.apache.hadoop</groupId>
+-          <artifactId>hadoop-common</artifactId>
+-          <version>${hadoop-23.version}</version>
+-        </dependency>
+-        <dependency>
+-          <groupId>org.apache.hadoop</groupId>
+-          <artifactId>hadoop-hdfs</artifactId>
+-          <version>${hadoop-23.version}</version>
+-        </dependency>
+-        <dependency>
+-          <groupId>org.apache.hadoop</groupId>
+           <artifactId>hadoop-mapreduce-client-core</artifactId>
+           <version>${hadoop-23.version}</version>
+         </dependency>
+diff --git a/src/hwi/pom.xml b/src/hwi/pom.xml
+index 25e5189..c1ccc83 100644
+--- a/src/hwi/pom.xml
++++ b/src/hwi/pom.xml
+@@ -91,6 +91,12 @@
+       <version>${junit.version}</version>
+       <scope>test</scope>
+     </dependency>
++    <dependency>
++       <groupId>org.apache.hadoop</groupId>
++       <artifactId>hadoop-common</artifactId>
++       <version>${hadoop-23.version}</version>
++       <optional>true</optional>
++     </dependency>
+   </dependencies>
+ 
+   <profiles>
+@@ -111,15 +117,7 @@
+     </profile>
+    <profile>
+       <id>hadoop-2</id>
+-      <dependencies>
+-    <!-- dependencies are always listed in sorted order by groupId, artifectId -->
+-        <dependency>
+-          <groupId>org.apache.hadoop</groupId>
+-          <artifactId>hadoop-common</artifactId>
+-          <version>${hadoop-23.version}</version>
+-          <optional>true</optional>
+-        </dependency>
+-      </dependencies>
++
+     </profile>
+   </profiles>
+ 
+diff --git a/src/itests/hcatalog-unit/pom.xml b/src/itests/hcatalog-unit/pom.xml
+index 6a24d60..5bfaa60 100644
+--- a/src/itests/hcatalog-unit/pom.xml
++++ b/src/itests/hcatalog-unit/pom.xml
+@@ -103,6 +103,32 @@
+       <version>${junit.version}</version>
+       <scope>test</scope>
+     </dependency>
++    <!-- Following have only one version, which is cdh.hadoop.version -->
++    <dependency>
++      <groupId>org.apache.pig</groupId>
++      <artifactId>pig</artifactId>
++      <version>${pig.version}</version>
++      <scope>test</scope>
++    </dependency>
++    <dependency>
++      <groupId>org.apache.hadoop</groupId>
++      <artifactId>hadoop-annotations</artifactId>
++      <version>${hadoop-23.version}</version>
++      <scope>test</scope>
++    </dependency>
++    <dependency>
++      <groupId>org.apache.hadoop</groupId>
++      <artifactId>hadoop-archives</artifactId>
++      <version>${hadoop-23.version}</version>
++      <scope>test</scope>
++    </dependency>
++    <dependency>
++      <groupId>org.apache.hadoop</groupId>
++      <artifactId>hadoop-common</artifactId>
++      <version>${hadoop-23.version}</version>
++      <classifier>tests</classifier>
++      <scope>test</scope>
++    </dependency>
+   </dependencies>
+ 
+   <profiles>
+@@ -189,12 +215,6 @@
+           <classifier>tests</classifier>
+           <scope>test</scope>
+         </dependency>
+-        <dependency>
+-          <groupId>org.apache.pig</groupId>
+-          <artifactId>pig</artifactId>
+-          <version>${pig.version}</version>
+-          <scope>test</scope>
+-        </dependency>
+       </dependencies>
+     </profile>
+    <profile>
+@@ -203,25 +223,6 @@
+         <!-- test -->
+         <dependency>
+           <groupId>org.apache.hadoop</groupId>
+-          <artifactId>hadoop-annotations</artifactId>
+-          <version>${hadoop-23.version}</version>
+-          <scope>test</scope>
+-        </dependency>
+-        <dependency>
+-          <groupId>org.apache.hadoop</groupId>
+-          <artifactId>hadoop-archives</artifactId>
+-          <version>${hadoop-23.version}</version>
+-          <scope>test</scope>
+-        </dependency>
+-        <dependency>
+-          <groupId>org.apache.hadoop</groupId>
+-          <artifactId>hadoop-common</artifactId>
+-          <version>${hadoop-23.version}</version>
+-          <classifier>tests</classifier>
+-          <scope>test</scope>
+-        </dependency>
+-        <dependency>
+-          <groupId>org.apache.hadoop</groupId>
+           <artifactId>hadoop-mapreduce-client-core</artifactId>
+           <version>${hadoop-23.version}</version>
+           <scope>test</scope>
+@@ -322,12 +323,6 @@
+           <classifier>tests</classifier>
+           <scope>test</scope>
+         </dependency>
+-        <dependency>
+-          <groupId>org.apache.pig</groupId>
+-          <artifactId>pig</artifactId>
+-          <version>${pig.version}</version>
+-          <scope>test</scope>
+-        </dependency>
+       </dependencies>
+     </profile>
+   </profiles>
+diff --git a/src/serde/pom.xml b/src/serde/pom.xml
+index 4516799..cb46870 100644
+--- a/src/serde/pom.xml
++++ b/src/serde/pom.xml
+@@ -83,6 +83,11 @@
+       <version>${mockito-all.version}</version>
+       <scope>test</scope>
+     </dependency>
++    <dependency>
++      <groupId>com.sun.jersey</groupId>
++      <artifactId>jersey-servlet</artifactId>
++      <version>${jersey.version}</version>
++    </dependency>
+     <!-- Following have only one version, which is cdh.hadoop.version -->
+     <dependency>
+       <groupId>org.apache.hadoop</groupId>
+diff --git a/src/service/pom.xml b/src/service/pom.xml
+index 5b3a4f5..749762f 100644
+--- a/src/service/pom.xml
++++ b/src/service/pom.xml
+@@ -101,6 +101,13 @@
+       <version>${junit.version}</version>
+       <scope>test</scope>
+     </dependency>
++    <!-- Following have only one version, which is cdh.hadoop.version -->
++    <dependency>
++      <groupId>org.apache.hadoop</groupId>
++      <artifactId>hadoop-common</artifactId>
++      <version>${hadoop-23.version}</version>
++      <optional>true</optional>
++    </dependency>
+   </dependencies>
+ 
+   <profiles>
+@@ -123,12 +130,6 @@
+       <dependencies>
+         <dependency>
+           <groupId>org.apache.hadoop</groupId>
+-          <artifactId>hadoop-common</artifactId>
+-          <version>${hadoop-23.version}</version>
+-          <optional>true</optional>
+-        </dependency>
+-        <dependency>
+-          <groupId>org.apache.hadoop</groupId>
+           <artifactId>hadoop-mapreduce-client-core</artifactId>
+           <version>${hadoop-23.version}</version>
+           <optional>true</optional>
+-- 
+1.7.0.4
+

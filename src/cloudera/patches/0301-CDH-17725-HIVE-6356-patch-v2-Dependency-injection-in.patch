@@ -1,0 +1,45 @@
+From 75402deca852e3301205ed8366305113d8196eb2 Mon Sep 17 00:00:00 2001
+From: Ashutosh Chauhan <hashutosh@apache.org>
+Date: Tue, 4 Feb 2014 23:42:30 +0000
+Subject: [PATCH 301/375] CDH-17725: HIVE-6356(patch v2): Dependency injection in hbase storage handler is broken (Navis via Ashutosh Chauhan)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1564565 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../hadoop/hive/hbase/HBaseStorageHandler.java     |    6 ++----
+ 1 files changed, 2 insertions(+), 4 deletions(-)
+
+diff --git a/src/hbase-handler/src/java/org/apache/hadoop/hive/hbase/HBaseStorageHandler.java b/src/hbase-handler/src/java/org/apache/hadoop/hive/hbase/HBaseStorageHandler.java
+index 899ccce..8cd594b 100644
+--- a/src/hbase-handler/src/java/org/apache/hadoop/hive/hbase/HBaseStorageHandler.java
++++ b/src/hbase-handler/src/java/org/apache/hadoop/hive/hbase/HBaseStorageHandler.java
+@@ -35,7 +35,7 @@
+ import org.apache.hadoop.hbase.client.HBaseAdmin;
+ import org.apache.hadoop.hbase.client.HTable;
+ import org.apache.hadoop.hbase.mapred.TableOutputFormat;
+-import org.apache.hadoop.hbase.mapreduce.TableMapReduceUtil;
++import org.apache.hadoop.hbase.mapred.TableMapReduceUtil;
+ import org.apache.hadoop.hbase.security.User;
+ import org.apache.hadoop.hbase.util.Bytes;
+ import org.apache.hadoop.hive.hbase.HBaseSerDe.ColumnMapping;
+@@ -53,7 +53,6 @@
+ import org.apache.hadoop.hive.ql.plan.TableDesc;
+ import org.apache.hadoop.hive.serde2.Deserializer;
+ import org.apache.hadoop.hive.serde2.SerDe;
+-import org.apache.hadoop.hive.serde2.SerDeException;
+ import org.apache.hadoop.mapred.InputFormat;
+ import org.apache.hadoop.mapred.JobConf;
+ import org.apache.hadoop.mapred.OutputFormat;
+@@ -153,9 +152,8 @@ public void preCreateTable(Table tbl) throws MetaException {
+       String tableName = getHBaseTableName(tbl);
+       Map<String, String> serdeParam = tbl.getSd().getSerdeInfo().getParameters();
+       String hbaseColumnsMapping = serdeParam.get(HBaseSerDe.HBASE_COLUMNS_MAPPING);
+-      List<ColumnMapping> columnsMapping = null;
+ 
+-      columnsMapping = HBaseSerDe.parseColumnsMapping(hbaseColumnsMapping);
++      List<ColumnMapping> columnsMapping = HBaseSerDe.parseColumnsMapping(hbaseColumnsMapping);
+ 
+       HTableDescriptor tableDesc;
+ 
+-- 
+1.7.0.4
+

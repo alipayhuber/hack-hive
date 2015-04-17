@@ -1,0 +1,98 @@
+From b3c6353d9f894636f5297b5ec021d6080154bd74 Mon Sep 17 00:00:00 2001
+From: Szehon Ho <szehon@cloudera.com>
+Date: Tue, 28 Jan 2014 19:22:07 -0800
+Subject: [PATCH 256/375] CDH-16994: Hive tests with Java6 are failing intermittently with unbalance transaction errors
+
+Adding debug logging to diagnose the issue
+---
+ .../apache/hadoop/hive/metastore/ObjectStore.java  |   35 ++++++++++++++++++--
+ 1 files changed, 32 insertions(+), 3 deletions(-)
+
+diff --git a/src/metastore/src/java/org/apache/hadoop/hive/metastore/ObjectStore.java b/src/metastore/src/java/org/apache/hadoop/hive/metastore/ObjectStore.java
+index 93535d4..7e57593 100644
+--- a/src/metastore/src/java/org/apache/hadoop/hive/metastore/ObjectStore.java
++++ b/src/metastore/src/java/org/apache/hadoop/hive/metastore/ObjectStore.java
+@@ -360,7 +360,10 @@ public boolean openTransaction() {
+       // currentTransaction is not active
+       assert ((currentTransaction != null) && (currentTransaction.isActive()));
+     }
+-    return currentTransaction.isActive();
++    boolean result = currentTransaction.isActive();
++    LOG.debug("Open transaction: count = " + openTrasactionCalls + ", isActive = " + result);
++    printStack();
++    return result;
+   }
+ 
+   /**
+@@ -372,23 +375,32 @@ public boolean openTransaction() {
+   @SuppressWarnings("nls")
+   public boolean commitTransaction() {
+     if (TXN_STATUS.ROLLBACK == transactionStatus) {
++      LOG.debug("Commit transaction: rollback");
++      printStack();
+       return false;
+     }
+     if (openTrasactionCalls <= 0) {
+-      throw new RuntimeException("commitTransaction was called but openTransactionCalls = "
++      RuntimeException e = new RuntimeException("commitTransaction was called but openTransactionCalls = "
+           + openTrasactionCalls + ". This probably indicates that there are unbalanced " +
+               "calls to openTransaction/commitTransaction");
++      LOG.error("Error commiting transaction", e);
++      throw e;
+     }
+     if (!currentTransaction.isActive()) {
+-      throw new RuntimeException(
++      RuntimeException e = new RuntimeException(
+           "Commit is called, but transaction is not active. Either there are"
+               + " mismatching open and close calls or rollback was called in the same trasaction");
++      LOG.error("Error commiting transaction", e);
++      throw e;
+     }
+     openTrasactionCalls--;
++    LOG.debug("Commit transaction: count = " + openTrasactionCalls + ", isactive "+ currentTransaction.isActive());
++    printStack();
+     if ((openTrasactionCalls == 0) && currentTransaction.isActive()) {
+       transactionStatus = TXN_STATUS.COMMITED;
+       currentTransaction.commit();
+     }
++
+     return true;
+   }
+ 
+@@ -408,9 +420,13 @@ public boolean isActiveTransaction() {
+    */
+   public void rollbackTransaction() {
+     if (openTrasactionCalls < 1) {
++      LOG.debug("rolling back transaction: no open transactions: " + openTrasactionCalls);
++      printStack();
+       return;
+     }
+     openTrasactionCalls = 0;
++    LOG.debug("Rollback transaction, isActive: " + currentTransaction.isActive());
++    printStack();
+     if (currentTransaction.isActive()
+         && transactionStatus != TXN_STATUS.ROLLBACK) {
+       transactionStatus = TXN_STATUS.ROLLBACK;
+@@ -423,6 +439,19 @@ public void rollbackTransaction() {
+     }
+   }
+ 
++  private int stacklimit = 4;
++
++  private void printStack() {
++    StackTraceElement[] stackTrace = Thread.currentThread().getStackTrace();
++    int thislimit = Math.min(stacklimit, stackTrace.length);
++    StringBuilder sb = new StringBuilder();
++    for (int i = 2; i < thislimit; i++) {
++      sb.append("\n\t");
++      sb.append(stackTrace[i].toString());
++    }
++    LOG.debug(sb.toString());
++  }
++
+   public void createDatabase(Database db) throws InvalidObjectException, MetaException {
+     boolean commited = false;
+     MDatabase mdb = new MDatabase();
+-- 
+1.7.0.4
+

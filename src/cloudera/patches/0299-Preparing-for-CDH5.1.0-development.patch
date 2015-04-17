@@ -1,0 +1,549 @@
+From 6cbf0aeb677a21e026aee93be311a66f17bc669b Mon Sep 17 00:00:00 2001
+From: Jenkins slave <kitchen-build@cloudera.com>
+Date: Mon, 3 Mar 2014 11:02:38 -0800
+Subject: [PATCH 299/375] Preparing for CDH5.1.0 development
+
+---
+ ant/pom.xml                             |    2 +-
+ beeline/pom.xml                         |    2 +-
+ cli/pom.xml                             |    2 +-
+ common/pom.xml                          |    2 +-
+ contrib/pom.xml                         |    2 +-
+ hbase-handler/pom.xml                   |    2 +-
+ hcatalog/build.properties               |    2 +-
+ hcatalog/core/pom.xml                   |    2 +-
+ hcatalog/hcatalog-pig-adapter/pom.xml   |    2 +-
+ hcatalog/pom.xml                        |    2 +-
+ hcatalog/server-extensions/pom.xml      |    2 +-
+ hcatalog/storage-handlers/hbase/pom.xml |    2 +-
+ hcatalog/webhcat/java-client/pom.xml    |    2 +-
+ hcatalog/webhcat/svr/pom.xml            |    2 +-
+ hwi/pom.xml                             |    2 +-
+ itests/custom-serde/pom.xml             |    2 +-
+ itests/hcatalog-unit/pom.xml            |    2 +-
+ itests/hive-unit/pom.xml                |    2 +-
+ itests/pom.xml                          |    2 +-
+ itests/qtest/pom.xml                    |    2 +-
+ itests/test-serde/pom.xml               |    2 +-
+ itests/util/pom.xml                     |    2 +-
+ jdbc/pom.xml                            |    2 +-
+ metastore/pom.xml                       |    2 +-
+ odbc/pom.xml                            |    2 +-
+ packaging/pom.xml                       |    2 +-
+ pom.xml                                 |    4 ++--
+ ql/pom.xml                              |    2 +-
+ serde/pom.xml                           |    2 +-
+ service/pom.xml                         |    2 +-
+ shims/0.20/pom.xml                      |    2 +-
+ shims/0.20S/pom.xml                     |    2 +-
+ shims/0.23/pom.xml                      |    2 +-
+ shims/aggregator/pom.xml                |    2 +-
+ shims/common-secure/pom.xml             |    2 +-
+ shims/common/pom.xml                    |    2 +-
+ shims/pom.xml                           |    2 +-
+ testutils/pom.xml                       |    2 +-
+ 38 files changed, 39 insertions(+), 39 deletions(-)
+
+diff --git a/src/ant/pom.xml b/src/ant/pom.xml
+index 27d4ead..378f5cb 100644
+--- a/src/ant/pom.xml
++++ b/src/ant/pom.xml
+@@ -19,7 +19,7 @@
+   <parent>
+     <groupId>org.apache.hive</groupId>
+     <artifactId>hive</artifactId>
+-    <version>0.12.0-cdh5.0.0-SNAPSHOT</version>
++    <version>0.12.0-cdh5.1.0-SNAPSHOT</version>
+     <relativePath>../pom.xml</relativePath>
+   </parent>
+ 
+diff --git a/src/beeline/pom.xml b/src/beeline/pom.xml
+index 2d0d670..0165281 100644
+--- a/src/beeline/pom.xml
++++ b/src/beeline/pom.xml
+@@ -19,7 +19,7 @@
+   <parent>
+     <groupId>org.apache.hive</groupId>
+     <artifactId>hive</artifactId>
+-    <version>0.12.0-cdh5.0.0-SNAPSHOT</version>
++    <version>0.12.0-cdh5.1.0-SNAPSHOT</version>
+     <relativePath>../pom.xml</relativePath>
+   </parent>
+ 
+diff --git a/src/cli/pom.xml b/src/cli/pom.xml
+index 0493951..1e480f0 100644
+--- a/src/cli/pom.xml
++++ b/src/cli/pom.xml
+@@ -19,7 +19,7 @@
+   <parent>
+     <groupId>org.apache.hive</groupId>
+     <artifactId>hive</artifactId>
+-    <version>0.12.0-cdh5.0.0-SNAPSHOT</version>
++    <version>0.12.0-cdh5.1.0-SNAPSHOT</version>
+     <relativePath>../pom.xml</relativePath>
+   </parent>
+ 
+diff --git a/src/common/pom.xml b/src/common/pom.xml
+index 3585a3b..c83d934 100644
+--- a/src/common/pom.xml
++++ b/src/common/pom.xml
+@@ -19,7 +19,7 @@
+   <parent>
+     <groupId>org.apache.hive</groupId>
+     <artifactId>hive</artifactId>
+-    <version>0.12.0-cdh5.0.0-SNAPSHOT</version>
++    <version>0.12.0-cdh5.1.0-SNAPSHOT</version>
+     <relativePath>../pom.xml</relativePath>
+   </parent>
+ 
+diff --git a/src/contrib/pom.xml b/src/contrib/pom.xml
+index 651eb36..f67f601 100644
+--- a/src/contrib/pom.xml
++++ b/src/contrib/pom.xml
+@@ -19,7 +19,7 @@
+   <parent>
+     <groupId>org.apache.hive</groupId>
+     <artifactId>hive</artifactId>
+-    <version>0.12.0-cdh5.0.0-SNAPSHOT</version>
++    <version>0.12.0-cdh5.1.0-SNAPSHOT</version>
+     <relativePath>../pom.xml</relativePath>
+   </parent>
+ 
+diff --git a/src/hbase-handler/pom.xml b/src/hbase-handler/pom.xml
+index 18b7e6a..452e7d2 100644
+--- a/src/hbase-handler/pom.xml
++++ b/src/hbase-handler/pom.xml
+@@ -19,7 +19,7 @@
+   <parent>
+     <groupId>org.apache.hive</groupId>
+     <artifactId>hive</artifactId>
+-    <version>0.12.0-cdh5.0.0-SNAPSHOT</version>
++    <version>0.12.0-cdh5.1.0-SNAPSHOT</version>
+     <relativePath>../pom.xml</relativePath>
+   </parent>
+ 
+diff --git a/src/hcatalog/build.properties b/src/hcatalog/build.properties
+index f76718c..4f091a7 100644
+--- a/src/hcatalog/build.properties
++++ b/src/hcatalog/build.properties
+@@ -15,7 +15,7 @@
+ # specific language governing permissions and limitations
+ # under the License.
+ 
+-hive.version=0.12.0-cdh5.0.0-SNAPSHOT
++hive.version=0.12.0-cdh5.1.0-SNAPSHOT
+ hcatalog.version=${hive.version}
+ jar.name=${ant.project.name}-${hcatalog.version}.jar
+ hcatalog.jar=${ant.project.name}-${hcatalog.version}.jar
+diff --git a/src/hcatalog/core/pom.xml b/src/hcatalog/core/pom.xml
+index 2d53e28..1a8e491 100644
+--- a/src/hcatalog/core/pom.xml
++++ b/src/hcatalog/core/pom.xml
+@@ -25,7 +25,7 @@
+   <parent>
+     <groupId>org.apache.hive.hcatalog</groupId>
+     <artifactId>hive-hcatalog</artifactId>
+-    <version>0.12.0-cdh5.0.0-SNAPSHOT</version>
++    <version>0.12.0-cdh5.1.0-SNAPSHOT</version>
+     <relativePath>../pom.xml</relativePath>
+   </parent>
+ 
+diff --git a/src/hcatalog/hcatalog-pig-adapter/pom.xml b/src/hcatalog/hcatalog-pig-adapter/pom.xml
+index 969fc2a..d260185 100644
+--- a/src/hcatalog/hcatalog-pig-adapter/pom.xml
++++ b/src/hcatalog/hcatalog-pig-adapter/pom.xml
+@@ -25,7 +25,7 @@
+   <parent>
+     <groupId>org.apache.hive.hcatalog</groupId>
+     <artifactId>hive-hcatalog</artifactId>
+-    <version>0.12.0-cdh5.0.0-SNAPSHOT</version>
++    <version>0.12.0-cdh5.1.0-SNAPSHOT</version>
+     <relativePath>../pom.xml</relativePath>
+   </parent>
+ 
+diff --git a/src/hcatalog/pom.xml b/src/hcatalog/pom.xml
+index ab9d5cb..dd58e32 100644
+--- a/src/hcatalog/pom.xml
++++ b/src/hcatalog/pom.xml
+@@ -24,7 +24,7 @@
+   <parent>
+     <groupId>org.apache.hive</groupId>
+     <artifactId>hive</artifactId>
+-    <version>0.12.0-cdh5.0.0-SNAPSHOT</version>
++    <version>0.12.0-cdh5.1.0-SNAPSHOT</version>
+     <relativePath>../pom.xml</relativePath>
+   </parent>
+ 
+diff --git a/src/hcatalog/server-extensions/pom.xml b/src/hcatalog/server-extensions/pom.xml
+index 3b677bd..c527547 100644
+--- a/src/hcatalog/server-extensions/pom.xml
++++ b/src/hcatalog/server-extensions/pom.xml
+@@ -25,7 +25,7 @@
+   <parent>
+     <groupId>org.apache.hive.hcatalog</groupId>
+     <artifactId>hive-hcatalog</artifactId>
+-    <version>0.12.0-cdh5.0.0-SNAPSHOT</version>
++    <version>0.12.0-cdh5.1.0-SNAPSHOT</version>
+     <relativePath>../pom.xml</relativePath>
+   </parent>
+ 
+diff --git a/src/hcatalog/storage-handlers/hbase/pom.xml b/src/hcatalog/storage-handlers/hbase/pom.xml
+index 0417533..defb8f5 100644
+--- a/src/hcatalog/storage-handlers/hbase/pom.xml
++++ b/src/hcatalog/storage-handlers/hbase/pom.xml
+@@ -25,7 +25,7 @@
+   <parent>
+   <groupId>org.apache.hive.hcatalog</groupId>
+   <artifactId>hive-hcatalog</artifactId>
+-  <version>0.12.0-cdh5.0.0-SNAPSHOT</version>
++  <version>0.12.0-cdh5.1.0-SNAPSHOT</version>
+   <relativePath>../../pom.xml</relativePath>
+   </parent>
+ 
+diff --git a/src/hcatalog/webhcat/java-client/pom.xml b/src/hcatalog/webhcat/java-client/pom.xml
+index 6735088..fa08bdb 100644
+--- a/src/hcatalog/webhcat/java-client/pom.xml
++++ b/src/hcatalog/webhcat/java-client/pom.xml
+@@ -25,7 +25,7 @@
+   <parent>
+     <groupId>org.apache.hive.hcatalog</groupId>
+     <artifactId>hive-hcatalog</artifactId>
+-    <version>0.12.0-cdh5.0.0-SNAPSHOT</version>
++    <version>0.12.0-cdh5.1.0-SNAPSHOT</version>
+     <relativePath>../../pom.xml</relativePath>
+   </parent>
+ 
+diff --git a/src/hcatalog/webhcat/svr/pom.xml b/src/hcatalog/webhcat/svr/pom.xml
+index a594840..368af5e 100644
+--- a/src/hcatalog/webhcat/svr/pom.xml
++++ b/src/hcatalog/webhcat/svr/pom.xml
+@@ -25,7 +25,7 @@
+   <parent>
+     <groupId>org.apache.hive.hcatalog</groupId>
+     <artifactId>hive-hcatalog</artifactId>
+-    <version>0.12.0-cdh5.0.0-SNAPSHOT</version>
++    <version>0.12.0-cdh5.1.0-SNAPSHOT</version>
+     <relativePath>../../pom.xml</relativePath>
+   </parent>
+ 
+diff --git a/src/hwi/pom.xml b/src/hwi/pom.xml
+index cacf55e..997f4d7 100644
+--- a/src/hwi/pom.xml
++++ b/src/hwi/pom.xml
+@@ -19,7 +19,7 @@
+   <parent>
+     <groupId>org.apache.hive</groupId>
+     <artifactId>hive</artifactId>
+-    <version>0.12.0-cdh5.0.0-SNAPSHOT</version>
++    <version>0.12.0-cdh5.1.0-SNAPSHOT</version>
+     <relativePath>../pom.xml</relativePath>
+   </parent>
+ 
+diff --git a/src/itests/custom-serde/pom.xml b/src/itests/custom-serde/pom.xml
+index ae5cc44..25ec79f 100644
+--- a/src/itests/custom-serde/pom.xml
++++ b/src/itests/custom-serde/pom.xml
+@@ -19,7 +19,7 @@
+   <parent>
+     <groupId>org.apache.hive</groupId>
+     <artifactId>hive-it</artifactId>
+-    <version>0.12.0-cdh5.0.0-SNAPSHOT</version>
++    <version>0.12.0-cdh5.1.0-SNAPSHOT</version>
+     <relativePath>../pom.xml</relativePath>
+   </parent>
+ 
+diff --git a/src/itests/hcatalog-unit/pom.xml b/src/itests/hcatalog-unit/pom.xml
+index 5bfaa60..d3c1c4b 100644
+--- a/src/itests/hcatalog-unit/pom.xml
++++ b/src/itests/hcatalog-unit/pom.xml
+@@ -25,7 +25,7 @@
+   <parent>
+     <groupId>org.apache.hive</groupId>
+     <artifactId>hive-it</artifactId>
+-    <version>0.12.0-cdh5.0.0-SNAPSHOT</version>
++    <version>0.12.0-cdh5.1.0-SNAPSHOT</version>
+     <relativePath>../pom.xml</relativePath>
+   </parent>
+ 
+diff --git a/src/itests/hive-unit/pom.xml b/src/itests/hive-unit/pom.xml
+index 8154ac0..9e7a4a5 100644
+--- a/src/itests/hive-unit/pom.xml
++++ b/src/itests/hive-unit/pom.xml
+@@ -19,7 +19,7 @@
+   <parent>
+     <groupId>org.apache.hive</groupId>
+     <artifactId>hive-it</artifactId>
+-    <version>0.12.0-cdh5.0.0-SNAPSHOT</version>
++    <version>0.12.0-cdh5.1.0-SNAPSHOT</version>
+     <relativePath>../pom.xml</relativePath>
+   </parent>
+ 
+diff --git a/src/itests/pom.xml b/src/itests/pom.xml
+index bbe8b40..07c4484 100644
+--- a/src/itests/pom.xml
++++ b/src/itests/pom.xml
+@@ -19,7 +19,7 @@
+   <parent>
+     <groupId>org.apache.hive</groupId>
+     <artifactId>hive</artifactId>
+-    <version>0.12.0-cdh5.0.0-SNAPSHOT</version>
++    <version>0.12.0-cdh5.1.0-SNAPSHOT</version>
+     <relativePath>../pom.xml</relativePath>
+   </parent>
+ 
+diff --git a/src/itests/qtest/pom.xml b/src/itests/qtest/pom.xml
+index 6d8d19b..5416f52 100644
+--- a/src/itests/qtest/pom.xml
++++ b/src/itests/qtest/pom.xml
+@@ -20,7 +20,7 @@
+   <parent>
+     <groupId>org.apache.hive</groupId>
+     <artifactId>hive-it</artifactId>
+-    <version>0.12.0-cdh5.0.0-SNAPSHOT</version>
++    <version>0.12.0-cdh5.1.0-SNAPSHOT</version>
+     <relativePath>../pom.xml</relativePath>
+   </parent>
+ 
+diff --git a/src/itests/test-serde/pom.xml b/src/itests/test-serde/pom.xml
+index 5d3da9f..d210528 100644
+--- a/src/itests/test-serde/pom.xml
++++ b/src/itests/test-serde/pom.xml
+@@ -19,7 +19,7 @@
+   <parent>
+     <groupId>org.apache.hive</groupId>
+     <artifactId>hive-it</artifactId>
+-    <version>0.12.0-cdh5.0.0-SNAPSHOT</version>
++    <version>0.12.0-cdh5.1.0-SNAPSHOT</version>
+     <relativePath>../pom.xml</relativePath>
+   </parent>
+ 
+diff --git a/src/itests/util/pom.xml b/src/itests/util/pom.xml
+index 3c0e748..7efc3d8 100644
+--- a/src/itests/util/pom.xml
++++ b/src/itests/util/pom.xml
+@@ -19,7 +19,7 @@
+   <parent>
+     <groupId>org.apache.hive</groupId>
+     <artifactId>hive-it</artifactId>
+-    <version>0.12.0-cdh5.0.0-SNAPSHOT</version>
++    <version>0.12.0-cdh5.1.0-SNAPSHOT</version>
+     <relativePath>../pom.xml</relativePath>
+   </parent>
+ 
+diff --git a/src/jdbc/pom.xml b/src/jdbc/pom.xml
+index 9bcf068..10c181c 100644
+--- a/src/jdbc/pom.xml
++++ b/src/jdbc/pom.xml
+@@ -19,7 +19,7 @@
+   <parent>
+     <groupId>org.apache.hive</groupId>
+     <artifactId>hive</artifactId>
+-    <version>0.12.0-cdh5.0.0-SNAPSHOT</version>
++    <version>0.12.0-cdh5.1.0-SNAPSHOT</version>
+     <relativePath>../pom.xml</relativePath>
+   </parent>
+ 
+diff --git a/src/metastore/pom.xml b/src/metastore/pom.xml
+index baf7b23..d988557 100644
+--- a/src/metastore/pom.xml
++++ b/src/metastore/pom.xml
+@@ -19,7 +19,7 @@
+   <parent>
+     <groupId>org.apache.hive</groupId>
+     <artifactId>hive</artifactId>
+-    <version>0.12.0-cdh5.0.0-SNAPSHOT</version>
++    <version>0.12.0-cdh5.1.0-SNAPSHOT</version>
+     <relativePath>../pom.xml</relativePath>
+   </parent>
+ 
+diff --git a/src/odbc/pom.xml b/src/odbc/pom.xml
+index 2aba90c..510eb4d 100644
+--- a/src/odbc/pom.xml
++++ b/src/odbc/pom.xml
+@@ -19,7 +19,7 @@
+   <parent>
+     <groupId>org.apache.hive</groupId>
+     <artifactId>hive</artifactId>
+-    <version>0.12.0-cdh5.0.0-SNAPSHOT</version>
++    <version>0.12.0-cdh5.1.0-SNAPSHOT</version>
+     <relativePath>../pom.xml</relativePath>
+   </parent>
+ 
+diff --git a/src/packaging/pom.xml b/src/packaging/pom.xml
+index e43beb5..04c6aba 100644
+--- a/src/packaging/pom.xml
++++ b/src/packaging/pom.xml
+@@ -19,7 +19,7 @@
+   <parent>
+     <groupId>org.apache.hive</groupId>
+     <artifactId>hive</artifactId>
+-    <version>0.12.0-cdh5.0.0-SNAPSHOT</version>
++    <version>0.12.0-cdh5.1.0-SNAPSHOT</version>
+     <relativePath>../pom.xml</relativePath>
+   </parent>
+ 
+diff --git a/src/pom.xml b/src/pom.xml
+index 76f886f..24c350c 100644
+--- a/src/pom.xml
++++ b/src/pom.xml
+@@ -18,12 +18,12 @@
+   <parent>
+     <groupId>com.cloudera.cdh</groupId>
+     <artifactId>cdh-root</artifactId>
+-    <version>5.0.0-SNAPSHOT</version>
++    <version>5.1.0-SNAPSHOT</version>
+   </parent>
+ 
+   <groupId>org.apache.hive</groupId>
+   <artifactId>hive</artifactId>
+-  <version>0.12.0-cdh5.0.0-SNAPSHOT</version>
++  <version>0.12.0-cdh5.1.0-SNAPSHOT</version>
+   <packaging>pom</packaging>
+ 
+   <name>Hive</name>
+diff --git a/src/ql/pom.xml b/src/ql/pom.xml
+index 6ef0d5b..6fc7cef 100644
+--- a/src/ql/pom.xml
++++ b/src/ql/pom.xml
+@@ -19,7 +19,7 @@
+   <parent>
+     <groupId>org.apache.hive</groupId>
+     <artifactId>hive</artifactId>
+-    <version>0.12.0-cdh5.0.0-SNAPSHOT</version>
++    <version>0.12.0-cdh5.1.0-SNAPSHOT</version>
+     <relativePath>../pom.xml</relativePath>
+   </parent>
+ 
+diff --git a/src/serde/pom.xml b/src/serde/pom.xml
+index 2b23146..ff80937 100644
+--- a/src/serde/pom.xml
++++ b/src/serde/pom.xml
+@@ -19,7 +19,7 @@
+   <parent>
+     <groupId>org.apache.hive</groupId>
+     <artifactId>hive</artifactId>
+-    <version>0.12.0-cdh5.0.0-SNAPSHOT</version>
++    <version>0.12.0-cdh5.1.0-SNAPSHOT</version>
+     <relativePath>../pom.xml</relativePath>
+   </parent>
+ 
+diff --git a/src/service/pom.xml b/src/service/pom.xml
+index 749762f..d88efe1 100644
+--- a/src/service/pom.xml
++++ b/src/service/pom.xml
+@@ -19,7 +19,7 @@
+   <parent>
+     <groupId>org.apache.hive</groupId>
+     <artifactId>hive</artifactId>
+-    <version>0.12.0-cdh5.0.0-SNAPSHOT</version>
++    <version>0.12.0-cdh5.1.0-SNAPSHOT</version>
+     <relativePath>../pom.xml</relativePath>
+   </parent>
+ 
+diff --git a/src/shims/0.20/pom.xml b/src/shims/0.20/pom.xml
+index 8422194..e889a9f 100644
+--- a/src/shims/0.20/pom.xml
++++ b/src/shims/0.20/pom.xml
+@@ -19,7 +19,7 @@
+   <parent>
+     <groupId>org.apache.hive</groupId>
+     <artifactId>hive</artifactId>
+-    <version>0.12.0-cdh5.0.0-SNAPSHOT</version>
++    <version>0.12.0-cdh5.1.0-SNAPSHOT</version>
+     <relativePath>../../pom.xml</relativePath>
+   </parent>
+ 
+diff --git a/src/shims/0.20S/pom.xml b/src/shims/0.20S/pom.xml
+index a23ec07..4e4cf2a 100644
+--- a/src/shims/0.20S/pom.xml
++++ b/src/shims/0.20S/pom.xml
+@@ -19,7 +19,7 @@
+   <parent>
+     <groupId>org.apache.hive</groupId>
+     <artifactId>hive</artifactId>
+-    <version>0.12.0-cdh5.0.0-SNAPSHOT</version>
++    <version>0.12.0-cdh5.1.0-SNAPSHOT</version>
+     <relativePath>../../pom.xml</relativePath>
+   </parent>
+ 
+diff --git a/src/shims/0.23/pom.xml b/src/shims/0.23/pom.xml
+index 15de6dd..e7a29ec 100644
+--- a/src/shims/0.23/pom.xml
++++ b/src/shims/0.23/pom.xml
+@@ -19,7 +19,7 @@
+   <parent>
+     <groupId>org.apache.hive</groupId>
+     <artifactId>hive</artifactId>
+-    <version>0.12.0-cdh5.0.0-SNAPSHOT</version>
++    <version>0.12.0-cdh5.1.0-SNAPSHOT</version>
+     <relativePath>../../pom.xml</relativePath>
+   </parent>
+ 
+diff --git a/src/shims/aggregator/pom.xml b/src/shims/aggregator/pom.xml
+index e1f1506..1c19256 100644
+--- a/src/shims/aggregator/pom.xml
++++ b/src/shims/aggregator/pom.xml
+@@ -19,7 +19,7 @@
+   <parent>
+     <groupId>org.apache.hive</groupId>
+     <artifactId>hive</artifactId>
+-    <version>0.12.0-cdh5.0.0-SNAPSHOT</version>
++    <version>0.12.0-cdh5.1.0-SNAPSHOT</version>
+     <relativePath>../../pom.xml</relativePath>
+   </parent>
+ 
+diff --git a/src/shims/common-secure/pom.xml b/src/shims/common-secure/pom.xml
+index 5d2c7ef..8c2ede9 100644
+--- a/src/shims/common-secure/pom.xml
++++ b/src/shims/common-secure/pom.xml
+@@ -19,7 +19,7 @@
+   <parent>
+     <groupId>org.apache.hive</groupId>
+     <artifactId>hive</artifactId>
+-    <version>0.12.0-cdh5.0.0-SNAPSHOT</version>
++    <version>0.12.0-cdh5.1.0-SNAPSHOT</version>
+     <relativePath>../../pom.xml</relativePath>
+   </parent>
+ 
+diff --git a/src/shims/common/pom.xml b/src/shims/common/pom.xml
+index beb2be3..293675e 100644
+--- a/src/shims/common/pom.xml
++++ b/src/shims/common/pom.xml
+@@ -19,7 +19,7 @@
+   <parent>
+     <groupId>org.apache.hive</groupId>
+     <artifactId>hive</artifactId>
+-    <version>0.12.0-cdh5.0.0-SNAPSHOT</version>
++    <version>0.12.0-cdh5.1.0-SNAPSHOT</version>
+     <relativePath>../../pom.xml</relativePath>
+   </parent>
+ 
+diff --git a/src/shims/pom.xml b/src/shims/pom.xml
+index d85422c..199de89 100644
+--- a/src/shims/pom.xml
++++ b/src/shims/pom.xml
+@@ -19,7 +19,7 @@
+   <parent>
+     <groupId>org.apache.hive</groupId>
+     <artifactId>hive</artifactId>
+-    <version>0.12.0-cdh5.0.0-SNAPSHOT</version>
++    <version>0.12.0-cdh5.1.0-SNAPSHOT</version>
+     <relativePath>../pom.xml</relativePath>
+   </parent>
+ 
+diff --git a/src/testutils/pom.xml b/src/testutils/pom.xml
+index 6c20985..29aba2e 100644
+--- a/src/testutils/pom.xml
++++ b/src/testutils/pom.xml
+@@ -19,7 +19,7 @@
+   <parent>
+     <groupId>org.apache.hive</groupId>
+     <artifactId>hive</artifactId>
+-    <version>0.12.0-cdh5.0.0-SNAPSHOT</version>
++    <version>0.12.0-cdh5.1.0-SNAPSHOT</version>
+     <relativePath>../pom.xml</relativePath>
+   </parent>
+ 
+-- 
+1.7.0.4
+

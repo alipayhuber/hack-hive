@@ -1,0 +1,684 @@
+From c766e201c3a4b24468d68f4ebac164dbec0a2c52 Mon Sep 17 00:00:00 2001
+From: Edward Capriolo <ecapriolo@apache.org>
+Date: Sun, 6 Oct 2013 01:08:25 +0000
+Subject: [PATCH 031/375] HIVE-5250 Allow admins to enable and disable non query commands (Brock Noland via egc)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1529558 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../java/org/apache/hadoop/hive/cli/CliDriver.java |   17 ++++-
+ .../java/org/apache/hadoop/hive/conf/HiveConf.java |   11 ++-
+ conf/hive-default.xml.template                     |   12 ++++
+ .../org/apache/hadoop/hive/hwi/HWISessionItem.java |    9 ++-
+ .../ql/processors/CommandProcessorFactory.java     |   70 ++++++++++++++------
+ .../hadoop/hive/ql/processors/HiveCommand.java     |   49 ++++++++++++++
+ .../ql/processors/TestCommandProcessorFactory.java |   68 +++++++++++++++++++
+ .../cli/operation/AddResourceOperation.java        |   38 -----------
+ .../cli/operation/DeleteResourceOperation.java     |   38 -----------
+ .../hive/service/cli/operation/DfsOperation.java   |   38 -----------
+ .../cli/operation/ExecuteStatementOperation.java   |   29 +++++---
+ .../cli/operation/HiveCommandOperation.java        |   19 ++----
+ .../service/cli/operation/OperationManager.java    |    3 +-
+ .../hive/service/cli/operation/SetOperation.java   |   38 -----------
+ 14 files changed, 232 insertions(+), 207 deletions(-)
+ create mode 100644 ql/src/java/org/apache/hadoop/hive/ql/processors/HiveCommand.java
+ create mode 100644 ql/src/test/org/apache/hadoop/hive/ql/processors/TestCommandProcessorFactory.java
+
+diff --git a/src/cli/src/java/org/apache/hadoop/hive/cli/CliDriver.java b/src/cli/src/java/org/apache/hadoop/hive/cli/CliDriver.java
+index ed71196..4fcca8c 100644
+--- a/src/cli/src/java/org/apache/hadoop/hive/cli/CliDriver.java
++++ b/src/cli/src/java/org/apache/hadoop/hive/cli/CliDriver.java
+@@ -18,6 +18,8 @@
+ 
+ package org.apache.hadoop.hive.cli;
+ 
++import static org.apache.hadoop.util.StringUtils.stringifyException;
++
+ import java.io.BufferedReader;
+ import java.io.File;
+ import java.io.FileNotFoundException;
+@@ -30,6 +32,7 @@
+ import java.util.List;
+ import java.util.Map;
+ import java.util.Set;
++import java.sql.SQLException;
+ 
+ import jline.ArgumentCompletor;
+ import jline.ArgumentCompletor.AbstractArgumentDelimiter;
+@@ -122,7 +125,7 @@ public int processCmd(String cmd) {
+           this.processFile(cmd_1);
+         } catch (IOException e) {
+           console.printError("Failed processing file "+ cmd_1 +" "+ e.getLocalizedMessage(),
+-            org.apache.hadoop.util.StringUtils.stringifyException(e));
++            stringifyException(e));
+           ret = 1;
+         }
+       }
+@@ -146,7 +149,7 @@ public int processCmd(String cmd) {
+         }
+       } catch (Exception e) {
+         console.printError("Exception raised from Shell command " + e.getLocalizedMessage(),
+-            org.apache.hadoop.util.StringUtils.stringifyException(e));
++            stringifyException(e));
+         ret = 1;
+       }
+ 
+@@ -212,8 +215,14 @@ public int processCmd(String cmd) {
+         }
+       }
+     } else { // local mode
+-      CommandProcessor proc = CommandProcessorFactory.get(tokens[0], (HiveConf) conf);
+-      ret = processLocalCmd(cmd, proc, ss);
++      try {
++        CommandProcessor proc = CommandProcessorFactory.get(tokens[0], (HiveConf) conf);
++        ret = processLocalCmd(cmd, proc, ss);
++      } catch (SQLException e) {
++        console.printError("Failed processing command " + tokens[0] + " " + e.getLocalizedMessage(),
++          org.apache.hadoop.util.StringUtils.stringifyException(e));
++        ret = 1;
++      }
+     }
+ 
+     return ret;
+diff --git a/src/common/src/java/org/apache/hadoop/hive/conf/HiveConf.java b/src/common/src/java/org/apache/hadoop/hive/conf/HiveConf.java
+index 58e79f2..d0d286e 100644
+--- a/src/common/src/java/org/apache/hadoop/hive/conf/HiveConf.java
++++ b/src/common/src/java/org/apache/hadoop/hive/conf/HiveConf.java
+@@ -773,7 +773,9 @@
+     HIVE_SERVER2_TABLE_TYPE_MAPPING("hive.server2.table.type.mapping", "CLASSIC"),
+     HIVE_SERVER2_SESSION_HOOK("hive.server2.session.hook", ""),
+ 
+-    HIVE_CONF_RESTRICTED_LIST("hive.conf.restricted.list", null),
++    HIVE_SECURITY_COMMAND_WHITELIST("hive.security.command.whitelist", "set,reset,dfs,add,delete"),
++
++    HIVE_CONF_RESTRICTED_LIST("hive.conf.restricted.list", ""),
+ 
+     // If this is set all move tasks at the end of a multi-insert query will only begin once all
+     // outputs are ready
+@@ -1162,9 +1164,10 @@ private void initialize(Class<?> cls) {
+     }
+ 
+     // setup list of conf vars that are not allowed to change runtime
+-    String restrictListStr = this.get(ConfVars.HIVE_CONF_RESTRICTED_LIST.toString());
+-    if (restrictListStr != null) {
+-      for (String entry : restrictListStr.split(",")) {
++    String restrictListStr = this.get(ConfVars.HIVE_CONF_RESTRICTED_LIST.toString(), "").trim();
++    for (String entry : restrictListStr.split(",")) {
++      entry = entry.trim();
++      if (!entry.isEmpty()) {
+         restrictList.add(entry);
+       }
+     }
+diff --git a/src/conf/hive-default.xml.template b/src/conf/hive-default.xml.template
+index 6d38ceb..bc965c8 100644
+--- a/src/conf/hive-default.xml.template
++++ b/src/conf/hive-default.xml.template
+@@ -1520,6 +1520,18 @@
+ </property>
+ 
+ <property>
++  <name>hive.security.command.whitelist</name>
++  <value>set,reset,dfs,add,delete</value>
++  <description>Comma seperated list of non-SQL Hive commands users are authorized to execute</description>
++</property>
++
++<property>
++  <name>hive.conf.restricted.list</name>
++  <value></value>
++  <description>Comma seperated list of configuration options which are immutable at runtime</description>
++</property>
++
++<property>
+   <name>hive.metastore.authorization.storage.checks</name>
+   <value>false</value>
+   <description>Should the metastore do authorization checks against the underlying storage
+diff --git a/src/hwi/src/java/org/apache/hadoop/hive/hwi/HWISessionItem.java b/src/hwi/src/java/org/apache/hadoop/hive/hwi/HWISessionItem.java
+index a10c3a8..0ad8f89 100644
+--- a/src/hwi/src/java/org/apache/hadoop/hive/hwi/HWISessionItem.java
++++ b/src/hwi/src/java/org/apache/hadoop/hive/hwi/HWISessionItem.java
+@@ -24,6 +24,7 @@
+ import java.io.PrintStream;
+ import java.util.ArrayList;
+ import java.util.List;
++import java.sql.SQLException;
+ 
+ import org.apache.commons.logging.Log;
+ import org.apache.commons.logging.LogFactory;
+@@ -332,8 +333,12 @@ public void runQuery() {
+       String cmd_trimmed = cmd.trim();
+       String[] tokens = cmd_trimmed.split("\\s+");
+       String cmd_1 = cmd_trimmed.substring(tokens[0].length()).trim();
+-
+-      CommandProcessor proc = CommandProcessorFactory.get(tokens[0]);
++      CommandProcessor proc = null;
++      try {
++        proc = CommandProcessorFactory.get(tokens[0]);
++      } catch (SQLException e) {
++        l4j.error(getSessionName() + " error processing " + cmd, e);
++      }
+       if (proc != null) {
+         if (proc instanceof Driver) {
+           Driver qp = (Driver) proc;
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/processors/CommandProcessorFactory.java b/src/ql/src/java/org/apache/hadoop/hive/ql/processors/CommandProcessorFactory.java
+index 0d0bf47..7722ec6 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/processors/CommandProcessorFactory.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/processors/CommandProcessorFactory.java
+@@ -19,8 +19,12 @@
+ package org.apache.hadoop.hive.ql.processors;
+ 
+ import static org.apache.commons.lang.StringUtils.isBlank;
+-import java.util.Map;
++import java.util.Collections;
+ import java.util.HashMap;
++import java.util.HashSet;
++import java.util.Map;
++import java.util.Set;
++import java.sql.SQLException;
+ 
+ import org.apache.hadoop.hive.ql.Driver;
+ import org.apache.hadoop.hive.ql.session.SessionState;
+@@ -36,30 +40,58 @@ private CommandProcessorFactory() {
+     // prevent instantiation
+   }
+ 
+-  static Map<HiveConf, Driver> mapDrivers = new HashMap<HiveConf, Driver>();
+-  public static CommandProcessor get(String cmd) {
++  private static final Map<HiveConf, Driver> mapDrivers = Collections.synchronizedMap(new HashMap<HiveConf, Driver>());
++
++  public static CommandProcessor get(String cmd)
++      throws SQLException {
+     return get(cmd, null);
+   }
+ 
+-  public static CommandProcessor get(String cmd, HiveConf conf) {
+-    String cmdl = cmd.toLowerCase();
++  public static CommandProcessor getForHiveCommand(String cmd, HiveConf conf)
++      throws SQLException {
++    HiveCommand hiveCommand = HiveCommand.find(cmd);
++    if (hiveCommand == null || isBlank(cmd)) {
++      return null;
++    }
++    if (conf == null) {
++      conf = new HiveConf();
++    }
++    Set<String> availableCommands = new HashSet<String>();
++    for (String availableCommand : conf.getVar(HiveConf.ConfVars.HIVE_SECURITY_COMMAND_WHITELIST).split(",")) {
++      availableCommands.add(availableCommand.toLowerCase().trim());
++    }
++    if (!availableCommands.contains(cmd.trim().toLowerCase())) {
++      throw new SQLException("Insufficient privileges to execute " + cmd, "42000");
++    }
++    switch (hiveCommand) {
++      case SET:
++        return new SetProcessor();
++      case RESET:
++        return new ResetProcessor();
++      case DFS:
++        SessionState ss = SessionState.get();
++        return new DfsProcessor(ss.getConf());
++      case ADD:
++        return new AddResourceProcessor();
++      case DELETE:
++        return new DeleteResourceProcessor();
++      default:
++        throw new AssertionError("Unknown HiveCommand " + hiveCommand);
++    }
++  }
+ 
+-    if ("set".equals(cmdl)) {
+-      return new SetProcessor();
+-    } else if ("reset".equals(cmdl)) {
+-      return new ResetProcessor();
+-    } else if ("dfs".equals(cmdl)) {
+-      SessionState ss = SessionState.get();
+-      return new DfsProcessor(ss.getConf());
+-    } else if ("add".equals(cmdl)) {
+-      return new AddResourceProcessor();
+-    } else if ("delete".equals(cmdl)) {
+-      return new DeleteResourceProcessor();
+-    } else if (!isBlank(cmd)) {
++  public static CommandProcessor get(String cmd, HiveConf conf)
++      throws SQLException {
++    CommandProcessor result = getForHiveCommand(cmd, conf);
++    if (result != null) {
++      return result;
++    }
++    if (isBlank(cmd)) {
++      return null;
++    } else {
+       if (conf == null) {
+         return new Driver();
+       }
+-
+       Driver drv = mapDrivers.get(conf);
+       if (drv == null) {
+         drv = new Driver();
+@@ -68,8 +100,6 @@ public static CommandProcessor get(String cmd, HiveConf conf) {
+       drv.init();
+       return drv;
+     }
+-
+-    return null;
+   }
+ 
+   public static void clean(HiveConf conf) {
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/processors/HiveCommand.java b/src/ql/src/java/org/apache/hadoop/hive/ql/processors/HiveCommand.java
+new file mode 100644
+index 0000000..1abe733
+--- /dev/null
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/processors/HiveCommand.java
+@@ -0,0 +1,49 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package org.apache.hadoop.hive.ql.processors;
++
++import java.util.HashSet;
++import java.util.Set;
++
++/*
++ * HiveCommand is non-SQL statement such as setting a property or
++ * adding a resource.
++ **/
++public enum HiveCommand {
++  SET(),
++  RESET(),
++  DFS(),
++  ADD(),
++  DELETE();
++  private static final Set<String> COMMANDS = new HashSet<String>();
++  static {
++    for (HiveCommand command : HiveCommand.values()) {
++      COMMANDS.add(command.name());
++    }
++  }
++  public static HiveCommand find(String command) {
++    if (command != null) {
++      command = command.trim().toUpperCase();
++      if (COMMANDS.contains(command)) {
++        return HiveCommand.valueOf(command);
++      }
++    }
++    return null;
++  }
++}
+diff --git a/src/ql/src/test/org/apache/hadoop/hive/ql/processors/TestCommandProcessorFactory.java b/src/ql/src/test/org/apache/hadoop/hive/ql/processors/TestCommandProcessorFactory.java
+new file mode 100644
+index 0000000..732897f
+--- /dev/null
++++ b/src/ql/src/test/org/apache/hadoop/hive/ql/processors/TestCommandProcessorFactory.java
+@@ -0,0 +1,68 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package org.apache.hadoop.hive.ql.processors;
++
++import java.sql.SQLException;
++
++import junit.framework.Assert;
++
++import org.apache.hadoop.hive.conf.HiveConf;
++import org.apache.hadoop.hive.ql.session.SessionState;
++import org.junit.Before;
++import org.junit.Test;
++
++public class TestCommandProcessorFactory {
++
++  private HiveConf conf;
++
++  @Before
++  public void setUp() throws Exception {
++    conf = new HiveConf();
++  }
++
++  @Test
++  public void testInvalidCommands() throws Exception {
++    Assert.assertNull("Null should have returned null", CommandProcessorFactory.getForHiveCommand(null, conf));
++    Assert.assertNull("Blank should have returned null", CommandProcessorFactory.getForHiveCommand(" ", conf));
++    Assert.assertNull("SQL should have returned null", CommandProcessorFactory.getForHiveCommand("SELECT * FROM TABLE", conf));
++  }
++  @Test
++  public void testAvailableCommands() throws Exception {
++    SessionState.start(conf);
++    for (HiveCommand command : HiveCommand.values()) {
++      String cmd = command.name();
++      Assert.assertNotNull("Cmd " + cmd + " not return null", CommandProcessorFactory.getForHiveCommand(cmd, conf));
++    }
++    for (HiveCommand command : HiveCommand.values()) {
++      String cmd = command.name().toLowerCase();
++      Assert.assertNotNull("Cmd " + cmd + " not return null", CommandProcessorFactory.getForHiveCommand(cmd, conf));
++    }
++    conf.set(HiveConf.ConfVars.HIVE_SECURITY_COMMAND_WHITELIST.toString(), "");
++    for (HiveCommand command : HiveCommand.values()) {
++      String cmd = command.name();
++      try {
++        CommandProcessorFactory.getForHiveCommand(cmd, conf);
++        Assert.fail("Expected SQLException for " + cmd + " as available commands is empty");
++      } catch (SQLException e) {
++        Assert.assertEquals("Insufficient privileges to execute " + cmd, e.getMessage());
++        Assert.assertEquals("42000", e.getSQLState());
++      }
++    }
++  }
++}
+diff --git a/src/service/src/java/org/apache/hive/service/cli/operation/AddResourceOperation.java b/src/service/src/java/org/apache/hive/service/cli/operation/AddResourceOperation.java
+index fe0c6db..e69de29 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/operation/AddResourceOperation.java
++++ b/src/service/src/java/org/apache/hive/service/cli/operation/AddResourceOperation.java
+@@ -1,38 +0,0 @@
+-/**
+- * Licensed to the Apache Software Foundation (ASF) under one
+- * or more contributor license agreements.  See the NOTICE file
+- * distributed with this work for additional information
+- * regarding copyright ownership.  The ASF licenses this file
+- * to you under the Apache License, Version 2.0 (the
+- * "License"); you may not use this file except in compliance
+- * with the License.  You may obtain a copy of the License at
+- *
+- *     http://www.apache.org/licenses/LICENSE-2.0
+- *
+- * Unless required by applicable law or agreed to in writing, software
+- * distributed under the License is distributed on an "AS IS" BASIS,
+- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- * See the License for the specific language governing permissions and
+- * limitations under the License.
+- */
+-
+-package org.apache.hive.service.cli.operation;
+-
+-import java.util.Map;
+-
+-import org.apache.hadoop.hive.ql.processors.AddResourceProcessor;
+-import org.apache.hive.service.cli.session.HiveSession;
+-
+-/**
+- * HiveAddResourceOperation.
+- *
+- */
+-public class AddResourceOperation extends HiveCommandOperation {
+-
+-  protected AddResourceOperation(HiveSession parentSession, String statement,
+-      Map<String, String> confOverlay) {
+-    super(parentSession, statement, confOverlay);
+-    setCommandProcessor(new AddResourceProcessor());
+-  }
+-
+-}
+diff --git a/src/service/src/java/org/apache/hive/service/cli/operation/DeleteResourceOperation.java b/src/service/src/java/org/apache/hive/service/cli/operation/DeleteResourceOperation.java
+index 496bba9..e69de29 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/operation/DeleteResourceOperation.java
++++ b/src/service/src/java/org/apache/hive/service/cli/operation/DeleteResourceOperation.java
+@@ -1,38 +0,0 @@
+-/**
+- * Licensed to the Apache Software Foundation (ASF) under one
+- * or more contributor license agreements.  See the NOTICE file
+- * distributed with this work for additional information
+- * regarding copyright ownership.  The ASF licenses this file
+- * to you under the Apache License, Version 2.0 (the
+- * "License"); you may not use this file except in compliance
+- * with the License.  You may obtain a copy of the License at
+- *
+- *     http://www.apache.org/licenses/LICENSE-2.0
+- *
+- * Unless required by applicable law or agreed to in writing, software
+- * distributed under the License is distributed on an "AS IS" BASIS,
+- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- * See the License for the specific language governing permissions and
+- * limitations under the License.
+- */
+-
+-package org.apache.hive.service.cli.operation;
+-
+-import java.util.Map;
+-
+-import org.apache.hadoop.hive.ql.processors.DeleteResourceProcessor;
+-import org.apache.hive.service.cli.session.HiveSession;
+-
+-/**
+- * HiveDeleteResourceOperation.
+- *
+- */
+-public class DeleteResourceOperation extends HiveCommandOperation {
+-
+-  protected DeleteResourceOperation(HiveSession parentSession, String statement,
+-      Map<String, String> confOverlay) {
+-    super(parentSession, statement, confOverlay);
+-    setCommandProcessor(new DeleteResourceProcessor());
+-  }
+-
+-}
+diff --git a/src/service/src/java/org/apache/hive/service/cli/operation/DfsOperation.java b/src/service/src/java/org/apache/hive/service/cli/operation/DfsOperation.java
+index a8b8ed4..e69de29 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/operation/DfsOperation.java
++++ b/src/service/src/java/org/apache/hive/service/cli/operation/DfsOperation.java
+@@ -1,38 +0,0 @@
+-/**
+- * Licensed to the Apache Software Foundation (ASF) under one
+- * or more contributor license agreements.  See the NOTICE file
+- * distributed with this work for additional information
+- * regarding copyright ownership.  The ASF licenses this file
+- * to you under the Apache License, Version 2.0 (the
+- * "License"); you may not use this file except in compliance
+- * with the License.  You may obtain a copy of the License at
+- *
+- *     http://www.apache.org/licenses/LICENSE-2.0
+- *
+- * Unless required by applicable law or agreed to in writing, software
+- * distributed under the License is distributed on an "AS IS" BASIS,
+- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- * See the License for the specific language governing permissions and
+- * limitations under the License.
+- */
+-
+-package org.apache.hive.service.cli.operation;
+-
+-import java.util.Map;
+-
+-import org.apache.hadoop.hive.ql.processors.DfsProcessor;
+-import org.apache.hive.service.cli.session.HiveSession;
+-
+-/**
+- * HiveDfsCommandOperation.
+- *
+- */
+-public class DfsOperation extends HiveCommandOperation {
+-
+-  protected DfsOperation(HiveSession parentSession, String statement,
+-      Map<String, String> confOverlay) {
+-    super(parentSession, statement, confOverlay);
+-    setCommandProcessor(new DfsProcessor(parentSession.getHiveConf()));
+-  }
+-
+-}
+diff --git a/src/service/src/java/org/apache/hive/service/cli/operation/ExecuteStatementOperation.java b/src/service/src/java/org/apache/hive/service/cli/operation/ExecuteStatementOperation.java
+index 6b5a5c3..da236f5 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/operation/ExecuteStatementOperation.java
++++ b/src/service/src/java/org/apache/hive/service/cli/operation/ExecuteStatementOperation.java
+@@ -20,8 +20,16 @@
+ 
+ 
+ import java.util.HashMap;
++import java.util.HashSet;
+ import java.util.Map;
++import java.util.Set;
++import java.sql.SQLException;
+ 
++import org.apache.hadoop.hive.conf.HiveConf;
++import org.apache.hadoop.hive.ql.processors.CommandProcessorFactory;
++import org.apache.hadoop.hive.ql.processors.CommandProcessor;
++import org.apache.hadoop.hive.ql.processors.HiveCommand;
++import org.apache.hive.service.cli.HiveSQLException;
+ import org.apache.hive.service.cli.OperationType;
+ import org.apache.hive.service.cli.session.HiveSession;
+ 
+@@ -40,20 +48,19 @@ public String getStatement() {
+   }
+ 
+   public static ExecuteStatementOperation newExecuteStatementOperation(
+-      HiveSession parentSession, String statement, Map<String, String> confOverlay, boolean runAsync) {
++      HiveSession parentSession, String statement, Map<String, String> confOverlay, boolean runAsync)
++      throws HiveSQLException {
+     String[] tokens = statement.trim().split("\\s+");
+     String command = tokens[0].toLowerCase();
+-
+-    if ("set".equals(command)) {
+-      return new SetOperation(parentSession, statement, confOverlay);
+-    } else if ("dfs".equals(command)) {
+-      return new DfsOperation(parentSession, statement, confOverlay);
+-    } else if ("add".equals(command)) {
+-      return new AddResourceOperation(parentSession, statement, confOverlay);
+-    } else if ("delete".equals(command)) {
+-      return new DeleteResourceOperation(parentSession, statement, confOverlay);
+-    } else {
++    CommandProcessor processor = null;
++    try {
++      processor = CommandProcessorFactory.getForHiveCommand(tokens[0], parentSession.getHiveConf());
++    } catch (SQLException e) {
++      throw new HiveSQLException(e.getMessage(), e.getSQLState(), e);
++    }
++    if (processor == null) {
+       return new SQLOperation(parentSession, statement, confOverlay, runAsync);
+     }
++    return new HiveCommandOperation(parentSession, statement, processor, confOverlay);
+   }
+ }
+diff --git a/src/service/src/java/org/apache/hive/service/cli/operation/HiveCommandOperation.java b/src/service/src/java/org/apache/hive/service/cli/operation/HiveCommandOperation.java
+index dc796eb..a1ac55b 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/operation/HiveCommandOperation.java
++++ b/src/service/src/java/org/apache/hive/service/cli/operation/HiveCommandOperation.java
+@@ -43,10 +43,9 @@
+ import org.apache.hive.service.cli.session.HiveSession;
+ 
+ /**
+- * HiveCommandOperation.
+- *
++ * Executes a HiveCommand
+  */
+-public abstract class HiveCommandOperation extends ExecuteStatementOperation {
++public class HiveCommandOperation extends ExecuteStatementOperation {
+   private CommandProcessorResponse response;
+   private CommandProcessor commandProcessor;
+   private TableSchema resultSchema = null;
+@@ -58,8 +57,10 @@
+   private BufferedReader resultReader;
+ 
+ 
+-  protected HiveCommandOperation(HiveSession parentSession, String statement, Map<String, String> confOverlay) {
++  protected HiveCommandOperation(HiveSession parentSession, String statement,
++      CommandProcessor commandProcessor, Map<String, String> confOverlay) {
+     super(parentSession, statement, confOverlay);
++    this.commandProcessor = commandProcessor;
+     setupSessionIO(parentSession.getSessionState());
+   }
+ 
+@@ -104,7 +105,7 @@ public void run() throws HiveSQLException {
+       String[] tokens = statement.split("\\s");
+       String commandArgs = command.substring(tokens[0].length()).trim();
+ 
+-      response = getCommandProcessor().run(commandArgs);
++      response = commandProcessor.run(commandArgs);
+       int returnCode = response.getResponseCode();
+       if (returnCode != 0) {
+         throw new HiveSQLException("Error while processing statement: "
+@@ -206,12 +207,4 @@ private void cleanTmpFile() {
+       resultReader = null;
+     }
+   }
+-
+-  protected CommandProcessor getCommandProcessor() {
+-    return commandProcessor;
+-  }
+-
+-  protected void setCommandProcessor(CommandProcessor commandProcessor) {
+-    this.commandProcessor = commandProcessor;
+-  }
+ }
+diff --git a/src/service/src/java/org/apache/hive/service/cli/operation/OperationManager.java b/src/service/src/java/org/apache/hive/service/cli/operation/OperationManager.java
+index 1f78a1d..bcdb67f 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/operation/OperationManager.java
++++ b/src/service/src/java/org/apache/hive/service/cli/operation/OperationManager.java
+@@ -66,7 +66,8 @@ public synchronized void stop() {
+   }
+ 
+   public ExecuteStatementOperation newExecuteStatementOperation(HiveSession parentSession,
+-      String statement, Map<String, String> confOverlay, boolean runAsync) {
++      String statement, Map<String, String> confOverlay, boolean runAsync)
++    throws HiveSQLException {
+     ExecuteStatementOperation executeStatementOperation = ExecuteStatementOperation
+         .newExecuteStatementOperation(parentSession, statement, confOverlay, runAsync);
+     addOperation(executeStatementOperation);
+diff --git a/src/service/src/java/org/apache/hive/service/cli/operation/SetOperation.java b/src/service/src/java/org/apache/hive/service/cli/operation/SetOperation.java
+index bf6969a..e69de29 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/operation/SetOperation.java
++++ b/src/service/src/java/org/apache/hive/service/cli/operation/SetOperation.java
+@@ -1,38 +0,0 @@
+-/**
+- * Licensed to the Apache Software Foundation (ASF) under one
+- * or more contributor license agreements.  See the NOTICE file
+- * distributed with this work for additional information
+- * regarding copyright ownership.  The ASF licenses this file
+- * to you under the Apache License, Version 2.0 (the
+- * "License"); you may not use this file except in compliance
+- * with the License.  You may obtain a copy of the License at
+- *
+- *     http://www.apache.org/licenses/LICENSE-2.0
+- *
+- * Unless required by applicable law or agreed to in writing, software
+- * distributed under the License is distributed on an "AS IS" BASIS,
+- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- * See the License for the specific language governing permissions and
+- * limitations under the License.
+- */
+-
+-package org.apache.hive.service.cli.operation;
+-
+-import java.util.Map;
+-
+-import org.apache.hadoop.hive.ql.processors.SetProcessor;
+-import org.apache.hive.service.cli.session.HiveSession;
+-
+-/**
+- * HiveSetCommandOperation.
+- *
+- */
+-public class SetOperation extends HiveCommandOperation {
+-
+-  protected SetOperation(HiveSession parentSession, String statement,
+-      Map<String, String> confOverlay) {
+-    super(parentSession, statement, confOverlay);
+-    setCommandProcessor(new SetProcessor());
+-  }
+-
+-}
+-- 
+1.7.0.4
+

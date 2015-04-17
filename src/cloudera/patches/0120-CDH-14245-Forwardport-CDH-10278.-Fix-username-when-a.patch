@@ -1,0 +1,45 @@
+From ad98e47fa3f2413ba18c952cdc2dd1cb53136f51 Mon Sep 17 00:00:00 2001
+From: Brock Noland <brock@cloudera.com>
+Date: Mon, 16 Sep 2013 15:15:13 -0500
+Subject: [PATCH 120/375] CDH-14245 - Forwardport CDH-10278. Fix username when authentication is kerberos
+
+---
+ .../org/apache/hive/service/cli/CLIService.java    |    9 +++++++++
+ .../hive/service/cli/thrift/ThriftCLIService.java  |    3 +++
+ 2 files changed, 12 insertions(+), 0 deletions(-)
+
+diff --git a/src/service/src/java/org/apache/hive/service/cli/CLIService.java b/src/service/src/java/org/apache/hive/service/cli/CLIService.java
+index 2c1216a..2a335ac 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/CLIService.java
++++ b/src/service/src/java/org/apache/hive/service/cli/CLIService.java
+@@ -370,4 +370,13 @@ public synchronized String getDelegationTokenFromMetaStore(String owner)
+       }
+     }
+   }
++
++  public void setUserName(SessionHandle sessionHandle, String userName) {
++    try {
++      HiveSession session = sessionManager.getSession(sessionHandle);
++      session.setUserName(userName);
++    } catch (HiveSQLException e) {
++      LOG.error("Unable to set userName in sessions", e);
++    }
++  }
+ }
+diff --git a/src/service/src/java/org/apache/hive/service/cli/thrift/ThriftCLIService.java b/src/service/src/java/org/apache/hive/service/cli/thrift/ThriftCLIService.java
+index c31b2aa..d149617 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/thrift/ThriftCLIService.java
++++ b/src/service/src/java/org/apache/hive/service/cli/thrift/ThriftCLIService.java
+@@ -170,6 +170,9 @@ SessionHandle getSessionHandle(TOpenSessionReq req)
+       sessionHandle = cliService.openSession(userName, req.getPassword(),
+           req.getConfiguration());
+     }
++    if(userName != null) {
++      cliService.setUserName(sessionHandle, userName);
++    }
+     // Cannot break the b/w compatibility of API to accept ipAddress as another parameter in
+     // openSession call. Hence making this call
+     String ipAddress = getIpAddress();
+-- 
+1.7.0.4
+

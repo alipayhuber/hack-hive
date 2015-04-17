@@ -1,0 +1,4893 @@
+From 09357e1d17f7c4e9bb4c441a884f536c088795e9 Mon Sep 17 00:00:00 2001
+From: Xuefu Zhang <xuefu@apache.org>
+Date: Wed, 20 Nov 2013 05:40:46 +0000
+Subject: [PATCH 150/375] CDH-15834: HIVE-5356: Move arithmatic UDFs to generic UDF implementations (reviewed by Brock)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1543711 13f79535-47bb-0310-9956-ffa450edef68
+
+Conflicts:
+	ql/src/java/org/apache/hadoop/hive/ql/optimizer/physical/Vectorizer.java
+	ql/src/java/org/apache/hadoop/hive/ql/parse/TypeCheckProcFactory.java
+	ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDFOPDivide.java
+	ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDFOPMinus.java
+	ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDFOPMod.java
+	ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDFOPMultiply.java
+	ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDFOPPlus.java
+	ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDFPosMod.java
+	ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDFUtils.java
+	ql/src/test/org/apache/hadoop/hive/ql/exec/vector/TestVectorSelectOperator.java
+	ql/src/test/org/apache/hadoop/hive/ql/exec/vector/TestVectorizationContext.java
+	ql/src/test/results/clientpositive/decimal_udf.q.out
+	ql/src/test/results/clientpositive/num_op_type_conv.q.out
+	ql/src/test/results/clientpositive/udf_case.q.out
+	ql/src/test/results/clientpositive/udf_pmod.q.out
+	ql/src/test/results/clientpositive/udf_when.q.out
+	ql/src/test/results/clientpositive/vectorization_15.q.out
+	ql/src/test/results/clientpositive/vectorization_5.q.out
+	ql/src/test/results/clientpositive/vectorization_short_regress.q.out
+	ql/src/test/results/clientpositive/vectorized_math_funcs.q.out
+
+Many conflicts here in several categories:
+1. GenericUDF*.java - removed vectorization annotations because vectorization not in our cdh5-0.12 branch
+2. FunctionRegistry.java - removed 'char' case because char support not in cdh5-0.12 branch
+3. TestGenericUDF* - removed some test case to test varchar object inspector, which is not in cdh5-0.12 branch (HIVE 5648)
+4. udf_*.q.out- some lines changed upstream pertaining to tests that have not been added downstream (HIVE-5825), so net result is no change in cdh-5.0.12 branch.
+---
+ .../hadoop/hive/common/type/TestHiveDecimal.java   |    8 +
+ .../hadoop/hive/ql/exec/FunctionRegistry.java      |  103 ++++++---
+ .../hadoop/hive/ql/udf/UDFBaseNumericOp.java       |   67 ------
+ .../org/apache/hadoop/hive/ql/udf/UDFOPDivide.java |   71 ------
+ .../org/apache/hadoop/hive/ql/udf/UDFOPMinus.java  |  127 -----------
+ .../org/apache/hadoop/hive/ql/udf/UDFOPMod.java    |  134 -----------
+ .../apache/hadoop/hive/ql/udf/UDFOPMultiply.java   |  127 -----------
+ .../org/apache/hadoop/hive/ql/udf/UDFOPPlus.java   |  133 -----------
+ .../org/apache/hadoop/hive/ql/udf/UDFPosMod.java   |  135 -----------
+ .../hive/ql/udf/generic/GenericUDFBaseNumeric.java |  240 ++++++++++++++++++++
+ .../hive/ql/udf/generic/GenericUDFOPDivide.java    |   77 +++++++
+ .../hive/ql/udf/generic/GenericUDFOPMinus.java     |   95 ++++++++
+ .../hive/ql/udf/generic/GenericUDFOPMod.java       |  118 ++++++++++
+ .../hive/ql/udf/generic/GenericUDFOPMultiply.java  |   94 ++++++++
+ .../hive/ql/udf/generic/GenericUDFOPPlus.java      |  104 +++++++++
+ .../hive/ql/udf/generic/GenericUDFPosMod.java      |  122 ++++++++++
+ .../hive/ql/udf/generic/GenericUDFUtils.java       |   15 ++
+ .../ql/udf/generic/TestGenericUDFOPDivide.java     |  181 +++++++++++++++
+ .../hive/ql/udf/generic/TestGenericUDFOPMinus.java |  182 +++++++++++++++
+ .../hive/ql/udf/generic/TestGenericUDFOPMod.java   |  214 +++++++++++++++++
+ .../ql/udf/generic/TestGenericUDFOPMultiply.java   |  181 +++++++++++++++
+ .../hive/ql/udf/generic/TestGenericUDFOPPlus.java  |  187 +++++++++++++++
+ .../hive/ql/udf/generic/TestGenericUDFPosMod.java  |  214 +++++++++++++++++
+ .../clientnegative/invalid_arithmetic_type.q.out   |    2 +-
+ .../results/clientnegative/udf_assert_true2.q.out  |    4 +-
+ .../test/results/clientpositive/auto_join13.q.out  |    4 +-
+ .../test/results/clientpositive/auto_join2.q.out   |    4 +-
+ .../clientpositive/bucketmapjoin_negative3.q.out   |    4 +-
+ ql/src/test/results/clientpositive/decimal_6.q.out |    2 +-
+ .../test/results/clientpositive/decimal_udf.q.out  |  156 +++++++-------
+ ql/src/test/results/clientpositive/input8.q.out    |    4 +-
+ .../results/clientpositive/num_op_type_conv.q.out  |    4 +-
+ .../results/clientpositive/orc_createas1.q.out     |    2 +-
+ .../results/clientpositive/ppd_constant_expr.q.out |    8 +-
+ .../clientpositive/ql_rewrite_gbtoidx.q.out        |    2 +-
+ .../results/clientpositive/rcfile_createas1.q.out  |    2 +-
+ .../results/clientpositive/rcfile_merge1.q.out     |    4 +-
+ .../results/clientpositive/rcfile_merge2.q.out     |    4 +-
+ ql/src/test/results/clientpositive/skewjoin.q.out  |    4 +-
+ ql/src/test/results/clientpositive/udf_pmod.q.out  |    2 +-
+ .../clientpositive/windowing_expressions.q.out     |  184 ++++++++--------
+ ql/src/test/results/compiler/plan/cast1.q.xml      |   60 +-----
+ ql/src/test/results/compiler/plan/input20.q.xml    |   24 +--
+ ql/src/test/results/compiler/plan/input8.q.xml     |   82 ++-----
+ ql/src/test/results/compiler/plan/join2.q.xml      |   12 +-
+ ql/src/test/results/compiler/plan/sample1.q.xml    |   12 +-
+ ql/src/test/results/compiler/plan/sample2.q.xml    |   12 +-
+ ql/src/test/results/compiler/plan/sample3.q.xml    |   12 +-
+ ql/src/test/results/compiler/plan/sample4.q.xml    |   12 +-
+ ql/src/test/results/compiler/plan/sample5.q.xml    |   12 +-
+ ql/src/test/results/compiler/plan/sample6.q.xml    |   12 +-
+ ql/src/test/results/compiler/plan/sample7.q.xml    |   12 +-
+ ql/src/test/results/compiler/plan/udf4.q.xml       |   24 +--
+ .../objectinspector/PrimitiveObjectInspector.java  |   10 +
+ .../AbstractPrimitiveObjectInspector.java          |   17 ++
+ .../WritableConstantByteObjectInspector.java       |   10 +-
+ ...WritableConstantHiveDecimalObjectInspector.java |   10 +
+ .../WritableConstantIntObjectInspector.java        |   10 +-
+ .../WritableConstantLongObjectInspector.java       |   10 +-
+ .../WritableConstantShortObjectInspector.java      |   10 +-
+ .../hive/serde2/typeinfo/HiveDecimalUtils.java     |   22 +-
+ 61 files changed, 2429 insertions(+), 1281 deletions(-)
+ delete mode 100644 ql/src/java/org/apache/hadoop/hive/ql/udf/UDFBaseNumericOp.java
+ delete mode 100755 ql/src/java/org/apache/hadoop/hive/ql/udf/UDFOPDivide.java
+ delete mode 100755 ql/src/java/org/apache/hadoop/hive/ql/udf/UDFOPMinus.java
+ delete mode 100755 ql/src/java/org/apache/hadoop/hive/ql/udf/UDFOPMod.java
+ delete mode 100755 ql/src/java/org/apache/hadoop/hive/ql/udf/UDFOPMultiply.java
+ delete mode 100755 ql/src/java/org/apache/hadoop/hive/ql/udf/UDFOPPlus.java
+ delete mode 100644 ql/src/java/org/apache/hadoop/hive/ql/udf/UDFPosMod.java
+ create mode 100644 ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDFBaseNumeric.java
+ create mode 100644 ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDFOPDivide.java
+ create mode 100644 ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDFOPMinus.java
+ create mode 100644 ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDFOPMod.java
+ create mode 100644 ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDFOPMultiply.java
+ create mode 100644 ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDFOPPlus.java
+ create mode 100644 ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDFPosMod.java
+ create mode 100644 ql/src/test/org/apache/hadoop/hive/ql/udf/generic/TestGenericUDFOPDivide.java
+ create mode 100644 ql/src/test/org/apache/hadoop/hive/ql/udf/generic/TestGenericUDFOPMinus.java
+ create mode 100644 ql/src/test/org/apache/hadoop/hive/ql/udf/generic/TestGenericUDFOPMod.java
+ create mode 100644 ql/src/test/org/apache/hadoop/hive/ql/udf/generic/TestGenericUDFOPMultiply.java
+ create mode 100644 ql/src/test/org/apache/hadoop/hive/ql/udf/generic/TestGenericUDFOPPlus.java
+ create mode 100644 ql/src/test/org/apache/hadoop/hive/ql/udf/generic/TestGenericUDFPosMod.java
+
+diff --git a/src/common/src/test/org/apache/hadoop/hive/common/type/TestHiveDecimal.java b/src/common/src/test/org/apache/hadoop/hive/common/type/TestHiveDecimal.java
+index 9292392..21d58c5 100644
+--- a/src/common/src/test/org/apache/hadoop/hive/common/type/TestHiveDecimal.java
++++ b/src/common/src/test/org/apache/hadoop/hive/common/type/TestHiveDecimal.java
+@@ -102,6 +102,14 @@ public void testPlus() {
+   }
+ 
+   @Test
++  public void testPosMod() {
++    HiveDecimal hd1 = HiveDecimal.create("-100.91");
++    HiveDecimal hd2 = HiveDecimal.create("9.8");
++    HiveDecimal dec = hd1.remainder(hd2).add(hd2).remainder(hd2);
++    Assert.assertEquals("6.89", dec.toString());
++  }
++
++  @Test
+   public void testException() {
+     HiveDecimal dec = HiveDecimal.create("3.1415.926");
+     Assert.assertNull(dec);
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/FunctionRegistry.java b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/FunctionRegistry.java
+index 6a0cb72..1d6ff85 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/FunctionRegistry.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/FunctionRegistry.java
+@@ -85,17 +85,11 @@
+ import org.apache.hadoop.hive.ql.udf.UDFOPBitNot;
+ import org.apache.hadoop.hive.ql.udf.UDFOPBitOr;
+ import org.apache.hadoop.hive.ql.udf.UDFOPBitXor;
+-import org.apache.hadoop.hive.ql.udf.UDFOPDivide;
+ import org.apache.hadoop.hive.ql.udf.UDFOPLongDivide;
+-import org.apache.hadoop.hive.ql.udf.UDFOPMinus;
+-import org.apache.hadoop.hive.ql.udf.UDFOPMod;
+-import org.apache.hadoop.hive.ql.udf.UDFOPMultiply;
+ import org.apache.hadoop.hive.ql.udf.UDFOPNegative;
+-import org.apache.hadoop.hive.ql.udf.UDFOPPlus;
+ import org.apache.hadoop.hive.ql.udf.UDFOPPositive;
+ import org.apache.hadoop.hive.ql.udf.UDFPI;
+ import org.apache.hadoop.hive.ql.udf.UDFParseUrl;
+-import org.apache.hadoop.hive.ql.udf.UDFPosMod;
+ import org.apache.hadoop.hive.ql.udf.UDFPower;
+ import org.apache.hadoop.hive.ql.udf.UDFRTrim;
+ import org.apache.hadoop.hive.ql.udf.UDFRadians;
+@@ -208,7 +202,7 @@
+     registerUDF("ceiling", UDFCeil.class, false);
+     registerUDF("rand", UDFRand.class, false);
+     registerGenericUDF("abs", GenericUDFAbs.class);
+-    registerUDF("pmod", UDFPosMod.class, false);
++    registerGenericUDF("pmod", GenericUDFPosMod.class);
+ 
+     registerUDF("ln", UDFLn.class, false);
+     registerUDF("log2", UDFLog2.class, false);
+@@ -292,11 +286,11 @@
+     registerUDF("xpath_short", UDFXPathShort.class, false);
+     registerGenericUDF("xpath", GenericUDFXPath.class);
+ 
+-    registerUDF("+", UDFOPPlus.class, true);
+-    registerUDF("-", UDFOPMinus.class, true);
+-    registerUDF("*", UDFOPMultiply.class, true);
+-    registerUDF("/", UDFOPDivide.class, true);
+-    registerUDF("%", UDFOPMod.class, true);
++    registerGenericUDF("+", GenericUDFOPPlus.class);
++    registerGenericUDF("-", GenericUDFOPMinus.class);
++    registerGenericUDF("*", GenericUDFOPMultiply.class);
++    registerGenericUDF("/", GenericUDFOPDivide.class);
++    registerGenericUDF("%", GenericUDFOPMod.class);
+     registerUDF("div", UDFOPLongDivide.class, true);
+ 
+     registerUDF("&", UDFOPBitAnd.class, true);
+@@ -625,6 +619,51 @@ static void registerNumericType(PrimitiveCategory primitiveCategory, int level) 
+     registerNumericType(PrimitiveCategory.STRING, 8);
+   }
+ 
++  /**
++   * Check if the given type is numeric. String is considered numeric when used in
++   * numeric operators.
++   *
++   * @param typeInfo
++   * @return
++   */
++  public static boolean isNumericType(PrimitiveTypeInfo typeInfo) {
++    switch (typeInfo.getPrimitiveCategory()) {
++    case BYTE:
++    case SHORT:
++    case INT:
++    case LONG:
++    case DECIMAL:
++    case FLOAT:
++    case DOUBLE:
++    case STRING: // String or string equivalent is considered numeric when used in arithmetic operator.
++    case VARCHAR:
++    case VOID: // NULL is considered numeric type for arithmetic operators.
++      return true;
++    default:
++      return false;
++    }
++  }
++
++  /**
++   * Check if a type is exact (not approximate such as float and double). String is considered as
++   * double, thus not exact.
++   *
++   * @param typeInfo
++   * @return
++   */
++  public static boolean isExactNumericType(PrimitiveTypeInfo typeInfo) {
++    switch (typeInfo.getPrimitiveCategory()) {
++    case BYTE:
++    case SHORT:
++    case INT:
++    case LONG:
++    case DECIMAL:
++      return true;
++    default:
++      return false;
++    }
++  }
++
+   static int getCommonLength(int aLen, int bLen) {
+     int maxLength;
+     if (aLen < 0 || bLen < 0) {
+@@ -762,18 +801,7 @@ public static TypeInfo getCommonClassForComparison(TypeInfo a, TypeInfo b) {
+     return null;
+   }
+ 
+-  /**
+-   * Find a common class that objects of both TypeInfo a and TypeInfo b can
+-   * convert to. This is used for places other than comparison.
+-   *
+-   * The common class of string and double is string.
+-   *
+-   * @return null if no common class could be found.
+-   */
+-  public static TypeInfo getCommonClass(TypeInfo a, TypeInfo b) {
+-    if (a.equals(b)) {
+-      return a;
+-    }
++  public static PrimitiveCategory getCommonCategory(TypeInfo a, TypeInfo b) {
+     if (a.getCategory() != Category.PRIMITIVE || b.getCategory() != Category.PRIMITIVE) {
+       return null;
+     }
+@@ -784,8 +812,7 @@ public static TypeInfo getCommonClass(TypeInfo a, TypeInfo b) {
+     PrimitiveGrouping pgB = PrimitiveObjectInspectorUtils.getPrimitiveGrouping(pcB);
+     // handle string types properly
+     if (pgA == PrimitiveGrouping.STRING_GROUP && pgB == PrimitiveGrouping.STRING_GROUP) {
+-      return getTypeInfoForPrimitiveCategory(
+-          (PrimitiveTypeInfo)a, (PrimitiveTypeInfo)b,PrimitiveCategory.STRING);
++      return PrimitiveCategory.STRING;
+     }
+ 
+     Integer ai = numericTypes.get(pcA);
+@@ -794,8 +821,27 @@ public static TypeInfo getCommonClass(TypeInfo a, TypeInfo b) {
+       // If either is not a numeric type, return null.
+       return null;
+     }
+-    PrimitiveCategory pcCommon = (ai > bi) ? pcA : pcB;
+-    return getTypeInfoForPrimitiveCategory((PrimitiveTypeInfo)a, (PrimitiveTypeInfo)b, pcCommon);
++    
++    return (ai > bi) ? pcA : pcB;
++  }
++
++  /**
++   * Find a common class that objects of both TypeInfo a and TypeInfo b can
++   * convert to. This is used for places other than comparison.
++   *
++   * The common class of string and double is string.
++   *
++   * @return null if no common class could be found.
++   */
++  public static TypeInfo getCommonClass(TypeInfo a, TypeInfo b) {
++    if (a.equals(b)) {
++      return a;
++    }
++
++    PrimitiveCategory commonCat = getCommonCategory(a, b);
++    if (commonCat == null)
++      return null;
++    return getTypeInfoForPrimitiveCategory((PrimitiveTypeInfo)a, (PrimitiveTypeInfo)b, commonCat);
+   }
+ 
+   public static boolean implicitConvertable(PrimitiveCategory from, PrimitiveCategory to) {
+@@ -818,6 +864,7 @@ public static boolean implicitConvertable(PrimitiveCategory from, PrimitiveCateg
+     if (from == PrimitiveCategory.VOID) {
+       return true;
+     }
++
+     // Allow implicit String to Date conversion
+     if (fromPg == PrimitiveGrouping.DATE_GROUP && toPg == PrimitiveGrouping.STRING_GROUP) {
+       return true;
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/udf/UDFBaseNumericOp.java b/src/ql/src/java/org/apache/hadoop/hive/ql/udf/UDFBaseNumericOp.java
+deleted file mode 100644
+index 1e74fce..0000000
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/udf/UDFBaseNumericOp.java
++++ /dev/null
+@@ -1,67 +0,0 @@
+-/**
+- * Licensed to the Apache Software Foundation (ASF) under one
+- * or more contributor license agreements.  See the NOTICE file
+- * distributed with this work for additional information
+- * regarding copyright ownership.  The ASF licenses this file
+- * to you under the Apache License, Version 2.0 (the
+- * "License"); you may not use this file except in compliance
+- * with the License.  You may obtain a copy of the License at
+- *
+- *     http://www.apache.org/licenses/LICENSE-2.0
+- *
+- * Unless required by applicable law or agreed to in writing, software
+- * distributed under the License is distributed on an "AS IS" BASIS,
+- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- * See the License for the specific language governing permissions and
+- * limitations under the License.
+- */
+-
+-package org.apache.hadoop.hive.ql.udf;
+-
+-import org.apache.hadoop.hive.ql.exec.NumericOpMethodResolver;
+-import org.apache.hadoop.hive.ql.exec.UDF;
+-import org.apache.hadoop.hive.serde2.io.HiveDecimalWritable;
+-import org.apache.hadoop.hive.serde2.io.ByteWritable;
+-import org.apache.hadoop.hive.serde2.io.DoubleWritable;
+-import org.apache.hadoop.hive.serde2.io.ShortWritable;
+-import org.apache.hadoop.io.FloatWritable;
+-import org.apache.hadoop.io.IntWritable;
+-import org.apache.hadoop.io.LongWritable;
+-
+-/**
+- * Base class for numeric operators like +, -, / etc. All these operators share
+- * a common method resolver (NumericOpMethodResolver).
+- */
+-public abstract class UDFBaseNumericOp extends UDF {
+-
+-  /**
+-   * Constructor. This constructor sets the resolver to be used for comparison
+-   * operators. See {@link org.apache.hadoop.hive.ql.exec.UDFMethodResolver}
+-   */
+-  public UDFBaseNumericOp() {
+-    super(null);
+-    setResolver(new NumericOpMethodResolver(this.getClass()));
+-  }
+-
+-  protected ByteWritable byteWritable = new ByteWritable();
+-  protected ShortWritable shortWritable = new ShortWritable();
+-  protected IntWritable intWritable = new IntWritable();
+-  protected LongWritable longWritable = new LongWritable();
+-  protected FloatWritable floatWritable = new FloatWritable();
+-  protected DoubleWritable doubleWritable = new DoubleWritable();
+-  protected HiveDecimalWritable decimalWritable = new HiveDecimalWritable();
+-
+-  public abstract ByteWritable evaluate(ByteWritable a, ByteWritable b);
+-
+-  public abstract ShortWritable evaluate(ShortWritable a, ShortWritable b);
+-
+-  public abstract IntWritable evaluate(IntWritable a, IntWritable b);
+-
+-  public abstract LongWritable evaluate(LongWritable a, LongWritable b);
+-
+-  public abstract FloatWritable evaluate(FloatWritable a, FloatWritable b);
+-
+-  public abstract DoubleWritable evaluate(DoubleWritable a, DoubleWritable b);
+-
+-  public abstract HiveDecimalWritable evaluate(HiveDecimalWritable a, HiveDecimalWritable b);
+-}
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/udf/UDFOPDivide.java b/src/ql/src/java/org/apache/hadoop/hive/ql/udf/UDFOPDivide.java
+deleted file mode 100755
+index 2b810ee..0000000
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/udf/UDFOPDivide.java
++++ /dev/null
+@@ -1,71 +0,0 @@
+-/**
+- * Licensed to the Apache Software Foundation (ASF) under one
+- * or more contributor license agreements.  See the NOTICE file
+- * distributed with this work for additional information
+- * regarding copyright ownership.  The ASF licenses this file
+- * to you under the Apache License, Version 2.0 (the
+- * "License"); you may not use this file except in compliance
+- * with the License.  You may obtain a copy of the License at
+- *
+- *     http://www.apache.org/licenses/LICENSE-2.0
+- *
+- * Unless required by applicable law or agreed to in writing, software
+- * distributed under the License is distributed on an "AS IS" BASIS,
+- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- * See the License for the specific language governing permissions and
+- * limitations under the License.
+- */
+-
+-package org.apache.hadoop.hive.ql.udf;
+-
+-import org.apache.hadoop.hive.common.type.HiveDecimal;
+-import org.apache.hadoop.hive.ql.exec.Description;
+-import org.apache.hadoop.hive.ql.exec.UDF;
+-import org.apache.hadoop.hive.serde2.io.DoubleWritable;
+-import org.apache.hadoop.hive.serde2.io.HiveDecimalWritable;
+-
+-/**
+- * UDFOPDivide.
+- *
+- */
+-@Description(name = "/", value = "a _FUNC_ b - Divide a by b", extended = "Example:\n"
+-    + "  > SELECT 3 _FUNC_ 2 FROM src LIMIT 1;\n" + "  1.5")
+-/**
+- * Note that in SQL, the return type of divide is not necessarily the same
+- * as the parameters. For example, 3 / 2 = 1.5, not 1. To follow SQL, we always
+- * return a double for divide.
+- */
+-public class UDFOPDivide extends UDF {
+-
+-  private final DoubleWritable doubleWritable = new DoubleWritable();
+-  private final HiveDecimalWritable decimalWritable = new HiveDecimalWritable();
+-
+-  public DoubleWritable evaluate(DoubleWritable a, DoubleWritable b) {
+-    // LOG.info("Get input " + a.getClass() + ":" + a + " " + b.getClass() + ":"
+-    // + b);
+-    if ((a == null) || (b == null)) {
+-      return null;
+-    }
+-
+-    doubleWritable.set(a.get() / b.get());
+-    return doubleWritable;
+-  }
+-
+-  public HiveDecimalWritable evaluate(HiveDecimalWritable a, HiveDecimalWritable b) {
+-    if ((a == null) || (b == null)) {
+-      return null;
+-    }
+-
+-    if (b.getHiveDecimal().compareTo(HiveDecimal.ZERO) == 0) {
+-      return null;
+-    }
+-
+-    HiveDecimal dec = a.getHiveDecimal().divide(b.getHiveDecimal());
+-    if (dec == null) {
+-      return null;
+-    }
+-
+-    decimalWritable.set(dec);
+-    return decimalWritable;
+-  }
+-}
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/udf/UDFOPMinus.java b/src/ql/src/java/org/apache/hadoop/hive/ql/udf/UDFOPMinus.java
+deleted file mode 100755
+index c4579f6..0000000
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/udf/UDFOPMinus.java
++++ /dev/null
+@@ -1,127 +0,0 @@
+-/**
+- * Licensed to the Apache Software Foundation (ASF) under one
+- * or more contributor license agreements.  See the NOTICE file
+- * distributed with this work for additional information
+- * regarding copyright ownership.  The ASF licenses this file
+- * to you under the Apache License, Version 2.0 (the
+- * "License"); you may not use this file except in compliance
+- * with the License.  You may obtain a copy of the License at
+- *
+- *     http://www.apache.org/licenses/LICENSE-2.0
+- *
+- * Unless required by applicable law or agreed to in writing, software
+- * distributed under the License is distributed on an "AS IS" BASIS,
+- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- * See the License for the specific language governing permissions and
+- * limitations under the License.
+- */
+-
+-package org.apache.hadoop.hive.ql.udf;
+-
+-import org.apache.hadoop.hive.common.type.HiveDecimal;
+-import org.apache.hadoop.hive.ql.exec.Description;
+-import org.apache.hadoop.hive.serde2.io.ByteWritable;
+-import org.apache.hadoop.hive.serde2.io.DoubleWritable;
+-import org.apache.hadoop.hive.serde2.io.HiveDecimalWritable;
+-import org.apache.hadoop.hive.serde2.io.ShortWritable;
+-import org.apache.hadoop.io.FloatWritable;
+-import org.apache.hadoop.io.IntWritable;
+-import org.apache.hadoop.io.LongWritable;
+-
+-/**
+- * UDFOPMinus.
+- *
+- */
+-@Description(name = "-", value = "a _FUNC_ b - Returns the difference a-b")
+-public class UDFOPMinus extends UDFBaseNumericOp {
+-
+-  public UDFOPMinus() {
+-  }
+-
+-  @Override
+-  public ByteWritable evaluate(ByteWritable a, ByteWritable b) {
+-    // LOG.info("Get input " + a.getClass() + ":" + a + " " + b.getClass() + ":"
+-    // + b);
+-    if ((a == null) || (b == null)) {
+-      return null;
+-    }
+-
+-    byteWritable.set((byte) (a.get() - b.get()));
+-    return byteWritable;
+-  }
+-
+-  @Override
+-  public ShortWritable evaluate(ShortWritable a, ShortWritable b) {
+-    // LOG.info("Get input " + a.getClass() + ":" + a + " " + b.getClass() + ":"
+-    // + b);
+-    if ((a == null) || (b == null)) {
+-      return null;
+-    }
+-
+-    shortWritable.set((short) (a.get() - b.get()));
+-    return shortWritable;
+-  }
+-
+-  @Override
+-  public IntWritable evaluate(IntWritable a, IntWritable b) {
+-    // LOG.info("Get input " + a.getClass() + ":" + a + " " + b.getClass() + ":"
+-    // + b);
+-    if ((a == null) || (b == null)) {
+-      return null;
+-    }
+-
+-    intWritable.set((a.get() - b.get()));
+-    return intWritable;
+-  }
+-
+-  @Override
+-  public LongWritable evaluate(LongWritable a, LongWritable b) {
+-    // LOG.info("Get input " + a.getClass() + ":" + a + " " + b.getClass() + ":"
+-    // + b);
+-    if ((a == null) || (b == null)) {
+-      return null;
+-    }
+-
+-    longWritable.set(a.get() - b.get());
+-    return longWritable;
+-  }
+-
+-  @Override
+-  public FloatWritable evaluate(FloatWritable a, FloatWritable b) {
+-    // LOG.info("Get input " + a.getClass() + ":" + a + " " + b.getClass() + ":"
+-    // + b);
+-    if ((a == null) || (b == null)) {
+-      return null;
+-    }
+-
+-    floatWritable.set(a.get() - b.get());
+-    return floatWritable;
+-  }
+-
+-  @Override
+-  public DoubleWritable evaluate(DoubleWritable a, DoubleWritable b) {
+-    // LOG.info("Get input " + a.getClass() + ":" + a + " " + b.getClass() + ":"
+-    // + b);
+-    if ((a == null) || (b == null)) {
+-      return null;
+-    }
+-
+-    doubleWritable.set(a.get() - b.get());
+-    return doubleWritable;
+-  }
+-
+-  @Override
+-  public HiveDecimalWritable evaluate(HiveDecimalWritable a, HiveDecimalWritable b) {
+-    if ((a == null) || (b == null)) {
+-      return null;
+-    }
+-
+-    HiveDecimal dec = a.getHiveDecimal().subtract(b.getHiveDecimal());
+-    if (dec == null) {
+-      return null;
+-    }
+-
+-    decimalWritable.set(dec);
+-    return decimalWritable;
+-  }
+-}
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/udf/UDFOPMod.java b/src/ql/src/java/org/apache/hadoop/hive/ql/udf/UDFOPMod.java
+deleted file mode 100755
+index bfa2da5..0000000
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/udf/UDFOPMod.java
++++ /dev/null
+@@ -1,134 +0,0 @@
+-/**
+- * Licensed to the Apache Software Foundation (ASF) under one
+- * or more contributor license agreements.  See the NOTICE file
+- * distributed with this work for additional information
+- * regarding copyright ownership.  The ASF licenses this file
+- * to you under the Apache License, Version 2.0 (the
+- * "License"); you may not use this file except in compliance
+- * with the License.  You may obtain a copy of the License at
+- *
+- *     http://www.apache.org/licenses/LICENSE-2.0
+- *
+- * Unless required by applicable law or agreed to in writing, software
+- * distributed under the License is distributed on an "AS IS" BASIS,
+- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- * See the License for the specific language governing permissions and
+- * limitations under the License.
+- */
+-
+-package org.apache.hadoop.hive.ql.udf;
+-
+-import org.apache.hadoop.hive.common.type.HiveDecimal;
+-import org.apache.hadoop.hive.ql.exec.Description;
+-import org.apache.hadoop.hive.serde2.io.ByteWritable;
+-import org.apache.hadoop.hive.serde2.io.DoubleWritable;
+-import org.apache.hadoop.hive.serde2.io.HiveDecimalWritable;
+-import org.apache.hadoop.hive.serde2.io.ShortWritable;
+-import org.apache.hadoop.io.FloatWritable;
+-import org.apache.hadoop.io.IntWritable;
+-import org.apache.hadoop.io.LongWritable;
+-
+-/**
+- * UDFOPMod.
+- *
+- */
+-@Description(name = "%", value = "a _FUNC_ b - Returns the remainder when dividing a by b")
+-public class UDFOPMod extends UDFBaseNumericOp {
+-
+-  public UDFOPMod() {
+-  }
+-
+-  @Override
+-  public ByteWritable evaluate(ByteWritable a, ByteWritable b) {
+-    // LOG.info("Get input " + a.getClass() + ":" + a + " " + b.getClass() + ":"
+-    // + b);
+-    if ((a == null) || (b == null)) {
+-      return null;
+-    }
+-
+-    byteWritable.set((byte) (a.get() % b.get()));
+-    return byteWritable;
+-  }
+-
+-  @Override
+-  public ShortWritable evaluate(ShortWritable a, ShortWritable b) {
+-    // LOG.info("Get input " + a.getClass() + ":" + a + " " + b.getClass() + ":"
+-    // + b);
+-    if ((a == null) || (b == null)) {
+-      return null;
+-    }
+-
+-    shortWritable.set((short) (a.get() % b.get()));
+-    return shortWritable;
+-  }
+-
+-  @Override
+-  public IntWritable evaluate(IntWritable a, IntWritable b) {
+-    // LOG.info("Get input " + a.getClass() + ":" + a + " " + b.getClass() + ":"
+-    // + b);
+-    if ((a == null) || (b == null)) {
+-      return null;
+-    }
+-
+-    intWritable.set((a.get() % b.get()));
+-    return intWritable;
+-  }
+-
+-  @Override
+-  public LongWritable evaluate(LongWritable a, LongWritable b) {
+-    // LOG.info("Get input " + a.getClass() + ":" + a + " " + b.getClass() + ":"
+-    // + b);
+-    if ((a == null) || (b == null)) {
+-      return null;
+-    }
+-
+-    longWritable.set(a.get() % b.get());
+-    return longWritable;
+-  }
+-
+-  @Override
+-  public FloatWritable evaluate(FloatWritable a, FloatWritable b) {
+-    // LOG.info("Get input " + a.getClass() + ":" + a + " " + b.getClass() + ":"
+-    // + b);
+-    if ((a == null) || (b == null)) {
+-      return null;
+-    }
+-
+-    floatWritable.set(a.get() % b.get());
+-    return floatWritable;
+-  }
+-
+-  @Override
+-  public DoubleWritable evaluate(DoubleWritable a, DoubleWritable b) {
+-    // LOG.info("Get input " + a.getClass() + ":" + a + " " + b.getClass() + ":"
+-    // + b);
+-    if ((a == null) || (b == null)) {
+-      return null;
+-    }
+-
+-    doubleWritable.set(a.get() % b.get());
+-    return doubleWritable;
+-  }
+-
+-  @Override
+-  public HiveDecimalWritable evaluate(HiveDecimalWritable a, HiveDecimalWritable b) {
+-    if ((a == null) || (b == null)) {
+-      return null;
+-    }
+-
+-    HiveDecimal av = a.getHiveDecimal();
+-    HiveDecimal bv = b.getHiveDecimal();
+-
+-    if (bv.compareTo(HiveDecimal.ZERO) == 0) {
+-      return null;
+-    }
+-
+-    HiveDecimal dec = av.remainder(bv);
+-    if (dec == null) {
+-      return null;
+-    }
+-
+-    decimalWritable.set(dec);
+-    return decimalWritable;
+-  }
+-}
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/udf/UDFOPMultiply.java b/src/ql/src/java/org/apache/hadoop/hive/ql/udf/UDFOPMultiply.java
+deleted file mode 100755
+index 0daaec5..0000000
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/udf/UDFOPMultiply.java
++++ /dev/null
+@@ -1,127 +0,0 @@
+-/**
+- * Licensed to the Apache Software Foundation (ASF) under one
+- * or more contributor license agreements.  See the NOTICE file
+- * distributed with this work for additional information
+- * regarding copyright ownership.  The ASF licenses this file
+- * to you under the Apache License, Version 2.0 (the
+- * "License"); you may not use this file except in compliance
+- * with the License.  You may obtain a copy of the License at
+- *
+- *     http://www.apache.org/licenses/LICENSE-2.0
+- *
+- * Unless required by applicable law or agreed to in writing, software
+- * distributed under the License is distributed on an "AS IS" BASIS,
+- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- * See the License for the specific language governing permissions and
+- * limitations under the License.
+- */
+-
+-package org.apache.hadoop.hive.ql.udf;
+-
+-import org.apache.hadoop.hive.common.type.HiveDecimal;
+-import org.apache.hadoop.hive.ql.exec.Description;
+-import org.apache.hadoop.hive.serde2.io.ByteWritable;
+-import org.apache.hadoop.hive.serde2.io.DoubleWritable;
+-import org.apache.hadoop.hive.serde2.io.HiveDecimalWritable;
+-import org.apache.hadoop.hive.serde2.io.ShortWritable;
+-import org.apache.hadoop.io.FloatWritable;
+-import org.apache.hadoop.io.IntWritable;
+-import org.apache.hadoop.io.LongWritable;
+-
+-/**
+- * UDFOPMultiply.
+- *
+- */
+-@Description(name = "*", value = "a _FUNC_ b - Multiplies a by b")
+-public class UDFOPMultiply extends UDFBaseNumericOp {
+-
+-  public UDFOPMultiply() {
+-  }
+-
+-  @Override
+-  public ByteWritable evaluate(ByteWritable a, ByteWritable b) {
+-    // LOG.info("Get input " + a.getClass() + ":" + a + " " + b.getClass() + ":"
+-    // + b);
+-    if ((a == null) || (b == null)) {
+-      return null;
+-    }
+-
+-    byteWritable.set((byte) (a.get() * b.get()));
+-    return byteWritable;
+-  }
+-
+-  @Override
+-  public ShortWritable evaluate(ShortWritable a, ShortWritable b) {
+-    // LOG.info("Get input " + a.getClass() + ":" + a + " " + b.getClass() + ":"
+-    // + b);
+-    if ((a == null) || (b == null)) {
+-      return null;
+-    }
+-
+-    shortWritable.set((short) (a.get() * b.get()));
+-    return shortWritable;
+-  }
+-
+-  @Override
+-  public IntWritable evaluate(IntWritable a, IntWritable b) {
+-    // LOG.info("Get input " + a.getClass() + ":" + a + " " + b.getClass() + ":"
+-    // + b);
+-    if ((a == null) || (b == null)) {
+-      return null;
+-    }
+-
+-    intWritable.set((a.get() * b.get()));
+-    return intWritable;
+-  }
+-
+-  @Override
+-  public LongWritable evaluate(LongWritable a, LongWritable b) {
+-    // LOG.info("Get input " + a.getClass() + ":" + a + " " + b.getClass() + ":"
+-    // + b);
+-    if ((a == null) || (b == null)) {
+-      return null;
+-    }
+-
+-    longWritable.set(a.get() * b.get());
+-    return longWritable;
+-  }
+-
+-  @Override
+-  public FloatWritable evaluate(FloatWritable a, FloatWritable b) {
+-    // LOG.info("Get input " + a.getClass() + ":" + a + " " + b.getClass() + ":"
+-    // + b);
+-    if ((a == null) || (b == null)) {
+-      return null;
+-    }
+-
+-    floatWritable.set(a.get() * b.get());
+-    return floatWritable;
+-  }
+-
+-  @Override
+-  public DoubleWritable evaluate(DoubleWritable a, DoubleWritable b) {
+-    // LOG.info("Get input " + a.getClass() + ":" + a + " " + b.getClass() + ":"
+-    // + b);
+-    if ((a == null) || (b == null)) {
+-      return null;
+-    }
+-
+-    doubleWritable.set(a.get() * b.get());
+-    return doubleWritable;
+-  }
+-
+-  @Override
+-  public HiveDecimalWritable evaluate(HiveDecimalWritable a, HiveDecimalWritable b) {
+-    if ((a == null) || (b == null)) {
+-      return null;
+-    }
+-
+-    HiveDecimal dec = a.getHiveDecimal().multiply(b.getHiveDecimal());
+-    if (dec == null) {
+-      return null;
+-    }
+-
+-    decimalWritable.set(dec);
+-    return decimalWritable;
+-  }
+-}
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/udf/UDFOPPlus.java b/src/ql/src/java/org/apache/hadoop/hive/ql/udf/UDFOPPlus.java
+deleted file mode 100755
+index 2cedfe5..0000000
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/udf/UDFOPPlus.java
++++ /dev/null
+@@ -1,133 +0,0 @@
+-/**
+- * Licensed to the Apache Software Foundation (ASF) under one
+- * or more contributor license agreements.  See the NOTICE file
+- * distributed with this work for additional information
+- * regarding copyright ownership.  The ASF licenses this file
+- * to you under the Apache License, Version 2.0 (the
+- * "License"); you may not use this file except in compliance
+- * with the License.  You may obtain a copy of the License at
+- *
+- *     http://www.apache.org/licenses/LICENSE-2.0
+- *
+- * Unless required by applicable law or agreed to in writing, software
+- * distributed under the License is distributed on an "AS IS" BASIS,
+- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- * See the License for the specific language governing permissions and
+- * limitations under the License.
+- */
+-
+-package org.apache.hadoop.hive.ql.udf;
+-
+-import org.apache.hadoop.hive.common.type.HiveDecimal;
+-import org.apache.hadoop.hive.ql.exec.Description;
+-import org.apache.hadoop.hive.serde2.io.ByteWritable;
+-import org.apache.hadoop.hive.serde2.io.DoubleWritable;
+-import org.apache.hadoop.hive.serde2.io.HiveDecimalWritable;
+-import org.apache.hadoop.hive.serde2.io.ShortWritable;
+-import org.apache.hadoop.io.FloatWritable;
+-import org.apache.hadoop.io.IntWritable;
+-import org.apache.hadoop.io.LongWritable;
+-
+-/**
+- * The reason that we list evaluate methods with all numeric types is for both
+- * better performance and type checking (so we know int + int is still an int
+- * instead of a double); otherwise a single method that takes (Number a, Number
+- * b) and use a.doubleValue() == b.doubleValue() is enough.
+- *
+- * The case of int + double will be handled by implicit type casting using
+- * UDFRegistry.implicitConvertable method.
+- */
+-@Description(name = "+", value = "a _FUNC_ b - Returns a+b")
+-public class UDFOPPlus extends UDFBaseNumericOp {
+-
+-  public UDFOPPlus() {
+-  }
+-
+-  @Override
+-  public ByteWritable evaluate(ByteWritable a, ByteWritable b) {
+-    // LOG.info("Get input " + a.getClass() + ":" + a + " " + b.getClass() + ":"
+-    // + b);
+-    if ((a == null) || (b == null)) {
+-      return null;
+-    }
+-
+-    byteWritable.set((byte) (a.get() + b.get()));
+-    return byteWritable;
+-  }
+-
+-  @Override
+-  public ShortWritable evaluate(ShortWritable a, ShortWritable b) {
+-    // LOG.info("Get input " + a.getClass() + ":" + a + " " + b.getClass() + ":"
+-    // + b);
+-    if ((a == null) || (b == null)) {
+-      return null;
+-    }
+-
+-    shortWritable.set((short) (a.get() + b.get()));
+-    return shortWritable;
+-  }
+-
+-  @Override
+-  public IntWritable evaluate(IntWritable a, IntWritable b) {
+-    // LOG.info("Get input " + a.getClass() + ":" + a + " " + b.getClass() + ":"
+-    // + b);
+-    if ((a == null) || (b == null)) {
+-      return null;
+-    }
+-
+-    intWritable.set((a.get() + b.get()));
+-    return intWritable;
+-  }
+-
+-  @Override
+-  public LongWritable evaluate(LongWritable a, LongWritable b) {
+-    // LOG.info("Get input " + a.getClass() + ":" + a + " " + b.getClass() + ":"
+-    // + b);
+-    if ((a == null) || (b == null)) {
+-      return null;
+-    }
+-
+-    longWritable.set(a.get() + b.get());
+-    return longWritable;
+-  }
+-
+-  @Override
+-  public FloatWritable evaluate(FloatWritable a, FloatWritable b) {
+-    // LOG.info("Get input " + a.getClass() + ":" + a + " " + b.getClass() + ":"
+-    // + b);
+-    if ((a == null) || (b == null)) {
+-      return null;
+-    }
+-
+-    floatWritable.set(a.get() + b.get());
+-    return floatWritable;
+-  }
+-
+-  @Override
+-  public DoubleWritable evaluate(DoubleWritable a, DoubleWritable b) {
+-    // LOG.info("Get input " + a.getClass() + ":" + a + " " + b.getClass() + ":"
+-    // + b);
+-    if ((a == null) || (b == null)) {
+-      return null;
+-    }
+-
+-    doubleWritable.set(a.get() + b.get());
+-    return doubleWritable;
+-  }
+-
+-  @Override
+-  public HiveDecimalWritable evaluate(HiveDecimalWritable a, HiveDecimalWritable b) {
+-    if ((a == null) || (b == null)) {
+-      return null;
+-    }
+-
+-    HiveDecimal dec = a.getHiveDecimal().add(b.getHiveDecimal());
+-    if (dec == null) {
+-      return null;
+-    }
+-
+-    decimalWritable.set(dec);
+-    return decimalWritable;
+-  }
+-
+-}
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/udf/UDFPosMod.java b/src/ql/src/java/org/apache/hadoop/hive/ql/udf/UDFPosMod.java
+deleted file mode 100644
+index 49651ef..0000000
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/udf/UDFPosMod.java
++++ /dev/null
+@@ -1,135 +0,0 @@
+-/**
+- * Licensed to the Apache Software Foundation (ASF) under one
+- * or more contributor license agreements.  See the NOTICE file
+- * distributed with this work for additional information
+- * regarding copyright ownership.  The ASF licenses this file
+- * to you under the Apache License, Version 2.0 (the
+- * "License"); you may not use this file except in compliance
+- * with the License.  You may obtain a copy of the License at
+- *
+- *     http://www.apache.org/licenses/LICENSE-2.0
+- *
+- * Unless required by applicable law or agreed to in writing, software
+- * distributed under the License is distributed on an "AS IS" BASIS,
+- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- * See the License for the specific language governing permissions and
+- * limitations under the License.
+- */
+-
+-package org.apache.hadoop.hive.ql.udf;
+-
+-import org.apache.hadoop.hive.common.type.HiveDecimal;
+-import org.apache.hadoop.hive.ql.exec.Description;
+-import org.apache.hadoop.hive.serde2.io.ByteWritable;
+-import org.apache.hadoop.hive.serde2.io.DoubleWritable;
+-import org.apache.hadoop.hive.serde2.io.HiveDecimalWritable;
+-import org.apache.hadoop.hive.serde2.io.ShortWritable;
+-import org.apache.hadoop.io.FloatWritable;
+-import org.apache.hadoop.io.IntWritable;
+-import org.apache.hadoop.io.LongWritable;
+-
+-/**
+- * class for computing positive modulo. Used for positive_mod command in Cli See
+- * {org.apache.hadoop.hive.ql.udf.UDFOPMod} See
+- * {org.apache.hadoop.hive.ql.exec.FunctionRegistry}
+- */
+-@Description(name = "pmod", value = "a _FUNC_ b - Compute the positive modulo")
+-public class UDFPosMod extends UDFBaseNumericOp {
+-
+-  public UDFPosMod() {
+-  }
+-
+-  @Override
+-  public ByteWritable evaluate(ByteWritable a, ByteWritable b) {
+-    // LOG.info("Get input " + a.getClass() + ":" + a + " " + b.getClass() + ":"
+-    // + b);
+-    if ((a == null) || (b == null)) {
+-      return null;
+-    }
+-
+-    byteWritable.set((byte) (((a.get() % b.get()) + b.get()) % b.get()));
+-    return byteWritable;
+-  }
+-
+-  @Override
+-  public ShortWritable evaluate(ShortWritable a, ShortWritable b) {
+-    // LOG.info("Get input " + a.getClass() + ":" + a + " " + b.getClass() + ":"
+-    // + b);
+-    if ((a == null) || (b == null)) {
+-      return null;
+-    }
+-
+-    shortWritable.set((short) (((a.get() % b.get()) + b.get()) % b.get()));
+-    return shortWritable;
+-  }
+-
+-  @Override
+-  public IntWritable evaluate(IntWritable a, IntWritable b) {
+-    // LOG.info("Get input " + a.getClass() + ":" + a + " " + b.getClass() + ":"
+-    // + b);
+-    if ((a == null) || (b == null)) {
+-      return null;
+-    }
+-
+-    intWritable.set((((a.get() % b.get()) + b.get()) % b.get()));
+-    return intWritable;
+-  }
+-
+-  @Override
+-  public LongWritable evaluate(LongWritable a, LongWritable b) {
+-    // LOG.info("Get input " + a.getClass() + ":" + a + " " + b.getClass() + ":"
+-    // + b);
+-    if ((a == null) || (b == null)) {
+-      return null;
+-    }
+-
+-    longWritable.set(((a.get() % b.get()) + b.get()) % b.get());
+-    return longWritable;
+-  }
+-
+-  @Override
+-  public FloatWritable evaluate(FloatWritable a, FloatWritable b) {
+-    // LOG.info("Get input " + a.getClass() + ":" + a + " " + b.getClass() + ":"
+-    // + b);
+-    if ((a == null) || (b == null)) {
+-      return null;
+-    }
+-
+-    floatWritable.set(((a.get() % b.get()) + b.get()) % b.get());
+-    return floatWritable;
+-  }
+-
+-  @Override
+-  public DoubleWritable evaluate(DoubleWritable a, DoubleWritable b) {
+-    // LOG.info("Get input " + a.getClass() + ":" + a + " " + b.getClass() + ":"
+-    // + b);
+-    if ((a == null) || (b == null)) {
+-      return null;
+-    }
+-
+-    doubleWritable.set(((a.get() % b.get()) + b.get()) % b.get());
+-    return doubleWritable;
+-  }
+-
+-  @Override
+-  public HiveDecimalWritable evaluate(HiveDecimalWritable a, HiveDecimalWritable b) {
+-    if ((a == null) || (b == null)) {
+-      return null;
+-    }
+-
+-    HiveDecimal av = a.getHiveDecimal();
+-    HiveDecimal bv = b.getHiveDecimal();
+-
+-    if (bv.compareTo(HiveDecimal.ZERO) == 0) {
+-      return null;
+-    }
+-
+-    HiveDecimal dec = av.remainder(bv).add(bv).remainder(bv);
+-    if (dec == null) {
+-      return null;
+-    }
+-
+-    decimalWritable.set(dec);
+-    return decimalWritable;
+-  }
+-}
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDFBaseNumeric.java b/src/ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDFBaseNumeric.java
+new file mode 100644
+index 0000000..a1015e9
+--- /dev/null
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDFBaseNumeric.java
+@@ -0,0 +1,240 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package org.apache.hadoop.hive.ql.udf.generic;
++
++import java.util.ArrayList;
++import java.util.List;
++
++import org.apache.hadoop.hive.ql.exec.Description;
++import org.apache.hadoop.hive.ql.exec.FunctionRegistry;
++import org.apache.hadoop.hive.ql.exec.NoMatchingMethodException;
++import org.apache.hadoop.hive.ql.exec.UDFArgumentException;
++import org.apache.hadoop.hive.ql.exec.UDFArgumentTypeException;
++import org.apache.hadoop.hive.ql.metadata.HiveException;
++import org.apache.hadoop.hive.serde2.io.ByteWritable;
++import org.apache.hadoop.hive.serde2.io.DoubleWritable;
++import org.apache.hadoop.hive.serde2.io.HiveDecimalWritable;
++import org.apache.hadoop.hive.serde2.io.ShortWritable;
++import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspector;
++import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspector.Category;
++import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspectorConverters;
++import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspectorConverters.Converter;
++import org.apache.hadoop.hive.serde2.objectinspector.PrimitiveObjectInspector;
++import org.apache.hadoop.hive.serde2.objectinspector.PrimitiveObjectInspector.PrimitiveCategory;
++import org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorFactory;
++import org.apache.hadoop.hive.serde2.typeinfo.DecimalTypeInfo;
++import org.apache.hadoop.hive.serde2.typeinfo.PrimitiveTypeInfo;
++import org.apache.hadoop.hive.serde2.typeinfo.TypeInfo;
++import org.apache.hadoop.hive.serde2.typeinfo.TypeInfoFactory;
++import org.apache.hadoop.hive.serde2.typeinfo.TypeInfoUtils;
++import org.apache.hadoop.io.FloatWritable;
++import org.apache.hadoop.io.IntWritable;
++import org.apache.hadoop.io.LongWritable;
++
++/**
++ * GenericUDF Base Class for operations.
++ */
++@Description(name = "op", value = "a op b - Returns the result of operation")
++public abstract class GenericUDFBaseNumeric extends GenericUDF {
++  protected String opName;
++  protected String opDisplayName;
++
++  protected transient PrimitiveObjectInspector leftOI;
++  protected transient PrimitiveObjectInspector rightOI;
++  protected transient PrimitiveObjectInspector resultOI;
++
++  protected transient Converter converterLeft;
++  protected transient Converter  converterRight;
++
++  protected ByteWritable byteWritable = new ByteWritable();
++  protected ShortWritable shortWritable = new ShortWritable();
++  protected IntWritable intWritable = new IntWritable();
++  protected LongWritable longWritable = new LongWritable();
++  protected FloatWritable floatWritable = new FloatWritable();
++  protected DoubleWritable doubleWritable = new DoubleWritable();
++  protected HiveDecimalWritable decimalWritable = new HiveDecimalWritable();
++
++  public GenericUDFBaseNumeric() {
++    opName = getClass().getSimpleName();
++  }
++
++  @Override
++  public ObjectInspector initialize(ObjectInspector[] arguments) throws UDFArgumentException {
++    if (arguments.length != 2) {
++      throw new UDFArgumentException(opName + " requires two arguments.");
++    }
++
++    for (int i = 0; i < 2; i++) {
++      Category category = arguments[i].getCategory();
++      if (category != Category.PRIMITIVE) {
++        throw new UDFArgumentTypeException(i, "The "
++            + GenericUDFUtils.getOrdinal(i + 1)
++            + " argument of " + opName + "  is expected to a "
++            + Category.PRIMITIVE.toString().toLowerCase() + " type, but "
++            + category.toString().toLowerCase() + " is found");
++      }
++    }
++
++    leftOI = (PrimitiveObjectInspector) arguments[0];
++    rightOI = (PrimitiveObjectInspector) arguments[1];
++    resultOI = PrimitiveObjectInspectorFactory.getPrimitiveWritableObjectInspector(
++        deriveResultTypeInfo());
++    converterLeft = ObjectInspectorConverters.getConverter(leftOI, resultOI);
++    converterRight = ObjectInspectorConverters.getConverter(rightOI, resultOI);
++
++    return resultOI;
++  }
++
++  @Override
++  public Object evaluate(DeferredObject[] arguments) throws HiveException {
++    if (arguments[0] == null || arguments[1] == null) {
++      return null;
++    }
++
++    Object left = arguments[0].get();
++    Object right = arguments[1].get();
++    if (left == null && right == null) {
++      return null;
++    }
++
++    left = converterLeft.convert(left);
++    if (left == null) {
++      return null;
++    }
++    right = converterRight.convert(right);
++    if (right == null) {
++      return null;
++    }
++
++    switch (resultOI.getPrimitiveCategory()) {
++    case BYTE:
++      return evaluate((ByteWritable) left, (ByteWritable) right);
++    case SHORT:
++      return evaluate((ShortWritable) left, (ShortWritable) right);
++    case INT:
++      return evaluate((IntWritable) left, (IntWritable) right);
++    case LONG:
++      return evaluate((LongWritable) left, (LongWritable) right);
++    case FLOAT:
++      return evaluate((FloatWritable) left, (FloatWritable) right);
++    case DOUBLE:
++      return evaluate((DoubleWritable) left, (DoubleWritable) right);
++    case DECIMAL:
++      return resultOI.getPrimitiveWritableObject(
++          evaluate((HiveDecimalWritable) left, (HiveDecimalWritable) right));
++    default:
++      // Should never happen.
++      throw new RuntimeException("Unexpected type in evaluating " + opName + ": " +
++        resultOI.getPrimitiveCategory());
++    }
++  }
++
++  protected ByteWritable evaluate(ByteWritable left, ByteWritable right) {
++    return null;
++  }
++
++  protected ShortWritable evaluate(ShortWritable left, ShortWritable right) {
++    return null;
++  }
++
++  protected IntWritable evaluate(IntWritable left, IntWritable right) {
++    return null;
++  }
++
++  protected LongWritable evaluate(LongWritable left, LongWritable right) {
++    return null;
++  }
++
++  protected HiveDecimalWritable evaluate(HiveDecimalWritable left, HiveDecimalWritable right) {
++    return null;
++  }
++
++  protected FloatWritable evaluate(FloatWritable left, FloatWritable right) {
++    return null;
++  }
++
++  protected DoubleWritable evaluate(DoubleWritable left, DoubleWritable right) {
++    return null;
++  }
++
++  /**
++   * Default implementation for deriving typeinfo instance for the operator result.
++   *
++   * @param leftOI TypeInfo instance of the left operand
++   * @param rightOI TypeInfo instance of the right operand
++   * @return
++   * @throws UDFArgumentException
++   */
++  private PrimitiveTypeInfo deriveResultTypeInfo() throws UDFArgumentException {
++    PrimitiveTypeInfo left = (PrimitiveTypeInfo) TypeInfoUtils.getTypeInfoFromObjectInspector(leftOI);
++    PrimitiveTypeInfo right = (PrimitiveTypeInfo) TypeInfoUtils.getTypeInfoFromObjectInspector(rightOI);
++    if (!FunctionRegistry.isNumericType(left) || !FunctionRegistry.isNumericType(right)) {
++      List<TypeInfo> argTypeInfos = new ArrayList<TypeInfo>(2);
++      argTypeInfos.add(left);
++      argTypeInfos.add(right);
++      throw new NoMatchingMethodException(this.getClass(), argTypeInfos, null);
++    }
++
++    // If any of the type isn't exact, double is chosen.
++    if (!FunctionRegistry.isExactNumericType(left) || !FunctionRegistry.isExactNumericType(right)) {
++      return TypeInfoFactory.doubleTypeInfo;
++    }
++
++    return deriveResultExactTypeInfo();
++  }
++
++  /**
++   * Default implementation for getting the exact type info for the operator result. It worked for all
++   * but divide operator.
++   *
++   * @return
++   */
++  protected PrimitiveTypeInfo deriveResultExactTypeInfo() {
++    PrimitiveTypeInfo left = (PrimitiveTypeInfo) TypeInfoUtils.getTypeInfoFromObjectInspector(leftOI);
++    PrimitiveTypeInfo right = (PrimitiveTypeInfo) TypeInfoUtils.getTypeInfoFromObjectInspector(rightOI);
++
++    // Now we are handling exact types. Base implementation handles type promotion.
++    PrimitiveCategory commonCat = FunctionRegistry.getCommonCategory(left, right);
++    if (commonCat == PrimitiveCategory.DECIMAL) {
++      return deriveResultDecimalTypeInfo();
++    } else {
++      return left.getPrimitiveCategory() == commonCat ? left : right;
++    }
++  }
++
++  /**
++   * Derive the object inspector instance for the decimal result of the operator.
++   */
++  protected DecimalTypeInfo deriveResultDecimalTypeInfo() {
++    int prec1 = leftOI.precision();
++    int prec2 = rightOI.precision();
++    int scale1 = leftOI.scale();
++    int scale2 = rightOI.scale();
++    return deriveResultDecimalTypeInfo(prec1, scale1, prec2, scale2);
++  }
++
++  protected abstract DecimalTypeInfo deriveResultDecimalTypeInfo(int prec1, int scale1, int prec2, int scale2);
++
++  @Override
++  public String getDisplayString(String[] children) {
++    assert (children.length == 2);
++    return "(" + children[0] + " " + opDisplayName + " " + children[1] + ")";
++  }
++
++}
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDFOPDivide.java b/src/ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDFOPDivide.java
+new file mode 100644
+index 0000000..b3c4300
+--- /dev/null
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDFOPDivide.java
+@@ -0,0 +1,77 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package org.apache.hadoop.hive.ql.udf.generic;
++
++import org.apache.hadoop.hive.common.type.HiveDecimal;
++import org.apache.hadoop.hive.ql.exec.Description;
++import org.apache.hadoop.hive.serde2.io.DoubleWritable;
++import org.apache.hadoop.hive.serde2.io.HiveDecimalWritable;
++import org.apache.hadoop.hive.serde2.typeinfo.DecimalTypeInfo;
++import org.apache.hadoop.hive.serde2.typeinfo.PrimitiveTypeInfo;
++import org.apache.hadoop.hive.serde2.typeinfo.TypeInfoFactory;
++
++/**
++ * Note that in SQL, the return type of divide is not necessarily the same
++ * as the parameters. For example, 3 / 2 = 1.5, not 1. To follow SQL, we always
++ * return a decimal for divide.
++ */
++@Description(name = "/", value = "a _FUNC_ b - Divide a by b", extended = "Example:\n"
++    + "  > SELECT 3 _FUNC_ 2 FROM src LIMIT 1;\n" + "  1.5")
++public class GenericUDFOPDivide extends GenericUDFBaseNumeric {
++
++  public GenericUDFOPDivide() {
++    super();
++    this.opDisplayName = "/";
++  }
++
++  @Override
++  protected PrimitiveTypeInfo deriveResultExactTypeInfo() {
++    // No type promotion. Everything goes to decimal.
++    return deriveResultDecimalTypeInfo();
++  }
++
++  @Override
++  protected DoubleWritable evaluate(DoubleWritable left, DoubleWritable right) {
++    if (right.get() == 0.0) {
++      return null;
++    }
++    doubleWritable.set(left.get() / right.get());
++    return doubleWritable;
++  }
++
++  @Override
++  protected HiveDecimalWritable evaluate(HiveDecimalWritable left, HiveDecimalWritable right) {
++    HiveDecimal hd1 = left.getHiveDecimal();
++    HiveDecimal hd2 = right.getHiveDecimal();
++    if (hd2.compareTo(HiveDecimal.ZERO) == 0) {
++      return null;
++    }
++    HiveDecimal dec = hd1.divide(hd2);
++    decimalWritable.set(dec);
++    return decimalWritable;
++  }
++
++  @Override
++  protected DecimalTypeInfo deriveResultDecimalTypeInfo(int prec1, int scale1, int prec2, int scale2) {
++    int scale = Math.min(HiveDecimal.MAX_SCALE, Math.max(6, scale1 + prec2 + 1));
++    int prec = Math.min(HiveDecimal.MAX_PRECISION, prec1 - scale1 + scale2 + scale);
++    return TypeInfoFactory.getDecimalTypeInfo(prec, scale);
++  }
++
++}
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDFOPMinus.java b/src/ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDFOPMinus.java
+new file mode 100644
+index 0000000..b53b267
+--- /dev/null
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDFOPMinus.java
+@@ -0,0 +1,95 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package org.apache.hadoop.hive.ql.udf.generic;
++
++import org.apache.hadoop.hive.common.type.HiveDecimal;
++import org.apache.hadoop.hive.ql.exec.Description;
++import org.apache.hadoop.hive.serde2.io.ByteWritable;
++import org.apache.hadoop.hive.serde2.io.DoubleWritable;
++import org.apache.hadoop.hive.serde2.io.HiveDecimalWritable;
++import org.apache.hadoop.hive.serde2.io.ShortWritable;
++import org.apache.hadoop.hive.serde2.typeinfo.DecimalTypeInfo;
++import org.apache.hadoop.hive.serde2.typeinfo.TypeInfoFactory;
++import org.apache.hadoop.io.FloatWritable;
++import org.apache.hadoop.io.IntWritable;
++import org.apache.hadoop.io.LongWritable;
++
++@Description(name = "-", value = "a _FUNC_ b - Returns the difference a-b")
++public class GenericUDFOPMinus extends GenericUDFBaseNumeric {
++
++  public GenericUDFOPMinus() {
++    super();
++    this.opDisplayName = "-";
++  }
++
++  @Override
++  protected ByteWritable evaluate(ByteWritable left, ByteWritable right) {
++    byteWritable.set((byte)(left.get() - right.get()));
++    return byteWritable;
++  }
++
++  @Override
++  protected ShortWritable evaluate(ShortWritable left, ShortWritable right) {
++    shortWritable.set((short)(left.get() - right.get()));
++    return shortWritable;
++  }
++
++  @Override
++  protected IntWritable evaluate(IntWritable left, IntWritable right) {
++    intWritable.set(left.get() - right.get());
++    return intWritable;
++  }
++
++  @Override
++  protected LongWritable evaluate(LongWritable left, LongWritable right) {
++    longWritable.set(left.get() - right.get());
++    return longWritable;
++  }
++
++  @Override
++  protected FloatWritable evaluate(FloatWritable left, FloatWritable right) {
++    floatWritable.set(left.get() - right.get());
++    return floatWritable;
++  }
++
++  @Override
++  protected DoubleWritable evaluate(DoubleWritable left, DoubleWritable right) {
++    doubleWritable.set(left.get() - right.get());
++    return doubleWritable;
++  }
++
++  @Override
++  protected HiveDecimalWritable evaluate(HiveDecimalWritable left, HiveDecimalWritable right) {
++    HiveDecimal dec = left.getHiveDecimal().subtract(right.getHiveDecimal());
++    if (dec == null) {
++      return null;
++    }
++    decimalWritable.set(dec);
++    return decimalWritable;
++  }
++
++  @Override
++  protected DecimalTypeInfo deriveResultDecimalTypeInfo(int prec1, int scale1, int prec2, int scale2) {
++    int intPart = Math.max(prec1 - scale1, prec2 - scale2);
++    int scale = Math.max(scale1, scale2);
++    int prec =  Math.min(intPart + scale + 1, HiveDecimal.MAX_PRECISION);
++    return TypeInfoFactory.getDecimalTypeInfo(prec, scale);
++  }
++
++}
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDFOPMod.java b/src/ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDFOPMod.java
+new file mode 100644
+index 0000000..1efa0a3
+--- /dev/null
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDFOPMod.java
+@@ -0,0 +1,118 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package org.apache.hadoop.hive.ql.udf.generic;
++
++import org.apache.hadoop.hive.common.type.HiveDecimal;
++import org.apache.hadoop.hive.ql.exec.Description;
++import org.apache.hadoop.hive.serde2.io.ByteWritable;
++import org.apache.hadoop.hive.serde2.io.DoubleWritable;
++import org.apache.hadoop.hive.serde2.io.HiveDecimalWritable;
++import org.apache.hadoop.hive.serde2.io.ShortWritable;
++import org.apache.hadoop.hive.serde2.typeinfo.DecimalTypeInfo;
++import org.apache.hadoop.hive.serde2.typeinfo.TypeInfoFactory;
++import org.apache.hadoop.io.FloatWritable;
++import org.apache.hadoop.io.IntWritable;
++import org.apache.hadoop.io.LongWritable;
++
++@Description(name = "%", value = "a _FUNC_ b - Returns the remainder when dividing a by b")
++public class GenericUDFOPMod extends GenericUDFBaseNumeric {
++
++  public GenericUDFOPMod() {
++    super();
++    this.opDisplayName = "%";
++  }
++
++  @Override
++  protected ByteWritable evaluate(ByteWritable left, ByteWritable right) {
++    if (right.get() == 0) {
++      return null;
++    }
++    byteWritable.set((byte)(left.get() % right.get()));
++    return byteWritable;
++  }
++
++  @Override
++  protected ShortWritable evaluate(ShortWritable left, ShortWritable right) {
++    if (right.get() == 0) {
++      return null;
++    }
++    shortWritable.set((short)(left.get() % right.get()));
++    return shortWritable;
++  }
++
++  @Override
++  protected IntWritable evaluate(IntWritable left, IntWritable right) {
++    if (right.get() == 0) {
++      return null;
++    }
++    intWritable.set(left.get() % right.get());
++    return intWritable;
++  }
++
++  @Override
++  protected LongWritable evaluate(LongWritable left, LongWritable right) {
++    if (right.get() == 0) {
++      return null;
++    }
++    longWritable.set(left.get() % right.get());
++    return longWritable;
++  }
++
++  @Override
++  protected FloatWritable evaluate(FloatWritable left, FloatWritable right) {
++    if (right.get() == 0.0f) {
++      return null;
++    }
++    floatWritable.set(left.get() % right.get());
++    return floatWritable;
++  }
++
++  @Override
++  protected DoubleWritable evaluate(DoubleWritable left, DoubleWritable right) {
++    if (right.get() == 0.0) {
++      return null;
++    }
++    doubleWritable.set(left.get() % right.get());
++    return doubleWritable;
++  }
++
++  @Override
++  protected HiveDecimalWritable evaluate(HiveDecimalWritable left, HiveDecimalWritable right) {
++    HiveDecimal hd1 = left.getHiveDecimal();
++    HiveDecimal hd2 = right.getHiveDecimal();
++    if (hd2.compareTo(HiveDecimal.ZERO) == 0) {
++      return null;
++    }
++
++    HiveDecimal dec = hd1.remainder(hd2);
++    if (dec == null) {
++      return null;
++    }
++    decimalWritable.set(dec);
++    return decimalWritable;
++  }
++
++  @Override
++  protected DecimalTypeInfo deriveResultDecimalTypeInfo(int prec1, int scale1, int prec2, int scale2) {
++    int scale = Math.max(scale1, scale2);
++    int prec = Math.min(HiveDecimal.MAX_PRECISION, Math.min(prec1 - scale1, prec2 - scale2) + scale);
++    return TypeInfoFactory.getDecimalTypeInfo(prec, scale);
++  }
++
++}
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDFOPMultiply.java b/src/ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDFOPMultiply.java
+new file mode 100644
+index 0000000..adfdfa5
+--- /dev/null
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDFOPMultiply.java
+@@ -0,0 +1,94 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package org.apache.hadoop.hive.ql.udf.generic;
++
++import org.apache.hadoop.hive.common.type.HiveDecimal;
++import org.apache.hadoop.hive.ql.exec.Description;
++import org.apache.hadoop.hive.serde2.io.ByteWritable;
++import org.apache.hadoop.hive.serde2.io.DoubleWritable;
++import org.apache.hadoop.hive.serde2.io.HiveDecimalWritable;
++import org.apache.hadoop.hive.serde2.io.ShortWritable;
++import org.apache.hadoop.hive.serde2.typeinfo.DecimalTypeInfo;
++import org.apache.hadoop.hive.serde2.typeinfo.TypeInfoFactory;
++import org.apache.hadoop.io.FloatWritable;
++import org.apache.hadoop.io.IntWritable;
++import org.apache.hadoop.io.LongWritable;
++
++@Description(name = "*", value = "a _FUNC_ b - Multiplies a by b")
++public class GenericUDFOPMultiply extends GenericUDFBaseNumeric {
++
++  public GenericUDFOPMultiply() {
++    super();
++    this.opDisplayName = "*";
++  }
++
++  @Override
++  protected ByteWritable evaluate(ByteWritable left, ByteWritable right) {
++    byteWritable.set((byte)(left.get() * right.get()));
++    return byteWritable;
++  }
++
++  @Override
++  protected ShortWritable evaluate(ShortWritable left, ShortWritable right) {
++    shortWritable.set((short)(left.get() * right.get()));
++    return shortWritable;
++  }
++
++  @Override
++  protected IntWritable evaluate(IntWritable left, IntWritable right) {
++    intWritable.set(left.get() * right.get());
++    return intWritable;
++  }
++
++  @Override
++  protected LongWritable evaluate(LongWritable left, LongWritable right) {
++    longWritable.set(left.get() * right.get());
++    return longWritable;
++  }
++
++  @Override
++  protected FloatWritable evaluate(FloatWritable left, FloatWritable right) {
++    floatWritable.set(left.get() * right.get());
++    return floatWritable;
++  }
++
++  @Override
++  protected DoubleWritable evaluate(DoubleWritable left, DoubleWritable right) {
++    doubleWritable.set(left.get() * right.get());
++    return doubleWritable;
++  }
++
++  @Override
++  protected HiveDecimalWritable evaluate(HiveDecimalWritable left, HiveDecimalWritable right) {
++    HiveDecimal dec = left.getHiveDecimal().multiply(right.getHiveDecimal());
++    if (dec == null) {
++      return null;
++    }
++    decimalWritable.set(dec);
++    return decimalWritable;
++  }
++
++  @Override
++  protected DecimalTypeInfo deriveResultDecimalTypeInfo(int prec1, int scale1, int prec2, int scale2) {
++    int scale = Math.min(HiveDecimal.MAX_SCALE, scale1 + scale2 );
++    int prec = Math.min(HiveDecimal.MAX_PRECISION, prec1 + prec2 + 1);
++    return TypeInfoFactory.getDecimalTypeInfo(prec, scale);
++  }
++
++}
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDFOPPlus.java b/src/ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDFOPPlus.java
+new file mode 100644
+index 0000000..e514d73
+--- /dev/null
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDFOPPlus.java
+@@ -0,0 +1,104 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package org.apache.hadoop.hive.ql.udf.generic;
++
++import org.apache.hadoop.hive.common.type.HiveDecimal;
++import org.apache.hadoop.hive.ql.exec.Description;
++import org.apache.hadoop.hive.serde2.io.ByteWritable;
++import org.apache.hadoop.hive.serde2.io.DoubleWritable;
++import org.apache.hadoop.hive.serde2.io.HiveDecimalWritable;
++import org.apache.hadoop.hive.serde2.io.ShortWritable;
++import org.apache.hadoop.hive.serde2.typeinfo.DecimalTypeInfo;
++import org.apache.hadoop.hive.serde2.typeinfo.TypeInfoFactory;
++import org.apache.hadoop.io.FloatWritable;
++import org.apache.hadoop.io.IntWritable;
++import org.apache.hadoop.io.LongWritable;
++
++/**
++ * The reason that we list evaluate methods with all numeric types is for both
++ * better performance and type checking (so we know int + int is still an int
++ * instead of a double); otherwise a single method that takes (Number a, Number
++ * b) and use a.doubleValue() == b.doubleValue() is enough.
++ *
++ * The case of int + double will be handled by implicit type casting using
++ * UDFRegistry.implicitConvertable method.
++ */
++@Description(name = "+", value = "a _FUNC_ b - Returns a+b")
++public class GenericUDFOPPlus extends GenericUDFBaseNumeric {
++
++  public GenericUDFOPPlus() {
++    super();
++    this.opDisplayName = "+";
++  }
++
++  @Override
++  protected ByteWritable evaluate(ByteWritable left, ByteWritable right) {
++    byteWritable.set((byte)(left.get() + right.get()));
++    return byteWritable;
++  }
++
++  @Override
++  protected ShortWritable evaluate(ShortWritable left, ShortWritable right) {
++    shortWritable.set((short)(left.get() + right.get()));
++    return shortWritable;
++  }
++
++  @Override
++  protected IntWritable evaluate(IntWritable left, IntWritable right) {
++    intWritable.set(left.get() + right.get());
++    return intWritable;
++  }
++
++  @Override
++  protected LongWritable evaluate(LongWritable left, LongWritable right) {
++    longWritable.set(left.get() + right.get());
++    return longWritable;
++  }
++
++  @Override
++  protected FloatWritable evaluate(FloatWritable left, FloatWritable right) {
++    floatWritable.set(left.get() + right.get());
++    return floatWritable;
++  }
++
++  @Override
++  protected DoubleWritable evaluate(DoubleWritable left, DoubleWritable right) {
++    doubleWritable.set(left.get() + right.get());
++    return doubleWritable;
++  }
++
++  @Override
++  protected HiveDecimalWritable evaluate(HiveDecimalWritable left, HiveDecimalWritable right) {
++    HiveDecimal dec = left.getHiveDecimal().add(right.getHiveDecimal());
++    if (dec == null) {
++      return null;
++    }
++    decimalWritable.set(dec);
++    return decimalWritable;
++  }
++
++  @Override
++  protected DecimalTypeInfo deriveResultDecimalTypeInfo(int prec1, int scale1, int prec2, int scale2) {
++    int intPart = Math.max(prec1 - scale1, prec2 - scale2);
++    int scale = Math.max(scale1, scale2);
++    int prec =  Math.min(intPart + scale + 1, HiveDecimal.MAX_PRECISION);
++    return TypeInfoFactory.getDecimalTypeInfo(prec, scale);
++  }
++
++}
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDFPosMod.java b/src/ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDFPosMod.java
+new file mode 100644
+index 0000000..096ca6d
+--- /dev/null
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDFPosMod.java
+@@ -0,0 +1,122 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package org.apache.hadoop.hive.ql.udf.generic;
++
++import org.apache.hadoop.hive.common.type.HiveDecimal;
++import org.apache.hadoop.hive.ql.exec.Description;
++import org.apache.hadoop.hive.serde2.io.ByteWritable;
++import org.apache.hadoop.hive.serde2.io.DoubleWritable;
++import org.apache.hadoop.hive.serde2.io.HiveDecimalWritable;
++import org.apache.hadoop.hive.serde2.io.ShortWritable;
++import org.apache.hadoop.hive.serde2.typeinfo.DecimalTypeInfo;
++import org.apache.hadoop.hive.serde2.typeinfo.TypeInfoFactory;
++import org.apache.hadoop.io.FloatWritable;
++import org.apache.hadoop.io.IntWritable;
++import org.apache.hadoop.io.LongWritable;
++
++/**
++ * class for computing positive modulo. Used for positive_mod command in Cli See
++ * {org.apache.hadoop.hive.ql.udf.generic.GenericUDFOPMod} See
++ * {org.apache.hadoop.hive.ql.exec.FunctionRegistry}
++ */
++@Description(name = "pmod", value = "a _FUNC_ b - Compute the positive modulo")
++public class GenericUDFPosMod extends GenericUDFBaseNumeric {
++
++  public GenericUDFPosMod() {
++    super();
++    this.opDisplayName = "pmod";
++  }
++
++  @Override
++  protected ByteWritable evaluate(ByteWritable left, ByteWritable right) {
++    if (right.get() == 0) {
++      return null;
++    }
++    byteWritable.set((byte) (((left.get() % right.get()) + right.get()) % right.get()));
++    return byteWritable;
++  }
++
++  @Override
++  protected ShortWritable evaluate(ShortWritable left, ShortWritable right) {
++    if (right.get() == 0) {
++      return null;
++    }
++    shortWritable.set((short) (((left.get() % right.get()) + right.get()) % right.get()));
++    return shortWritable;
++  }
++
++  @Override
++  protected IntWritable evaluate(IntWritable left, IntWritable right) {
++    if (right.get() == 0) {
++      return null;
++    }
++    intWritable.set((((left.get() % right.get()) + right.get()) % right.get()));
++    return intWritable;
++  }
++
++  @Override
++  protected LongWritable evaluate(LongWritable left, LongWritable right) {
++    if (right.get() == 0) {
++      return null;
++    }
++    longWritable.set(((left.get() % right.get()) + right.get()) % right.get());
++    return longWritable;
++  }
++
++  @Override
++  protected FloatWritable evaluate(FloatWritable left, FloatWritable right) {
++    if (right.get() == 0) {
++      return null;
++    }
++    floatWritable.set(((left.get() % right.get()) + right.get()) % right.get());
++    return floatWritable;
++  }
++
++  @Override
++  protected DoubleWritable evaluate(DoubleWritable left, DoubleWritable right) {
++    if (right.get() == 0) {
++      return null;
++    }
++    doubleWritable.set(((left.get() % right.get()) + right.get()) % right.get());
++    return doubleWritable;
++  }
++
++  @Override
++  protected HiveDecimalWritable evaluate(HiveDecimalWritable left, HiveDecimalWritable right) {
++    HiveDecimal hd1 = left.getHiveDecimal();
++    HiveDecimal hd2 = right.getHiveDecimal();
++    if (hd2.compareTo(HiveDecimal.ZERO) == 0) {
++      return null;
++    }
++    HiveDecimal dec = hd1.remainder(hd2).add(hd2).remainder(hd2);
++    if (dec == null) {
++      return null;
++    }
++    decimalWritable.set(dec);
++    return decimalWritable;
++  }
++
++  @Override
++  protected DecimalTypeInfo deriveResultDecimalTypeInfo(int prec1, int scale1, int prec2, int scale2) {
++    int scale = Math.max(scale1, scale2);
++    int prec = Math.min(HiveDecimal.MAX_PRECISION, Math.max(prec1 - scale1, prec2 - scale2) + scale);
++    return TypeInfoFactory.getDecimalTypeInfo(prec, scale);
++  }
++
++}
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDFUtils.java b/src/ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDFUtils.java
+index b390f97..6eaa505 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDFUtils.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDFUtils.java
+@@ -41,7 +41,10 @@
+ import org.apache.hadoop.hive.serde2.objectinspector.PrimitiveObjectInspector;
+ import org.apache.hadoop.hive.serde2.objectinspector.PrimitiveObjectInspector.PrimitiveCategory;
+ import org.apache.hadoop.hive.serde2.objectinspector.primitive.VoidObjectInspector;
++import org.apache.hadoop.hive.serde2.typeinfo.DecimalTypeInfo;
++import org.apache.hadoop.hive.serde2.typeinfo.PrimitiveTypeInfo;
+ import org.apache.hadoop.hive.serde2.typeinfo.TypeInfo;
++import org.apache.hadoop.hive.serde2.typeinfo.TypeInfoFactory;
+ import org.apache.hadoop.hive.serde2.typeinfo.TypeInfoUtils;
+ import org.apache.hadoop.hive.serde2.typeinfo.VarcharTypeInfo;
+ import org.apache.hadoop.io.Text;
+@@ -139,6 +142,18 @@ public boolean update(ObjectInspector oi) throws UDFArgumentTypeException {
+         return false;
+       }
+ 
++      /**
++       * TODO: Hack fix until HIVE-5848 is addressed. non-exact type shouldn't be promoted
++       * to exact type, as FunctionRegistry.getCommonClass() might do. This corrects
++       * that.
++       */
++      if (commonTypeInfo instanceof DecimalTypeInfo) {
++        if ((!FunctionRegistry.isExactNumericType((PrimitiveTypeInfo) oiTypeInfo)) || 
++            (!FunctionRegistry.isExactNumericType((PrimitiveTypeInfo) rTypeInfo))) {
++          commonTypeInfo = TypeInfoFactory.doubleTypeInfo;
++        }
++      }
++
+       returnObjectInspector = TypeInfoUtils
+           .getStandardWritableObjectInspectorFromTypeInfo(commonTypeInfo);
+ 
+diff --git a/src/ql/src/test/org/apache/hadoop/hive/ql/udf/generic/TestGenericUDFOPDivide.java b/src/ql/src/test/org/apache/hadoop/hive/ql/udf/generic/TestGenericUDFOPDivide.java
+new file mode 100644
+index 0000000..dcae9e4
+--- /dev/null
++++ b/src/ql/src/test/org/apache/hadoop/hive/ql/udf/generic/TestGenericUDFOPDivide.java
+@@ -0,0 +1,181 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package org.apache.hadoop.hive.ql.udf.generic;
++
++import org.apache.hadoop.hive.common.type.HiveDecimal;
++import org.apache.hadoop.hive.ql.metadata.HiveException;
++import org.apache.hadoop.hive.ql.udf.generic.GenericUDF.DeferredJavaObject;
++import org.apache.hadoop.hive.ql.udf.generic.GenericUDF.DeferredObject;
++import org.apache.hadoop.hive.serde2.io.ByteWritable;
++import org.apache.hadoop.hive.serde2.io.DoubleWritable;
++import org.apache.hadoop.hive.serde2.io.HiveDecimalWritable;
++import org.apache.hadoop.hive.serde2.io.HiveVarcharWritable;
++import org.apache.hadoop.hive.serde2.io.ShortWritable;
++import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspector;
++import org.apache.hadoop.hive.serde2.objectinspector.PrimitiveObjectInspector;
++import org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorFactory;
++import org.apache.hadoop.hive.serde2.typeinfo.TypeInfoFactory;
++import org.apache.hadoop.io.FloatWritable;
++import org.apache.hadoop.io.IntWritable;
++import org.apache.hadoop.io.LongWritable;
++import org.junit.Assert;
++import org.junit.Test;
++
++public class TestGenericUDFOPDivide {
++
++  @Test
++  public void testByteDivideShort() throws HiveException {
++    GenericUDFOPDivide udf = new GenericUDFOPDivide();
++
++    ByteWritable left = new ByteWritable((byte) 4);
++    ShortWritable right = new ShortWritable((short) 6);
++    ObjectInspector[] inputOIs = {
++        PrimitiveObjectInspectorFactory.writableByteObjectInspector,
++        PrimitiveObjectInspectorFactory.writableShortObjectInspector
++    };
++    DeferredObject[] args = {
++        new DeferredJavaObject(left),
++        new DeferredJavaObject(right),
++    };
++
++    PrimitiveObjectInspector oi = (PrimitiveObjectInspector) udf.initialize(inputOIs);
++    Assert.assertEquals(oi.getTypeInfo(), TypeInfoFactory.getDecimalTypeInfo(9, 6));
++    HiveDecimalWritable res = (HiveDecimalWritable) udf.evaluate(args);
++    Assert.assertEquals(HiveDecimal.create("0.666667"), res.getHiveDecimal());
++  }
++
++  @Test
++  public void testDoubleDivideLong() throws HiveException {
++    GenericUDFOPDivide udf = new GenericUDFOPDivide();
++
++    DoubleWritable left = new DoubleWritable(4.5);
++    LongWritable right = new LongWritable(10);
++    ObjectInspector[] inputOIs = {
++        PrimitiveObjectInspectorFactory.writableDoubleObjectInspector,
++        PrimitiveObjectInspectorFactory.writableLongObjectInspector
++    };
++    DeferredObject[] args = {
++        new DeferredJavaObject(left),
++        new DeferredJavaObject(right),
++    };
++
++    PrimitiveObjectInspector oi = (PrimitiveObjectInspector) udf.initialize(inputOIs);
++    Assert.assertEquals(TypeInfoFactory.doubleTypeInfo, oi.getTypeInfo());
++    DoubleWritable res = (DoubleWritable) udf.evaluate(args);
++    Assert.assertEquals(new Double(0.45), new Double(res.get()));
++  }
++
++  @Test
++  public void testLongDivideDecimal() throws HiveException {
++    GenericUDFOPDivide udf = new GenericUDFOPDivide();
++
++    LongWritable left = new LongWritable(104);
++    HiveDecimalWritable right = new HiveDecimalWritable(HiveDecimal.create("234.97"));
++    ObjectInspector[] inputOIs = {
++        PrimitiveObjectInspectorFactory.writableLongObjectInspector,
++        PrimitiveObjectInspectorFactory.getPrimitiveWritableObjectInspector(TypeInfoFactory.getDecimalTypeInfo(9, 4))
++    };
++    DeferredObject[] args = {
++        new DeferredJavaObject(left),
++        new DeferredJavaObject(right),
++    };
++
++    PrimitiveObjectInspector oi = (PrimitiveObjectInspector) udf.initialize(inputOIs);
++    Assert.assertEquals(TypeInfoFactory.getDecimalTypeInfo(33, 10), oi.getTypeInfo());
++    HiveDecimalWritable res = (HiveDecimalWritable) udf.evaluate(args);
++    Assert.assertEquals(HiveDecimal.create("0.4426096949"), res.getHiveDecimal());
++  }
++
++  @Test
++  public void testFloatDivideFloat() throws HiveException {
++    GenericUDFOPDivide udf = new GenericUDFOPDivide();
++
++    FloatWritable f1 = new FloatWritable(4.5f);
++    FloatWritable f2 = new FloatWritable(1.5f);
++    ObjectInspector[] inputOIs = {
++        PrimitiveObjectInspectorFactory.writableFloatObjectInspector,
++        PrimitiveObjectInspectorFactory.writableFloatObjectInspector
++    };
++    DeferredObject[] args = {
++        new DeferredJavaObject(f1),
++        new DeferredJavaObject(f2),
++    };
++
++    PrimitiveObjectInspector oi = (PrimitiveObjectInspector) udf.initialize(inputOIs);
++    Assert.assertEquals(oi.getTypeInfo(), TypeInfoFactory.doubleTypeInfo);
++    DoubleWritable res = (DoubleWritable) udf.evaluate(args);
++    Assert.assertEquals(new Double(3.0), new Double(res.get()));
++  }
++
++  @Test
++  public void testDouleDivideDecimal() throws HiveException {
++    GenericUDFOPDivide udf = new GenericUDFOPDivide();
++
++    DoubleWritable left = new DoubleWritable(74.52);
++    HiveDecimalWritable right = new HiveDecimalWritable(HiveDecimal.create("234.97"));
++    ObjectInspector[] inputOIs = {
++        PrimitiveObjectInspectorFactory.writableDoubleObjectInspector,
++        PrimitiveObjectInspectorFactory.getPrimitiveWritableObjectInspector(TypeInfoFactory.getDecimalTypeInfo(5, 2))
++    };
++    DeferredObject[] args = {
++        new DeferredJavaObject(left),
++        new DeferredJavaObject(right),
++    };
++
++    PrimitiveObjectInspector oi = (PrimitiveObjectInspector) udf.initialize(inputOIs);
++    Assert.assertEquals(TypeInfoFactory.doubleTypeInfo, oi.getTypeInfo());
++    DoubleWritable res = (DoubleWritable) udf.evaluate(args);
++    Assert.assertEquals(new Double(74.52 / 234.97), new Double(res.get()));
++  }
++
++  @Test
++  public void testDecimalDivideDecimal() throws HiveException {
++    GenericUDFOPDivide udf = new GenericUDFOPDivide();
++
++    HiveDecimalWritable left = new HiveDecimalWritable(HiveDecimal.create("14.5"));
++    HiveDecimalWritable right = new HiveDecimalWritable(HiveDecimal.create("234.97"));
++    ObjectInspector[] inputOIs = {
++        PrimitiveObjectInspectorFactory.getPrimitiveWritableObjectInspector(TypeInfoFactory.getDecimalTypeInfo(3, 1)),
++        PrimitiveObjectInspectorFactory.getPrimitiveWritableObjectInspector(TypeInfoFactory.getDecimalTypeInfo(5, 2))
++    };
++    DeferredObject[] args = {
++        new DeferredJavaObject(left),
++        new DeferredJavaObject(right),
++    };
++
++    PrimitiveObjectInspector oi = (PrimitiveObjectInspector) udf.initialize(inputOIs);
++    Assert.assertEquals(TypeInfoFactory.getDecimalTypeInfo(11, 7), oi.getTypeInfo());
++    HiveDecimalWritable res = (HiveDecimalWritable) udf.evaluate(args);
++    Assert.assertEquals(HiveDecimal.create("0.06171"), res.getHiveDecimal());
++  }
++
++  @Test
++  public void testDecimalDivideDecimalSameParams() throws HiveException {
++    GenericUDFOPDivide udf = new GenericUDFOPDivide();
++
++    ObjectInspector[] inputOIs = {
++        PrimitiveObjectInspectorFactory.getPrimitiveWritableObjectInspector(TypeInfoFactory.getDecimalTypeInfo(5, 2)),
++        PrimitiveObjectInspectorFactory.getPrimitiveWritableObjectInspector(TypeInfoFactory.getDecimalTypeInfo(5, 2))
++    };
++
++    PrimitiveObjectInspector oi = (PrimitiveObjectInspector) udf.initialize(inputOIs);
++    Assert.assertEquals(TypeInfoFactory.getDecimalTypeInfo(13, 8), oi.getTypeInfo());
++  }
++
++}
+diff --git a/src/ql/src/test/org/apache/hadoop/hive/ql/udf/generic/TestGenericUDFOPMinus.java b/src/ql/src/test/org/apache/hadoop/hive/ql/udf/generic/TestGenericUDFOPMinus.java
+new file mode 100644
+index 0000000..f349a30
+--- /dev/null
++++ b/src/ql/src/test/org/apache/hadoop/hive/ql/udf/generic/TestGenericUDFOPMinus.java
+@@ -0,0 +1,182 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package org.apache.hadoop.hive.ql.udf.generic;
++
++import org.apache.hadoop.hive.common.type.HiveDecimal;
++import org.apache.hadoop.hive.ql.metadata.HiveException;
++import org.apache.hadoop.hive.ql.udf.generic.GenericUDF.DeferredJavaObject;
++import org.apache.hadoop.hive.ql.udf.generic.GenericUDF.DeferredObject;
++import org.apache.hadoop.hive.serde2.io.ByteWritable;
++import org.apache.hadoop.hive.serde2.io.DoubleWritable;
++import org.apache.hadoop.hive.serde2.io.HiveDecimalWritable;
++import org.apache.hadoop.hive.serde2.io.HiveVarcharWritable;
++import org.apache.hadoop.hive.serde2.io.ShortWritable;
++import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspector;
++import org.apache.hadoop.hive.serde2.objectinspector.PrimitiveObjectInspector;
++import org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorFactory;
++import org.apache.hadoop.hive.serde2.typeinfo.TypeInfoFactory;
++import org.apache.hadoop.io.FloatWritable;
++import org.apache.hadoop.io.IntWritable;
++import org.apache.hadoop.io.LongWritable;
++import org.junit.Assert;
++import org.junit.Test;
++
++public class TestGenericUDFOPMinus {
++
++  @Test
++  public void testByteMinusShort() throws HiveException {
++    GenericUDFOPMinus udf = new GenericUDFOPMinus();
++
++    ByteWritable left = new ByteWritable((byte) 4);
++    ShortWritable right = new ShortWritable((short) 6);
++    ObjectInspector[] inputOIs = {
++        PrimitiveObjectInspectorFactory.writableByteObjectInspector,
++        PrimitiveObjectInspectorFactory.writableShortObjectInspector
++    };
++    DeferredObject[] args = {
++        new DeferredJavaObject(left),
++        new DeferredJavaObject(right),
++    };
++
++    PrimitiveObjectInspector oi = (PrimitiveObjectInspector) udf.initialize(inputOIs);
++    Assert.assertEquals(oi.getTypeInfo(), TypeInfoFactory.shortTypeInfo);
++    ShortWritable res = (ShortWritable) udf.evaluate(args);
++    Assert.assertEquals(-2, res.get());
++  }
++
++  @Test
++  public void testDoubleMinusLong() throws HiveException {
++    GenericUDFOPMinus udf = new GenericUDFOPMinus();
++
++    // Int
++    DoubleWritable left = new DoubleWritable(4.5);
++    LongWritable right = new LongWritable(10);
++    ObjectInspector[] inputOIs = {
++        PrimitiveObjectInspectorFactory.writableDoubleObjectInspector,
++        PrimitiveObjectInspectorFactory.writableLongObjectInspector
++    };
++    DeferredObject[] args = {
++        new DeferredJavaObject(left),
++        new DeferredJavaObject(right),
++    };
++
++    PrimitiveObjectInspector oi = (PrimitiveObjectInspector) udf.initialize(inputOIs);
++    Assert.assertEquals(TypeInfoFactory.doubleTypeInfo, oi.getTypeInfo());
++    DoubleWritable res = (DoubleWritable) udf.evaluate(args);
++    Assert.assertEquals(new Double(-5.5), new Double(res.get()));
++  }
++
++  @Test
++  public void testLongMinusDecimal() throws HiveException {
++    GenericUDFOPMinus udf = new GenericUDFOPMinus();
++
++    LongWritable left = new LongWritable(104);
++    HiveDecimalWritable right = new HiveDecimalWritable(HiveDecimal.create("234.97"));
++    ObjectInspector[] inputOIs = {
++        PrimitiveObjectInspectorFactory.writableLongObjectInspector,
++        PrimitiveObjectInspectorFactory.getPrimitiveWritableObjectInspector(TypeInfoFactory.getDecimalTypeInfo(9, 4))
++    };
++    DeferredObject[] args = {
++        new DeferredJavaObject(left),
++        new DeferredJavaObject(right),
++    };
++
++    PrimitiveObjectInspector oi = (PrimitiveObjectInspector) udf.initialize(inputOIs);
++    Assert.assertEquals(TypeInfoFactory.getDecimalTypeInfo(24,4), oi.getTypeInfo());
++    HiveDecimalWritable res = (HiveDecimalWritable) udf.evaluate(args);
++    Assert.assertEquals(HiveDecimal.create("-130.97"), res.getHiveDecimal());
++  }
++
++  @Test
++  public void testFloatMinusFloat() throws HiveException {
++    GenericUDFOPMinus udf = new GenericUDFOPMinus();
++
++    FloatWritable f1 = new FloatWritable(4.5f);
++    FloatWritable f2 = new FloatWritable(0.0f);
++    ObjectInspector[] inputOIs = {
++        PrimitiveObjectInspectorFactory.writableFloatObjectInspector,
++        PrimitiveObjectInspectorFactory.writableFloatObjectInspector
++    };
++    DeferredObject[] args = {
++        new DeferredJavaObject(f1),
++        new DeferredJavaObject(f2),
++    };
++
++    PrimitiveObjectInspector oi = (PrimitiveObjectInspector) udf.initialize(inputOIs);
++    Assert.assertEquals(oi.getTypeInfo(), TypeInfoFactory.doubleTypeInfo);
++    DoubleWritable res = (DoubleWritable) udf.evaluate(args);
++    Assert.assertEquals(new Double(4.5), new Double(res.get()));
++  }
++
++  @Test
++  public void testDouleMinusDecimal() throws HiveException {
++    GenericUDFOPMinus udf = new GenericUDFOPMinus();
++
++    DoubleWritable left = new DoubleWritable(74.52);
++    HiveDecimalWritable right = new HiveDecimalWritable(HiveDecimal.create("234.97"));
++    ObjectInspector[] inputOIs = {
++        PrimitiveObjectInspectorFactory.writableDoubleObjectInspector,
++        PrimitiveObjectInspectorFactory.getPrimitiveWritableObjectInspector(TypeInfoFactory.getDecimalTypeInfo(5, 2))
++    };
++    DeferredObject[] args = {
++        new DeferredJavaObject(left),
++        new DeferredJavaObject(right),
++    };
++
++    PrimitiveObjectInspector oi = (PrimitiveObjectInspector) udf.initialize(inputOIs);
++    Assert.assertEquals(TypeInfoFactory.doubleTypeInfo, oi.getTypeInfo());
++    DoubleWritable res = (DoubleWritable) udf.evaluate(args);
++    Assert.assertEquals(new Double(-160.45), new Double(res.get()));
++  }
++
++  @Test
++  public void testDecimalMinusDecimal() throws HiveException {
++    GenericUDFOPMinus udf = new GenericUDFOPMinus();
++
++    HiveDecimalWritable left = new HiveDecimalWritable(HiveDecimal.create("14.5"));
++    HiveDecimalWritable right = new HiveDecimalWritable(HiveDecimal.create("234.97"));
++    ObjectInspector[] inputOIs = {
++        PrimitiveObjectInspectorFactory.getPrimitiveWritableObjectInspector(TypeInfoFactory.getDecimalTypeInfo(3, 1)),
++        PrimitiveObjectInspectorFactory.getPrimitiveWritableObjectInspector(TypeInfoFactory.getDecimalTypeInfo(5, 2))
++    };
++    DeferredObject[] args = {
++        new DeferredJavaObject(left),
++        new DeferredJavaObject(right),
++    };
++
++    PrimitiveObjectInspector oi = (PrimitiveObjectInspector) udf.initialize(inputOIs);
++    Assert.assertEquals(TypeInfoFactory.getDecimalTypeInfo(6,2), oi.getTypeInfo());
++    HiveDecimalWritable res = (HiveDecimalWritable) udf.evaluate(args);
++    Assert.assertEquals( HiveDecimal.create("-220.47"), res.getHiveDecimal());
++  }
++
++  @Test
++  public void testDecimalMinusDecimalSameParams() throws HiveException {
++    GenericUDFOPMinus udf = new GenericUDFOPMinus();
++
++    ObjectInspector[] inputOIs = {
++        PrimitiveObjectInspectorFactory.getPrimitiveWritableObjectInspector(TypeInfoFactory.getDecimalTypeInfo(5, 2)),
++        PrimitiveObjectInspectorFactory.getPrimitiveWritableObjectInspector(TypeInfoFactory.getDecimalTypeInfo(5, 2))
++    };
++
++    PrimitiveObjectInspector oi = (PrimitiveObjectInspector) udf.initialize(inputOIs);
++    Assert.assertEquals(TypeInfoFactory.getDecimalTypeInfo(6, 2), oi.getTypeInfo());
++  }
++
++}
+diff --git a/src/ql/src/test/org/apache/hadoop/hive/ql/udf/generic/TestGenericUDFOPMod.java b/src/ql/src/test/org/apache/hadoop/hive/ql/udf/generic/TestGenericUDFOPMod.java
+new file mode 100644
+index 0000000..ef17eb5
+--- /dev/null
++++ b/src/ql/src/test/org/apache/hadoop/hive/ql/udf/generic/TestGenericUDFOPMod.java
+@@ -0,0 +1,214 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package org.apache.hadoop.hive.ql.udf.generic;
++
++import org.apache.hadoop.hive.common.type.HiveDecimal;
++import org.apache.hadoop.hive.ql.metadata.HiveException;
++import org.apache.hadoop.hive.ql.udf.generic.GenericUDF.DeferredJavaObject;
++import org.apache.hadoop.hive.ql.udf.generic.GenericUDF.DeferredObject;
++import org.apache.hadoop.hive.serde2.io.ByteWritable;
++import org.apache.hadoop.hive.serde2.io.DoubleWritable;
++import org.apache.hadoop.hive.serde2.io.HiveDecimalWritable;
++import org.apache.hadoop.hive.serde2.io.ShortWritable;
++import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspector;
++import org.apache.hadoop.hive.serde2.objectinspector.PrimitiveObjectInspector;
++import org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorFactory;
++import org.apache.hadoop.hive.serde2.typeinfo.TypeInfoFactory;
++import org.apache.hadoop.io.FloatWritable;
++import org.apache.hadoop.io.IntWritable;
++import org.apache.hadoop.io.LongWritable;
++import org.junit.Assert;
++import org.junit.Test;
++
++public class TestGenericUDFOPMod {
++
++  @Test
++  public void testModByZero1() throws HiveException {
++    GenericUDFOPMod udf = new GenericUDFOPMod();
++
++    // Byte
++    ByteWritable b1 = new ByteWritable((byte) 4);
++    ByteWritable b2 = new ByteWritable((byte) 0);
++    ObjectInspector[] inputOIs = {
++        PrimitiveObjectInspectorFactory.writableByteObjectInspector,
++        PrimitiveObjectInspectorFactory.writableByteObjectInspector
++    };
++    DeferredObject[] args = {
++        new DeferredJavaObject(b1),
++        new DeferredJavaObject(b2),
++    };
++
++    udf.initialize(inputOIs);
++    ByteWritable b3 = (ByteWritable) udf.evaluate(args);
++    Assert.assertNull(b3);
++  }
++
++  @Test
++  public void testModByZero2() throws HiveException {
++    GenericUDFOPMod udf = new GenericUDFOPMod();
++
++    // Short
++    ShortWritable s1 = new ShortWritable((short) 4);
++    ShortWritable s2 = new ShortWritable((short) 0);
++    ObjectInspector[] inputOIs = {
++        PrimitiveObjectInspectorFactory.writableShortObjectInspector,
++        PrimitiveObjectInspectorFactory.writableShortObjectInspector
++    };
++    DeferredObject[] args = {
++        new DeferredJavaObject(s1),
++        new DeferredJavaObject(s2),
++    };
++
++    udf.initialize(inputOIs);
++    ShortWritable s3 = (ShortWritable) udf.evaluate(args);
++    Assert.assertNull(s3);
++  }
++
++  @Test
++  public void testModByZero3() throws HiveException {
++    GenericUDFOPMod udf = new GenericUDFOPMod();
++
++    // Int
++    IntWritable i1 = new IntWritable(4);
++    IntWritable i2 = new IntWritable(0);
++    ObjectInspector[] inputOIs = {
++        PrimitiveObjectInspectorFactory.writableIntObjectInspector,
++        PrimitiveObjectInspectorFactory.writableIntObjectInspector
++    };
++    DeferredObject[] args = {
++        new DeferredJavaObject(i1),
++        new DeferredJavaObject(i2),
++    };
++
++    udf.initialize(inputOIs);
++    IntWritable i3 = (IntWritable) udf.evaluate(args);
++    Assert.assertNull(i3);
++  }
++
++  @Test
++  public void testModByZero4() throws HiveException {
++    GenericUDFOPMod udf = new GenericUDFOPMod();
++
++    // Long
++    LongWritable l1 = new LongWritable(4);
++    LongWritable l2 = new LongWritable(0L);
++    ObjectInspector[] inputOIs = {
++        PrimitiveObjectInspectorFactory.writableLongObjectInspector,
++        PrimitiveObjectInspectorFactory.writableLongObjectInspector
++    };
++    DeferredObject[] args = {
++        new DeferredJavaObject(l1),
++        new DeferredJavaObject(l2),
++    };
++
++    udf.initialize(inputOIs);
++    LongWritable l3 = (LongWritable) udf.evaluate(args);
++    Assert.assertNull(l3);
++  }
++
++  @Test
++  public void testModByZero5() throws HiveException {
++    GenericUDFOPMod udf = new GenericUDFOPMod();
++
++    // Float
++    FloatWritable f1 = new FloatWritable(4.5f);
++    FloatWritable f2 = new FloatWritable(0.0f);
++    ObjectInspector[] inputOIs = {
++        PrimitiveObjectInspectorFactory.writableFloatObjectInspector,
++        PrimitiveObjectInspectorFactory.writableFloatObjectInspector
++    };
++    DeferredObject[] args = {
++        new DeferredJavaObject(f1),
++        new DeferredJavaObject(f2),
++    };
++
++    udf.initialize(inputOIs);
++    DoubleWritable f3 = (DoubleWritable) udf.evaluate(args);
++    Assert.assertNull(f3);
++  }
++
++  @Test
++  public void testModByZero6() throws HiveException {
++    GenericUDFOPMod udf = new GenericUDFOPMod();
++
++    // Double
++    DoubleWritable d1 = new DoubleWritable(4.5);
++    DoubleWritable d2 = new DoubleWritable(0.0);
++    ObjectInspector[] inputOIs = {
++        PrimitiveObjectInspectorFactory.writableDoubleObjectInspector,
++        PrimitiveObjectInspectorFactory.writableDoubleObjectInspector
++    };
++    DeferredObject[] args = {
++        new DeferredJavaObject(d1),
++        new DeferredJavaObject(d2),
++    };
++
++    udf.initialize(inputOIs);
++    DoubleWritable d3 = (DoubleWritable) udf.evaluate(args);
++    Assert.assertNull(d3);
++  }
++
++  @Test
++  public void testModByZero8() throws HiveException {
++    GenericUDFOPMod udf = new GenericUDFOPMod();
++
++    // Decimal
++    HiveDecimalWritable dec1 = new HiveDecimalWritable(HiveDecimal.create("4.5"));
++    HiveDecimalWritable dec2 = new HiveDecimalWritable(HiveDecimal.create("0"));
++    ObjectInspector[] inputOIs = {
++        PrimitiveObjectInspectorFactory.getPrimitiveWritableObjectInspector(TypeInfoFactory.getDecimalTypeInfo(2, 1)),
++        PrimitiveObjectInspectorFactory.getPrimitiveWritableObjectInspector(TypeInfoFactory.getDecimalTypeInfo(1, 0))
++    };
++    DeferredObject[] args = {
++        new DeferredJavaObject(dec1),
++        new DeferredJavaObject(dec2),
++    };
++
++    udf.initialize(inputOIs);
++    HiveDecimalWritable dec3 = (HiveDecimalWritable) udf.evaluate(args);
++    Assert.assertNull(dec3);
++  }
++
++  @Test
++  public void testDecimalModDecimal() throws HiveException {
++    GenericUDFOPMod udf = new GenericUDFOPMod();
++
++    ObjectInspector[] inputOIs = {
++        PrimitiveObjectInspectorFactory.getPrimitiveWritableObjectInspector(TypeInfoFactory.getDecimalTypeInfo(3, 1)),
++        PrimitiveObjectInspectorFactory.getPrimitiveWritableObjectInspector(TypeInfoFactory.getDecimalTypeInfo(5, 2))
++    };
++
++    PrimitiveObjectInspector oi = (PrimitiveObjectInspector) udf.initialize(inputOIs);
++    Assert.assertEquals(TypeInfoFactory.getDecimalTypeInfo(4, 2), oi.getTypeInfo());
++  }
++
++  @Test
++  public void testDecimalModDecimalSameParams() throws HiveException {
++    GenericUDFOPMod udf = new GenericUDFOPMod();
++
++    ObjectInspector[] inputOIs = {
++        PrimitiveObjectInspectorFactory.getPrimitiveWritableObjectInspector(TypeInfoFactory.getDecimalTypeInfo(5, 2)),
++        PrimitiveObjectInspectorFactory.getPrimitiveWritableObjectInspector(TypeInfoFactory.getDecimalTypeInfo(5, 2))
++    };
++
++    PrimitiveObjectInspector oi = (PrimitiveObjectInspector) udf.initialize(inputOIs);
++    Assert.assertEquals(TypeInfoFactory.getDecimalTypeInfo(5, 2), oi.getTypeInfo());
++  }
++
++}
+diff --git a/src/ql/src/test/org/apache/hadoop/hive/ql/udf/generic/TestGenericUDFOPMultiply.java b/src/ql/src/test/org/apache/hadoop/hive/ql/udf/generic/TestGenericUDFOPMultiply.java
+new file mode 100644
+index 0000000..1084fda
+--- /dev/null
++++ b/src/ql/src/test/org/apache/hadoop/hive/ql/udf/generic/TestGenericUDFOPMultiply.java
+@@ -0,0 +1,181 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package org.apache.hadoop.hive.ql.udf.generic;
++
++import org.apache.hadoop.hive.common.type.HiveDecimal;
++import org.apache.hadoop.hive.ql.metadata.HiveException;
++import org.apache.hadoop.hive.ql.udf.generic.GenericUDF.DeferredJavaObject;
++import org.apache.hadoop.hive.ql.udf.generic.GenericUDF.DeferredObject;
++import org.apache.hadoop.hive.serde2.io.ByteWritable;
++import org.apache.hadoop.hive.serde2.io.DoubleWritable;
++import org.apache.hadoop.hive.serde2.io.HiveDecimalWritable;
++import org.apache.hadoop.hive.serde2.io.HiveVarcharWritable;
++import org.apache.hadoop.hive.serde2.io.ShortWritable;
++import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspector;
++import org.apache.hadoop.hive.serde2.objectinspector.PrimitiveObjectInspector;
++import org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorFactory;
++import org.apache.hadoop.hive.serde2.typeinfo.TypeInfoFactory;
++import org.apache.hadoop.io.FloatWritable;
++import org.apache.hadoop.io.IntWritable;
++import org.apache.hadoop.io.LongWritable;
++import org.junit.Assert;
++import org.junit.Test;
++
++public class TestGenericUDFOPMultiply {
++
++  @Test
++  public void testByteTimesShort() throws HiveException {
++    GenericUDFOPMultiply udf = new GenericUDFOPMultiply();
++
++    ByteWritable left = new ByteWritable((byte) 4);
++    ShortWritable right = new ShortWritable((short) 6);
++    ObjectInspector[] inputOIs = {
++        PrimitiveObjectInspectorFactory.writableByteObjectInspector,
++        PrimitiveObjectInspectorFactory.writableShortObjectInspector
++    };
++    DeferredObject[] args = {
++        new DeferredJavaObject(left),
++        new DeferredJavaObject(right),
++    };
++
++    PrimitiveObjectInspector oi = (PrimitiveObjectInspector) udf.initialize(inputOIs);
++    Assert.assertEquals(oi.getTypeInfo(), TypeInfoFactory.shortTypeInfo);
++    ShortWritable res = (ShortWritable) udf.evaluate(args);
++    Assert.assertEquals(24, res.get());
++  }
++
++  @Test
++  public void testDoubleTimesLong() throws HiveException {
++    GenericUDFOPMultiply udf = new GenericUDFOPMultiply();
++
++    DoubleWritable left = new DoubleWritable(4.5);
++    LongWritable right = new LongWritable(10);
++    ObjectInspector[] inputOIs = {
++        PrimitiveObjectInspectorFactory.writableDoubleObjectInspector,
++        PrimitiveObjectInspectorFactory.writableLongObjectInspector
++    };
++    DeferredObject[] args = {
++        new DeferredJavaObject(left),
++        new DeferredJavaObject(right),
++    };
++
++    PrimitiveObjectInspector oi = (PrimitiveObjectInspector) udf.initialize(inputOIs);
++    Assert.assertEquals(TypeInfoFactory.doubleTypeInfo, oi.getTypeInfo());
++    DoubleWritable res = (DoubleWritable) udf.evaluate(args);
++    Assert.assertEquals(new Double(45.0), new Double(res.get()));
++  }
++
++  @Test
++  public void testLongTimesDecimal() throws HiveException {
++    GenericUDFOPMultiply udf = new GenericUDFOPMultiply();
++
++    LongWritable left = new LongWritable(104);
++    HiveDecimalWritable right = new HiveDecimalWritable(HiveDecimal.create("234.97"));
++    ObjectInspector[] inputOIs = {
++        PrimitiveObjectInspectorFactory.writableLongObjectInspector,
++        PrimitiveObjectInspectorFactory.getPrimitiveWritableObjectInspector(TypeInfoFactory.getDecimalTypeInfo(9, 4))
++    };
++    DeferredObject[] args = {
++        new DeferredJavaObject(left),
++        new DeferredJavaObject(right),
++    };
++
++    PrimitiveObjectInspector oi = (PrimitiveObjectInspector) udf.initialize(inputOIs);
++    Assert.assertEquals(TypeInfoFactory.getDecimalTypeInfo(29,4), oi.getTypeInfo());
++    HiveDecimalWritable res = (HiveDecimalWritable) udf.evaluate(args);
++    Assert.assertEquals(HiveDecimal.create("24436.88"), res.getHiveDecimal());
++  }
++
++  @Test
++  public void testFloatTimesFloat() throws HiveException {
++    GenericUDFOPMultiply udf = new GenericUDFOPMultiply();
++
++    FloatWritable f1 = new FloatWritable(4.5f);
++    FloatWritable f2 = new FloatWritable(0.0f);
++    ObjectInspector[] inputOIs = {
++        PrimitiveObjectInspectorFactory.writableFloatObjectInspector,
++        PrimitiveObjectInspectorFactory.writableFloatObjectInspector
++    };
++    DeferredObject[] args = {
++        new DeferredJavaObject(f1),
++        new DeferredJavaObject(f2),
++    };
++
++    PrimitiveObjectInspector oi = (PrimitiveObjectInspector) udf.initialize(inputOIs);
++    Assert.assertEquals(oi.getTypeInfo(), TypeInfoFactory.doubleTypeInfo);
++    DoubleWritable res = (DoubleWritable) udf.evaluate(args);
++    Assert.assertEquals(new Double(0.0), new Double(res.get()));
++  }
++
++  @Test
++  public void testDouleTimesDecimal() throws HiveException {
++    GenericUDFOPMultiply udf = new GenericUDFOPMultiply();
++
++    DoubleWritable left = new DoubleWritable(74.52);
++    HiveDecimalWritable right = new HiveDecimalWritable(HiveDecimal.create("234.97"));
++    ObjectInspector[] inputOIs = {
++        PrimitiveObjectInspectorFactory.writableDoubleObjectInspector,
++        PrimitiveObjectInspectorFactory.getPrimitiveWritableObjectInspector(TypeInfoFactory.getDecimalTypeInfo(5, 2))
++    };
++    DeferredObject[] args = {
++        new DeferredJavaObject(left),
++        new DeferredJavaObject(right),
++    };
++
++    PrimitiveObjectInspector oi = (PrimitiveObjectInspector) udf.initialize(inputOIs);
++    Assert.assertEquals(TypeInfoFactory.doubleTypeInfo, oi.getTypeInfo());
++    DoubleWritable res = (DoubleWritable) udf.evaluate(args);
++    Assert.assertEquals(new Double(17509.9644), new Double(res.get()));
++  }
++
++  @Test
++  public void testDecimalTimesDecimal() throws HiveException {
++    GenericUDFOPMultiply udf = new GenericUDFOPMultiply();
++
++    HiveDecimalWritable left = new HiveDecimalWritable(HiveDecimal.create("14.5"));
++    HiveDecimalWritable right = new HiveDecimalWritable(HiveDecimal.create("234.97"));
++    ObjectInspector[] inputOIs = {
++        PrimitiveObjectInspectorFactory.getPrimitiveWritableObjectInspector(TypeInfoFactory.getDecimalTypeInfo(3, 1)),
++        PrimitiveObjectInspectorFactory.getPrimitiveWritableObjectInspector(TypeInfoFactory.getDecimalTypeInfo(5, 2))
++    };
++    DeferredObject[] args = {
++        new DeferredJavaObject(left),
++        new DeferredJavaObject(right),
++    };
++
++    PrimitiveObjectInspector oi = (PrimitiveObjectInspector) udf.initialize(inputOIs);
++    Assert.assertEquals(TypeInfoFactory.getDecimalTypeInfo(9,3), oi.getTypeInfo());
++    HiveDecimalWritable res = (HiveDecimalWritable) udf.evaluate(args);
++    Assert.assertEquals(HiveDecimal.create("3407.065"), res.getHiveDecimal());
++  }
++
++  @Test
++  public void testDecimalTimesDecimalSameParams() throws HiveException {
++    GenericUDFOPMultiply udf = new GenericUDFOPMultiply();
++
++    ObjectInspector[] inputOIs = {
++        PrimitiveObjectInspectorFactory.getPrimitiveWritableObjectInspector(TypeInfoFactory.getDecimalTypeInfo(5, 2)),
++        PrimitiveObjectInspectorFactory.getPrimitiveWritableObjectInspector(TypeInfoFactory.getDecimalTypeInfo(5, 2))
++    };
++
++    PrimitiveObjectInspector oi = (PrimitiveObjectInspector) udf.initialize(inputOIs);
++    Assert.assertEquals(TypeInfoFactory.getDecimalTypeInfo(11, 4), oi.getTypeInfo());
++  }
++
++}
+diff --git a/src/ql/src/test/org/apache/hadoop/hive/ql/udf/generic/TestGenericUDFOPPlus.java b/src/ql/src/test/org/apache/hadoop/hive/ql/udf/generic/TestGenericUDFOPPlus.java
+new file mode 100644
+index 0000000..4680c9b
+--- /dev/null
++++ b/src/ql/src/test/org/apache/hadoop/hive/ql/udf/generic/TestGenericUDFOPPlus.java
+@@ -0,0 +1,187 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package org.apache.hadoop.hive.ql.udf.generic;
++
++import org.apache.hadoop.hive.common.type.HiveDecimal;
++import org.apache.hadoop.hive.ql.metadata.HiveException;
++import org.apache.hadoop.hive.ql.udf.generic.GenericUDF.DeferredJavaObject;
++import org.apache.hadoop.hive.ql.udf.generic.GenericUDF.DeferredObject;
++import org.apache.hadoop.hive.serde2.io.ByteWritable;
++import org.apache.hadoop.hive.serde2.io.DoubleWritable;
++import org.apache.hadoop.hive.serde2.io.HiveDecimalWritable;
++import org.apache.hadoop.hive.serde2.io.HiveVarcharWritable;
++import org.apache.hadoop.hive.serde2.io.ShortWritable;
++import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspector;
++import org.apache.hadoop.hive.serde2.objectinspector.PrimitiveObjectInspector;
++import org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorFactory;
++import org.apache.hadoop.hive.serde2.typeinfo.TypeInfoFactory;
++import org.apache.hadoop.io.FloatWritable;
++import org.apache.hadoop.io.IntWritable;
++import org.apache.hadoop.io.LongWritable;
++import org.junit.Assert;
++import org.junit.Test;
++
++public class TestGenericUDFOPPlus {
++
++  @Test
++  public void testBytePlusShort() throws HiveException {
++    GenericUDFOPPlus udf = new GenericUDFOPPlus();
++
++    // Byte
++    ByteWritable left = new ByteWritable((byte) 4);
++    ShortWritable right = new ShortWritable((short) 6);
++    ObjectInspector[] inputOIs = {
++        PrimitiveObjectInspectorFactory.writableByteObjectInspector,
++        PrimitiveObjectInspectorFactory.writableShortObjectInspector
++    };
++    DeferredObject[] args = {
++        new DeferredJavaObject(left),
++        new DeferredJavaObject(right),
++    };
++
++    PrimitiveObjectInspector oi = (PrimitiveObjectInspector) udf.initialize(inputOIs);
++    Assert.assertEquals(oi.getTypeInfo(), TypeInfoFactory.shortTypeInfo);
++    ShortWritable res = (ShortWritable) udf.evaluate(args);
++    Assert.assertEquals(10, res.get());
++  }
++
++  @Test
++  public void testDoublePlusLong() throws HiveException {
++    GenericUDFOPPlus udf = new GenericUDFOPPlus();
++
++    // Int
++    DoubleWritable left = new DoubleWritable(4.5);
++    LongWritable right = new LongWritable(10);
++    ObjectInspector[] inputOIs = {
++        PrimitiveObjectInspectorFactory.writableDoubleObjectInspector,
++        PrimitiveObjectInspectorFactory.writableLongObjectInspector
++    };
++    DeferredObject[] args = {
++        new DeferredJavaObject(left),
++        new DeferredJavaObject(right),
++    };
++
++    PrimitiveObjectInspector oi = (PrimitiveObjectInspector) udf.initialize(inputOIs);
++    Assert.assertEquals(TypeInfoFactory.doubleTypeInfo, oi.getTypeInfo());
++    DoubleWritable res = (DoubleWritable) udf.evaluate(args);
++    Assert.assertEquals(new Double(14.5), new Double(res.get()));
++  }
++
++  @Test
++  public void testLongPlusDecimal() throws HiveException {
++    GenericUDFOPPlus udf = new GenericUDFOPPlus();
++
++    // Long
++    LongWritable left = new LongWritable(104);
++    HiveDecimalWritable right = new HiveDecimalWritable(HiveDecimal.create("234.97"));
++    ObjectInspector[] inputOIs = {
++        PrimitiveObjectInspectorFactory.writableLongObjectInspector,
++        PrimitiveObjectInspectorFactory.getPrimitiveWritableObjectInspector(TypeInfoFactory.getDecimalTypeInfo(9, 4))
++    };
++    DeferredObject[] args = {
++        new DeferredJavaObject(left),
++        new DeferredJavaObject(right),
++    };
++
++    PrimitiveObjectInspector oi = (PrimitiveObjectInspector) udf.initialize(inputOIs);
++    Assert.assertEquals(TypeInfoFactory.getDecimalTypeInfo(24,4), oi.getTypeInfo());
++    HiveDecimalWritable res = (HiveDecimalWritable) udf.evaluate(args);
++    Assert.assertEquals( HiveDecimal.create("338.97"), res.getHiveDecimal());
++  }
++
++  @Test
++  public void testFloatPlusFloat() throws HiveException {
++    GenericUDFOPPlus udf = new GenericUDFOPPlus();
++
++    // Float
++    FloatWritable f1 = new FloatWritable(4.5f);
++    FloatWritable f2 = new FloatWritable(0.0f);
++    ObjectInspector[] inputOIs = {
++        PrimitiveObjectInspectorFactory.writableFloatObjectInspector,
++        PrimitiveObjectInspectorFactory.writableFloatObjectInspector
++    };
++    DeferredObject[] args = {
++        new DeferredJavaObject(f1),
++        new DeferredJavaObject(f2),
++    };
++
++    PrimitiveObjectInspector oi = (PrimitiveObjectInspector) udf.initialize(inputOIs);
++    Assert.assertEquals(oi.getTypeInfo(), TypeInfoFactory.doubleTypeInfo);
++    DoubleWritable res = (DoubleWritable) udf.evaluate(args);
++    Assert.assertEquals(new Double(4.5), new Double(res.get()));
++  }
++
++  @Test
++  public void testDoulePlusDecimal() throws HiveException {
++    GenericUDFOPPlus udf = new GenericUDFOPPlus();
++
++    // Double
++    DoubleWritable left = new DoubleWritable(74.52);
++    HiveDecimalWritable right = new HiveDecimalWritable(HiveDecimal.create("234.97"));
++    ObjectInspector[] inputOIs = {
++        PrimitiveObjectInspectorFactory.writableDoubleObjectInspector,
++        PrimitiveObjectInspectorFactory.getPrimitiveWritableObjectInspector(TypeInfoFactory.getDecimalTypeInfo(5, 2))
++    };
++    DeferredObject[] args = {
++        new DeferredJavaObject(left),
++        new DeferredJavaObject(right),
++    };
++
++    PrimitiveObjectInspector oi = (PrimitiveObjectInspector) udf.initialize(inputOIs);
++    Assert.assertEquals(TypeInfoFactory.doubleTypeInfo, oi.getTypeInfo());
++    DoubleWritable res = (DoubleWritable) udf.evaluate(args);
++    Assert.assertEquals(new Double(309.49), new Double(res.get()));
++  }
++
++  @Test
++  public void testDecimalPlusDecimal() throws HiveException {
++    GenericUDFOPPlus udf = new GenericUDFOPPlus();
++
++    // Decimal
++    HiveDecimalWritable left = new HiveDecimalWritable(HiveDecimal.create("14.5"));
++    HiveDecimalWritable right = new HiveDecimalWritable(HiveDecimal.create("234.97"));
++    ObjectInspector[] inputOIs = {
++        PrimitiveObjectInspectorFactory.getPrimitiveWritableObjectInspector(TypeInfoFactory.getDecimalTypeInfo(3, 1)),
++        PrimitiveObjectInspectorFactory.getPrimitiveWritableObjectInspector(TypeInfoFactory.getDecimalTypeInfo(5, 2))
++    };
++    DeferredObject[] args = {
++        new DeferredJavaObject(left),
++        new DeferredJavaObject(right),
++    };
++
++    PrimitiveObjectInspector oi = (PrimitiveObjectInspector) udf.initialize(inputOIs);
++    Assert.assertEquals(TypeInfoFactory.getDecimalTypeInfo(6,2), oi.getTypeInfo());
++    HiveDecimalWritable res = (HiveDecimalWritable) udf.evaluate(args);
++    Assert.assertEquals(HiveDecimal.create("249.47"), res.getHiveDecimal());
++  }
++
++  @Test
++  public void testDecimalPlusDecimalSameParams() throws HiveException {
++    GenericUDFOPPlus udf = new GenericUDFOPPlus();
++
++    ObjectInspector[] inputOIs = {
++        PrimitiveObjectInspectorFactory.getPrimitiveWritableObjectInspector(TypeInfoFactory.getDecimalTypeInfo(5, 2)),
++        PrimitiveObjectInspectorFactory.getPrimitiveWritableObjectInspector(TypeInfoFactory.getDecimalTypeInfo(5, 2))
++    };
++
++    PrimitiveObjectInspector oi = (PrimitiveObjectInspector) udf.initialize(inputOIs);
++    Assert.assertEquals(TypeInfoFactory.getDecimalTypeInfo(6, 2), oi.getTypeInfo());
++  }
++
++}
+diff --git a/src/ql/src/test/org/apache/hadoop/hive/ql/udf/generic/TestGenericUDFPosMod.java b/src/ql/src/test/org/apache/hadoop/hive/ql/udf/generic/TestGenericUDFPosMod.java
+new file mode 100644
+index 0000000..702e3e7
+--- /dev/null
++++ b/src/ql/src/test/org/apache/hadoop/hive/ql/udf/generic/TestGenericUDFPosMod.java
+@@ -0,0 +1,214 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package org.apache.hadoop.hive.ql.udf.generic;
++
++import org.apache.hadoop.hive.common.type.HiveDecimal;
++import org.apache.hadoop.hive.ql.metadata.HiveException;
++import org.apache.hadoop.hive.ql.udf.generic.GenericUDF.DeferredJavaObject;
++import org.apache.hadoop.hive.ql.udf.generic.GenericUDF.DeferredObject;
++import org.apache.hadoop.hive.serde2.io.ByteWritable;
++import org.apache.hadoop.hive.serde2.io.DoubleWritable;
++import org.apache.hadoop.hive.serde2.io.HiveDecimalWritable;
++import org.apache.hadoop.hive.serde2.io.ShortWritable;
++import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspector;
++import org.apache.hadoop.hive.serde2.objectinspector.PrimitiveObjectInspector;
++import org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorFactory;
++import org.apache.hadoop.hive.serde2.typeinfo.TypeInfoFactory;
++import org.apache.hadoop.io.FloatWritable;
++import org.apache.hadoop.io.IntWritable;
++import org.apache.hadoop.io.LongWritable;
++import org.junit.Assert;
++import org.junit.Test;
++
++public class TestGenericUDFPosMod {
++
++  @Test
++  public void testPosModByZero1() throws HiveException {
++    GenericUDFPosMod udf = new GenericUDFPosMod();
++
++    // Byte
++    ByteWritable b1 = new ByteWritable((byte) 4);
++    ByteWritable b2 = new ByteWritable((byte) 0);
++    ObjectInspector[] inputOIs = {
++        PrimitiveObjectInspectorFactory.writableByteObjectInspector,
++        PrimitiveObjectInspectorFactory.writableByteObjectInspector
++    };
++    DeferredObject[] args = {
++        new DeferredJavaObject(b1),
++        new DeferredJavaObject(b2),
++    };
++
++    udf.initialize(inputOIs);
++    ByteWritable b3 = (ByteWritable) udf.evaluate(args);
++    Assert.assertNull(b3);
++  }
++
++  @Test
++  public void testPosModByZero2() throws HiveException {
++    GenericUDFPosMod udf = new GenericUDFPosMod();
++
++    // Short
++    ShortWritable s1 = new ShortWritable((short) 4);
++    ShortWritable s2 = new ShortWritable((short) 0);
++    ObjectInspector[] inputOIs = {
++        PrimitiveObjectInspectorFactory.writableShortObjectInspector,
++        PrimitiveObjectInspectorFactory.writableShortObjectInspector
++    };
++    DeferredObject[] args = {
++        new DeferredJavaObject(s1),
++        new DeferredJavaObject(s2),
++    };
++
++    udf.initialize(inputOIs);
++    ShortWritable s3 = (ShortWritable) udf.evaluate(args);
++    Assert.assertNull(s3);
++  }
++
++  @Test
++  public void testPosModByZero3() throws HiveException {
++    GenericUDFPosMod udf = new GenericUDFPosMod();
++
++    // Int
++    IntWritable i1 = new IntWritable(4);
++    IntWritable i2 = new IntWritable(0);
++    ObjectInspector[] inputOIs = {
++        PrimitiveObjectInspectorFactory.writableIntObjectInspector,
++        PrimitiveObjectInspectorFactory.writableIntObjectInspector
++    };
++    DeferredObject[] args = {
++        new DeferredJavaObject(i1),
++        new DeferredJavaObject(i2),
++    };
++
++    udf.initialize(inputOIs);
++    IntWritable i3 = (IntWritable) udf.evaluate(args);
++    Assert.assertNull(i3);
++  }
++
++  @Test
++  public void testPosModByZero4() throws HiveException {
++    GenericUDFPosMod udf = new GenericUDFPosMod();
++
++    // Long
++    LongWritable l1 = new LongWritable(4);
++    LongWritable l2 = new LongWritable(0L);
++    ObjectInspector[] inputOIs = {
++        PrimitiveObjectInspectorFactory.writableLongObjectInspector,
++        PrimitiveObjectInspectorFactory.writableLongObjectInspector
++    };
++    DeferredObject[] args = {
++        new DeferredJavaObject(l1),
++        new DeferredJavaObject(l2),
++    };
++
++    udf.initialize(inputOIs);
++    LongWritable l3 = (LongWritable) udf.evaluate(args);
++    Assert.assertNull(l3);
++  }
++
++  @Test
++  public void testPosModByZero5() throws HiveException {
++    GenericUDFPosMod udf = new GenericUDFPosMod();
++
++    // Float
++    FloatWritable f1 = new FloatWritable(4.5f);
++    FloatWritable f2 = new FloatWritable(0.0f);
++    ObjectInspector[] inputOIs = {
++        PrimitiveObjectInspectorFactory.writableFloatObjectInspector,
++        PrimitiveObjectInspectorFactory.writableFloatObjectInspector
++    };
++    DeferredObject[] args = {
++        new DeferredJavaObject(f1),
++        new DeferredJavaObject(f2),
++    };
++
++    udf.initialize(inputOIs);
++    FloatWritable f3 = (FloatWritable) udf.evaluate(args);
++    Assert.assertNull(f3);
++  }
++
++  @Test
++  public void testPosModByZero6() throws HiveException {
++    GenericUDFPosMod udf = new GenericUDFPosMod();
++
++    // Double
++    DoubleWritable d1 = new DoubleWritable(4.5);
++    DoubleWritable d2 = new DoubleWritable(0.0);
++    ObjectInspector[] inputOIs = {
++        PrimitiveObjectInspectorFactory.writableDoubleObjectInspector,
++        PrimitiveObjectInspectorFactory.writableDoubleObjectInspector
++    };
++    DeferredObject[] args = {
++        new DeferredJavaObject(d1),
++        new DeferredJavaObject(d2),
++    };
++
++    udf.initialize(inputOIs);
++    DoubleWritable d3 = (DoubleWritable) udf.evaluate(args);
++    Assert.assertNull(d3);
++  }
++
++  @Test
++  public void testPosModByZero8() throws HiveException {
++    GenericUDFPosMod udf = new GenericUDFPosMod();
++
++    // Decimal
++    HiveDecimalWritable dec1 = new HiveDecimalWritable(HiveDecimal.create("4.5"));
++    HiveDecimalWritable dec2 = new HiveDecimalWritable(HiveDecimal.create("0"));
++    ObjectInspector[] inputOIs = {
++        PrimitiveObjectInspectorFactory.getPrimitiveWritableObjectInspector(TypeInfoFactory.getDecimalTypeInfo(2, 1)),
++        PrimitiveObjectInspectorFactory.getPrimitiveWritableObjectInspector(TypeInfoFactory.getDecimalTypeInfo(1, 0))
++    };
++    DeferredObject[] args = {
++        new DeferredJavaObject(dec1),
++        new DeferredJavaObject(dec2),
++    };
++
++    udf.initialize(inputOIs);
++    HiveDecimalWritable dec3 = (HiveDecimalWritable) udf.evaluate(args);
++    Assert.assertNull(dec3);
++  }
++
++  @Test
++  public void testDecimalPosModDecimal() throws HiveException {
++    GenericUDFPosMod udf = new GenericUDFPosMod();
++
++    ObjectInspector[] inputOIs = {
++        PrimitiveObjectInspectorFactory.getPrimitiveWritableObjectInspector(TypeInfoFactory.getDecimalTypeInfo(3, 1)),
++        PrimitiveObjectInspectorFactory.getPrimitiveWritableObjectInspector(TypeInfoFactory.getDecimalTypeInfo(5, 2))
++    };
++
++    PrimitiveObjectInspector oi = (PrimitiveObjectInspector) udf.initialize(inputOIs);
++    Assert.assertEquals(TypeInfoFactory.getDecimalTypeInfo(5, 2), oi.getTypeInfo());
++  }
++
++  @Test
++  public void testDecimalPosModDecimalSameParams() throws HiveException {
++    GenericUDFPosMod udf = new GenericUDFPosMod();
++
++    ObjectInspector[] inputOIs = {
++        PrimitiveObjectInspectorFactory.getPrimitiveWritableObjectInspector(TypeInfoFactory.getDecimalTypeInfo(5, 2)),
++        PrimitiveObjectInspectorFactory.getPrimitiveWritableObjectInspector(TypeInfoFactory.getDecimalTypeInfo(5, 2))
++    };
++
++    PrimitiveObjectInspector oi = (PrimitiveObjectInspector) udf.initialize(inputOIs);
++    Assert.assertEquals(TypeInfoFactory.getDecimalTypeInfo(5, 2), oi.getTypeInfo());
++  }
++
++}
+diff --git a/src/ql/src/test/results/clientnegative/invalid_arithmetic_type.q.out b/src/ql/src/test/results/clientnegative/invalid_arithmetic_type.q.out
+index c4e93ac..1b8b547 100644
+--- a/src/ql/src/test/results/clientnegative/invalid_arithmetic_type.q.out
++++ b/src/ql/src/test/results/clientnegative/invalid_arithmetic_type.q.out
+@@ -1 +1 @@
+-FAILED: SemanticException Line 0:-1 Wrong arguments ''2000-01-01 00:00:01'': No matching method for class org.apache.hadoop.hive.ql.udf.UDFOPMinus with (timestamp, timestamp)
++FAILED: SemanticException Line 0:-1 Wrong arguments ''2000-01-01 00:00:01'': No matching method for class org.apache.hadoop.hive.ql.udf.generic.GenericUDFOPMinus with (timestamp, timestamp)
+diff --git a/src/ql/src/test/results/clientnegative/udf_assert_true2.q.out b/src/ql/src/test/results/clientnegative/udf_assert_true2.q.out
+index 699c4f3..12daafc 100644
+--- a/src/ql/src/test/results/clientnegative/udf_assert_true2.q.out
++++ b/src/ql/src/test/results/clientnegative/udf_assert_true2.q.out
+@@ -23,7 +23,7 @@ STAGE PLANS:
+                   Select Operator
+                     expressions:
+                           expr: (1 + assert_true((_col4 < 2)))
+-                          type: int
++                          type: double
+                     outputColumnNames: _col0
+                     Limit
+                       File Output Operator
+@@ -45,7 +45,7 @@ STAGE PLANS:
+                     Select Operator
+                       expressions:
+                             expr: (1 + assert_true((_col4 < 2)))
+-                            type: int
++                            type: double
+                       outputColumnNames: _col0
+                       Limit
+                         File Output Operator
+diff --git a/src/ql/src/test/results/clientpositive/auto_join13.q.out b/src/ql/src/test/results/clientpositive/auto_join13.q.out
+index 95a4f13..d687dda 100644
+--- a/src/ql/src/test/results/clientpositive/auto_join13.q.out
++++ b/src/ql/src/test/results/clientpositive/auto_join13.q.out
+@@ -78,7 +78,7 @@ STAGE PLANS:
+                     1 
+                   handleSkewJoin: false
+                   keys:
+-                    0 [class org.apache.hadoop.hive.ql.udf.generic.GenericUDFBridge(Column[_col0], Column[_col2]()]
++                    0 [class org.apache.hadoop.hive.ql.udf.generic.GenericUDFOPPlus(Column[_col0], Column[_col2]()]
+                     1 [class org.apache.hadoop.hive.ql.udf.generic.GenericUDFBridge(Column[_col0]()]
+                   Position of Big Table: 0
+ 
+@@ -119,7 +119,7 @@ STAGE PLANS:
+                       1 
+                     handleSkewJoin: false
+                     keys:
+-                      0 [class org.apache.hadoop.hive.ql.udf.generic.GenericUDFBridge(Column[_col0], Column[_col2]()]
++                      0 [class org.apache.hadoop.hive.ql.udf.generic.GenericUDFOPPlus(Column[_col0], Column[_col2]()]
+                       1 [class org.apache.hadoop.hive.ql.udf.generic.GenericUDFBridge(Column[_col0]()]
+                     outputColumnNames: _col1, _col2
+                     Position of Big Table: 0
+diff --git a/src/ql/src/test/results/clientpositive/auto_join2.q.out b/src/ql/src/test/results/clientpositive/auto_join2.q.out
+index 1651f0d..a036cfb 100644
+--- a/src/ql/src/test/results/clientpositive/auto_join2.q.out
++++ b/src/ql/src/test/results/clientpositive/auto_join2.q.out
+@@ -52,7 +52,7 @@ STAGE PLANS:
+                 1 {value}
+               handleSkewJoin: false
+               keys:
+-                0 [class org.apache.hadoop.hive.ql.udf.generic.GenericUDFBridge(Column[_col0], Column[_col4]()]
++                0 [class org.apache.hadoop.hive.ql.udf.generic.GenericUDFOPPlus(Column[_col0], Column[_col4]()]
+                 1 [class org.apache.hadoop.hive.ql.udf.generic.GenericUDFBridge(Column[key]()]
+               Position of Big Table: 0
+ 
+@@ -82,7 +82,7 @@ STAGE PLANS:
+                   1 {value}
+                 handleSkewJoin: false
+                 keys:
+-                  0 [class org.apache.hadoop.hive.ql.udf.generic.GenericUDFBridge(Column[_col0], Column[_col4]()]
++                  0 [class org.apache.hadoop.hive.ql.udf.generic.GenericUDFOPPlus(Column[_col0], Column[_col4]()]
+                   1 [class org.apache.hadoop.hive.ql.udf.generic.GenericUDFBridge(Column[key]()]
+                 outputColumnNames: _col4, _col9
+                 Position of Big Table: 0
+diff --git a/src/ql/src/test/results/clientpositive/bucketmapjoin_negative3.q.out b/src/ql/src/test/results/clientpositive/bucketmapjoin_negative3.q.out
+index 1fb2f20..b5c8b56 100644
+--- a/src/ql/src/test/results/clientpositive/bucketmapjoin_negative3.q.out
++++ b/src/ql/src/test/results/clientpositive/bucketmapjoin_negative3.q.out
+@@ -442,7 +442,7 @@ STAGE PLANS:
+                 1 {key} {value}
+               handleSkewJoin: false
+               keys:
+-                0 [class org.apache.hadoop.hive.ql.udf.generic.GenericUDFBridge(Column[key], Column[key]()]
++                0 [class org.apache.hadoop.hive.ql.udf.generic.GenericUDFOPPlus(Column[key], Column[key]()]
+                 1 [class org.apache.hadoop.hive.ql.udf.generic.GenericUDFBridge(Column[key]()]
+               Position of Big Table: 0
+ 
+@@ -461,7 +461,7 @@ STAGE PLANS:
+                 1 {key} {value}
+               handleSkewJoin: false
+               keys:
+-                0 [class org.apache.hadoop.hive.ql.udf.generic.GenericUDFBridge(Column[key], Column[key]()]
++                0 [class org.apache.hadoop.hive.ql.udf.generic.GenericUDFOPPlus(Column[key], Column[key]()]
+                 1 [class org.apache.hadoop.hive.ql.udf.generic.GenericUDFBridge(Column[key]()]
+               outputColumnNames: _col0, _col1, _col4, _col5
+               Position of Big Table: 0
+diff --git a/src/ql/src/test/results/clientpositive/decimal_6.q.out b/src/ql/src/test/results/clientpositive/decimal_6.q.out
+index d0e2f5a..7193d9e 100644
+--- a/src/ql/src/test/results/clientpositive/decimal_6.q.out
++++ b/src/ql/src/test/results/clientpositive/decimal_6.q.out
+@@ -127,5 +127,5 @@ PREHOOK: query: desc DECIMAL_6_3
+ PREHOOK: type: DESCTABLE
+ POSTHOOK: query: desc DECIMAL_6_3
+ POSTHOOK: type: DESCTABLE
+-k                   	decimal(65,30)      	None                
++k                   	double              	None                
+ v                   	int                 	None                
+diff --git a/src/ql/src/test/results/clientpositive/decimal_udf.q.out b/src/ql/src/test/results/clientpositive/decimal_udf.q.out
+index 870c9ea..8e2f0bc 100644
+--- a/src/ql/src/test/results/clientpositive/decimal_udf.q.out
++++ b/src/ql/src/test/results/clientpositive/decimal_udf.q.out
+@@ -288,7 +288,7 @@ STAGE PLANS:
+             Select Operator
+               expressions:
+                     expr: (key + '1.0')
+-                    type: decimal(65,30)
++                    type: double
+               outputColumnNames: _col0
+               File Output Operator
+                 compressed: false
+@@ -311,44 +311,44 @@ POSTHOOK: query: SELECT key + '1.0' FROM DECIMAL_UDF
+ POSTHOOK: type: QUERY
+ POSTHOOK: Input: default@decimal_udf
+ #### A masked pattern was here ####
+--4399
++-4399.0
+ NULL
+-1
+-1
+-101
+-11
+-2
++1.0
++1.0
++101.0
++11.0
++2.0
+ 1.1
+ 1.01
+-201
+-21
+-3
+-1
++201.0
++21.0
++3.0
++1.0
+ 1.2
+ 1.02
+ 1.3
+ 1.33
+ 1.333
+ 0.7
+-0.67
++0.6699999999999999
+ 0.667
+-2
+-3
+-4.14
+--0.12
+--0.12
+--0.122
++2.0
++3.0
++4.140000000000001
++-0.1200000000000001
++-0.1200000000000001
++-0.12200000000000011
+ 2.12
+ 2.122
+-125
++125.0
+ 126.2
+ -1254.49
+-4.14
+-4.14
+-4.14
+-1.9999999999999999999999999
+--1234567889.123456789
+-1234567891.12345678
++4.140000000000001
++4.140000000000001
++4.140000000000001
++2.0
++-1.2345678891234567E9
++1.2345678911234567E9
+ PREHOOK: query: -- substraction
+ EXPLAIN SELECT key - key FROM DECIMAL_UDF
+ PREHOOK: type: QUERY
+@@ -618,7 +618,7 @@ STAGE PLANS:
+             Select Operator
+               expressions:
+                     expr: (key - '1.0')
+-                    type: decimal(65,30)
++                    type: double
+               outputColumnNames: _col0
+               File Output Operator
+                 compressed: false
+@@ -641,44 +641,44 @@ POSTHOOK: query: SELECT key - '1.0' FROM DECIMAL_UDF
+ POSTHOOK: type: QUERY
+ POSTHOOK: Input: default@decimal_udf
+ #### A masked pattern was here ####
+--4401
++-4401.0
+ NULL
+--1
+--1
+-99
+-9
+-0
++-1.0
++-1.0
++99.0
++9.0
++0.0
+ -0.9
+ -0.99
+-199
+-19
+-1
+--1
++199.0
++19.0
++1.0
++-1.0
+ -0.8
+ -0.98
+ -0.7
+--0.67
++-0.6699999999999999
+ -0.667
+ -1.3
+ -1.33
+ -1.333
+-0
+-1
++0.0
++1.0
+ 2.14
+ -2.12
+ -2.12
+ -2.122
+-0.12
+-0.122
+-123
++0.1200000000000001
++0.12200000000000011
++123.0
+ 124.2
+ -1256.49
+ 2.14
+ 2.14
+ 2.14
+--0.0000000000000000000000001
+--1234567891.123456789
+-1234567889.12345678
++0.0
++-1.2345678911234567E9
++1.2345678891234567E9
+ PREHOOK: query: -- multiplication
+ EXPLAIN SELECT key * key FROM DECIMAL_UDF
+ PREHOOK: type: QUERY
+@@ -948,7 +948,7 @@ STAGE PLANS:
+             Select Operator
+               expressions:
+                     expr: (key * '2.0')
+-                    type: decimal(65,30)
++                    type: double
+               outputColumnNames: _col0
+               File Output Operator
+                 compressed: false
+@@ -971,19 +971,19 @@ POSTHOOK: query: SELECT key * '2.0' FROM DECIMAL_UDF
+ POSTHOOK: type: QUERY
+ POSTHOOK: Input: default@decimal_udf
+ #### A masked pattern was here ####
+--8800
++-8800.0
+ NULL
+-0
+-0
+-200
+-20
+-2
++0.0
++0.0
++200.0
++20.0
++2.0
+ 0.2
+ 0.02
+-400
+-40
+-4
+-0
++400.0
++40.0
++4.0
++0.0
+ 0.4
+ 0.04
+ 0.6
+@@ -992,23 +992,23 @@ NULL
+ -0.6
+ -0.66
+ -0.666
+-2
+-4
++2.0
++4.0
+ 6.28
+ -2.24
+ -2.24
+ -2.244
+ 2.24
+ 2.244
+-248
++248.0
+ 250.4
+ -2510.98
+ 6.28
+ 6.28
+ 6.28
+-1.9999999999999999999999998
+--2469135780.246913578
+-2469135780.24691356
++2.0
++-2.4691357802469134E9
++2.4691357802469134E9
+ PREHOOK: query: -- division
+ EXPLAIN SELECT key / 0 FROM DECIMAL_UDF limit 1
+ PREHOOK: type: QUERY
+@@ -1078,7 +1078,7 @@ STAGE PLANS:
+             Select Operator
+               expressions:
+                     expr: (key / null)
+-                    type: decimal(65,30)
++                    type: double
+               outputColumnNames: _col0
+               Limit
+                 File Output Operator
+@@ -1350,7 +1350,7 @@ STAGE PLANS:
+             Select Operator
+               expressions:
+                     expr: (key / '2.0')
+-                    type: decimal(65,30)
++                    type: double
+               outputColumnNames: _col0
+               File Output Operator
+                 compressed: false
+@@ -1373,19 +1373,19 @@ POSTHOOK: query: SELECT key / '2.0' FROM DECIMAL_UDF
+ POSTHOOK: type: QUERY
+ POSTHOOK: Input: default@decimal_udf
+ #### A masked pattern was here ####
+--2200
++-2200.0
+ NULL
+-0
+-0
+-50
+-5
++0.0
++0.0
++50.0
++5.0
+ 0.5
+ 0.05
+ 0.005
+-100
+-10
+-1
+-0
++100.0
++10.0
++1.0
++0.0
+ 0.1
+ 0.01
+ 0.15
+@@ -1395,22 +1395,22 @@ NULL
+ -0.165
+ -0.1665
+ 0.5
+-1
++1.0
+ 1.57
+ -0.56
+ -0.56
+ -0.561
+ 0.56
+ 0.561
+-62
++62.0
+ 62.6
+ -627.745
+ 1.57
+ 1.57
+ 1.57
+-0.49999999999999999999999995
+--617283945.0617283945
+-617283945.06172839
++0.5
++-6.172839450617284E8
++6.172839450617284E8
+ PREHOOK: query: -- abs
+ EXPLAIN SELECT abs(key) FROM DECIMAL_UDF
+ PREHOOK: type: QUERY
+diff --git a/src/ql/src/test/results/clientpositive/input8.q.out b/src/ql/src/test/results/clientpositive/input8.q.out
+index 7c036e1..c4ea280 100644
+--- a/src/ql/src/test/results/clientpositive/input8.q.out
++++ b/src/ql/src/test/results/clientpositive/input8.q.out
+@@ -34,10 +34,10 @@ STAGE PLANS:
+             Select Operator
+               expressions:
+                     expr: (4 + null)
+-                    type: int
++                    type: double
+                     expr: UDFToInteger((key - null))
+                     type: int
+-                    expr: UDFToDouble((null + null))
++                    expr: (null + null)
+                     type: double
+               outputColumnNames: _col0, _col1, _col2
+               File Output Operator
+diff --git a/src/ql/src/test/results/clientpositive/num_op_type_conv.q.out b/src/ql/src/test/results/clientpositive/num_op_type_conv.q.out
+index e2de911..15abbc6 100644
+--- a/src/ql/src/test/results/clientpositive/num_op_type_conv.q.out
++++ b/src/ql/src/test/results/clientpositive/num_op_type_conv.q.out
+@@ -25,11 +25,11 @@ STAGE PLANS:
+             Select Operator
+               expressions:
+                     expr: (null + 7)
+-                    type: int
++                    type: double
+                     expr: (1.0 - null)
+                     type: double
+                     expr: (null + null)
+-                    type: tinyint
++                    type: double
+                     expr: (UDFToLong(21) % UDFToByte(5))
+                     type: bigint
+                     expr: (UDFToLong(21) % UDFToLong(21))
+diff --git a/src/ql/src/test/results/clientpositive/orc_createas1.q.out b/src/ql/src/test/results/clientpositive/orc_createas1.q.out
+index 3b43e5a..ea36342 100644
+--- a/src/ql/src/test/results/clientpositive/orc_createas1.q.out
++++ b/src/ql/src/test/results/clientpositive/orc_createas1.q.out
+@@ -288,7 +288,7 @@ STAGE PLANS:
+                     type: int
+                     expr: value
+                     type: string
+-                    expr: pmod(hash(key), 50)
++                    expr: (hash(key) pmod 50)
+                     type: int
+               outputColumnNames: _col0, _col1, _col2
+               File Output Operator
+diff --git a/src/ql/src/test/results/clientpositive/ppd_constant_expr.q.out b/src/ql/src/test/results/clientpositive/ppd_constant_expr.q.out
+index 9598110..90e3518 100644
+--- a/src/ql/src/test/results/clientpositive/ppd_constant_expr.q.out
++++ b/src/ql/src/test/results/clientpositive/ppd_constant_expr.q.out
+@@ -34,10 +34,10 @@ STAGE PLANS:
+             Select Operator
+               expressions:
+                     expr: (4 + null)
+-                    type: int
++                    type: double
+                     expr: UDFToInteger((key - null))
+                     type: int
+-                    expr: UDFToDouble((null + null))
++                    expr: (null + null)
+                     type: double
+               outputColumnNames: _col0, _col1, _col2
+               File Output Operator
+@@ -189,10 +189,10 @@ STAGE PLANS:
+             Select Operator
+               expressions:
+                     expr: (4 + null)
+-                    type: int
++                    type: double
+                     expr: UDFToInteger((key - null))
+                     type: int
+-                    expr: UDFToDouble((null + null))
++                    expr: (null + null)
+                     type: double
+               outputColumnNames: _col0, _col1, _col2
+               File Output Operator
+diff --git a/src/ql/src/test/results/clientpositive/ql_rewrite_gbtoidx.q.out b/src/ql/src/test/results/clientpositive/ql_rewrite_gbtoidx.q.out
+index 4463387..53f9ac9 100644
+--- a/src/ql/src/test/results/clientpositive/ql_rewrite_gbtoidx.q.out
++++ b/src/ql/src/test/results/clientpositive/ql_rewrite_gbtoidx.q.out
+@@ -1022,7 +1022,7 @@ STAGE PLANS:
+                   expr: _col4
+                   type: int
+                   expr: ((_col5 - _col2) / _col2)
+-                  type: double
++                  type: decimal(39,20)
+             outputColumnNames: _col0, _col1, _col2
+             File Output Operator
+               compressed: false
+diff --git a/src/ql/src/test/results/clientpositive/rcfile_createas1.q.out b/src/ql/src/test/results/clientpositive/rcfile_createas1.q.out
+index 0cbc2d2..726a0fe 100644
+--- a/src/ql/src/test/results/clientpositive/rcfile_createas1.q.out
++++ b/src/ql/src/test/results/clientpositive/rcfile_createas1.q.out
+@@ -82,7 +82,7 @@ STAGE PLANS:
+                     type: int
+                     expr: value
+                     type: string
+-                    expr: pmod(hash(key), 50)
++                    expr: (hash(key) pmod 50)
+                     type: int
+               outputColumnNames: _col0, _col1, _col2
+               File Output Operator
+diff --git a/src/ql/src/test/results/clientpositive/rcfile_merge1.q.out b/src/ql/src/test/results/clientpositive/rcfile_merge1.q.out
+index 7e7eed5..afd62cd 100644
+--- a/src/ql/src/test/results/clientpositive/rcfile_merge1.q.out
++++ b/src/ql/src/test/results/clientpositive/rcfile_merge1.q.out
+@@ -58,7 +58,7 @@ STAGE PLANS:
+                     type: int
+                     expr: value
+                     type: string
+-                    expr: pmod(hash(key), 100)
++                    expr: (hash(key) pmod 100)
+                     type: int
+               outputColumnNames: _col0, _col1, _col2
+               File Output Operator
+@@ -672,7 +672,7 @@ STAGE PLANS:
+                     type: int
+                     expr: value
+                     type: string
+-                    expr: pmod(hash(key), 100)
++                    expr: (hash(key) pmod 100)
+                     type: int
+               outputColumnNames: _col0, _col1, _col2
+               File Output Operator
+diff --git a/src/ql/src/test/results/clientpositive/rcfile_merge2.q.out b/src/ql/src/test/results/clientpositive/rcfile_merge2.q.out
+index a108309..50c08df 100644
+--- a/src/ql/src/test/results/clientpositive/rcfile_merge2.q.out
++++ b/src/ql/src/test/results/clientpositive/rcfile_merge2.q.out
+@@ -47,9 +47,9 @@ STAGE PLANS:
+                     type: int
+                     expr: value
+                     type: string
+-                    expr: pmod(hash(key), 10)
++                    expr: (hash(key) pmod 10)
+                     type: int
+-                    expr: pmod(hash(value), 10)
++                    expr: (hash(value) pmod 10)
+                     type: int
+               outputColumnNames: _col0, _col1, _col2, _col3
+               File Output Operator
+diff --git a/src/ql/src/test/results/clientpositive/skewjoin.q.out b/src/ql/src/test/results/clientpositive/skewjoin.q.out
+index c5d57da..d09c126 100644
+--- a/src/ql/src/test/results/clientpositive/skewjoin.q.out
++++ b/src/ql/src/test/results/clientpositive/skewjoin.q.out
+@@ -1560,7 +1560,7 @@ STAGE PLANS:
+                 1 {val}
+               handleSkewJoin: false
+               keys:
+-                0 [class org.apache.hadoop.hive.ql.udf.generic.GenericUDFBridge(Column[key], Const int 1()]
++                0 [class org.apache.hadoop.hive.ql.udf.generic.GenericUDFOPPlus(Column[key], Const int 1()]
+                 1 [class org.apache.hadoop.hive.ql.udf.generic.GenericUDFBridge(Column[key]()]
+               Position of Big Table: 0
+ 
+@@ -1578,7 +1578,7 @@ STAGE PLANS:
+                 1 {val}
+               handleSkewJoin: false
+               keys:
+-                0 [class org.apache.hadoop.hive.ql.udf.generic.GenericUDFBridge(Column[key], Const int 1()]
++                0 [class org.apache.hadoop.hive.ql.udf.generic.GenericUDFOPPlus(Column[key], Const int 1()]
+                 1 [class org.apache.hadoop.hive.ql.udf.generic.GenericUDFBridge(Column[key]()]
+               outputColumnNames: _col0, _col5
+               Position of Big Table: 0
+diff --git a/src/ql/src/test/results/clientpositive/udf_pmod.q.out b/src/ql/src/test/results/clientpositive/udf_pmod.q.out
+index f28caa6..e7c577d 100644
+--- a/src/ql/src/test/results/clientpositive/udf_pmod.q.out
++++ b/src/ql/src/test/results/clientpositive/udf_pmod.q.out
+@@ -76,7 +76,7 @@ POSTHOOK: query: SELECT pmod(CAST(-100.91 AS FLOAT),CAST(9.8 AS FLOAT)), pmod(CA
+ POSTHOOK: type: QUERY
+ POSTHOOK: Input: default@src
+ #### A masked pattern was here ####
+-6.8899984	51.700005	18.089996
++6.889998435974121	51.70000457763672	18.089996337890625
+ PREHOOK: query: SELECT pmod(CAST(-100.91 AS DOUBLE),CAST(9.8 AS DOUBLE)), pmod(CAST(-50.1 AS DOUBLE),CAST(101.8 AS DOUBLE)), pmod(CAST(-100.91 AS DOUBLE),CAST(29.75 AS DOUBLE)) FROM src LIMIT 1
+ PREHOOK: type: QUERY
+ PREHOOK: Input: default@src
+diff --git a/src/ql/src/test/results/clientpositive/windowing_expressions.q.out b/src/ql/src/test/results/clientpositive/windowing_expressions.q.out
+index ce3d943..e08d0bc 100644
+--- a/src/ql/src/test/results/clientpositive/windowing_expressions.q.out
++++ b/src/ql/src/test/results/clientpositive/windowing_expressions.q.out
+@@ -168,106 +168,106 @@ POSTHOOK: query: select s, si, f, si - lead(f, 3) over (partition by t order by
+ POSTHOOK: type: QUERY
+ POSTHOOK: Input: default@over10k
+ #### A masked pattern was here ####
+-alice allen	400	76.31	337.23
+-alice davidson	384	71.97	357.79
+-alice king	455	2.48	395.93
+-alice king	458	62.77	384.16998
+-alice xylophone	485	26.21	464.05
+-bob falkner	260	59.07	242.4
+-bob ichabod	454	73.83	381.7
+-bob polk	264	20.95	257.17
+-bob underhill	454	17.6	424.94
+-bob underhill	465	72.3	453.17
+-bob van buren	433	6.83	398.4
+-calvin ichabod	431	29.06	334.22
+-david garcia	485	11.83	421.51
+-ethan steinbeck	298	34.6	288.14
+-fred ellison	376	96.78	330.76
+-holly steinbeck	384	63.49	293.7
+-holly underhill	318	9.86	269.91
+-irene ellison	458	45.24	365.29
+-irene underhill	307	90.3	244.19
+-jessica johnson	494	48.09	490.18
+-jessica king	459	92.71	452.2
+-jessica white	284	62.81	209.08
+-luke garcia	311	3.82	267.27
++alice allen	400	76.31	337.2299995422363
++alice davidson	384	71.97	357.79000091552734
++alice king	455	2.48	395.9300003051758
++alice king	458	62.77	384.1699981689453
++alice xylophone	485	26.21	464.04999923706055
++bob falkner	260	59.07	242.39999961853027
++bob ichabod	454	73.83	381.6999969482422
++bob polk	264	20.95	257.17000007629395
++bob underhill	454	17.6	424.9400005340576
++bob underhill	465	72.3	453.17000007629395
++bob van buren	433	6.83	398.4000015258789
++calvin ichabod	431	29.06	334.2200012207031
++david garcia	485	11.83	421.5099983215332
++ethan steinbeck	298	34.6	288.14000034332275
++fred ellison	376	96.78	330.7599983215332
++holly steinbeck	384	63.49	293.6999969482422
++holly underhill	318	9.86	269.9099998474121
++irene ellison	458	45.24	365.29000091552734
++irene underhill	307	90.3	244.18999862670898
++jessica johnson	494	48.09	490.1800000667572
++jessica king	459	92.71	452.19999980926514
++jessica white	284	62.81	209.0800018310547
++luke garcia	311	3.82	267.2700004577637
+ luke young	451	6.8	429.0
+-mike king	275	74.92	211.81
+-oscar garcia	362	43.73	340.66
+-priscilla laertes	316	22.0	296.06
+-priscilla quirinius	423	63.19	362.72
+-priscilla zipper	485	21.34	400.61
+-quinn ellison	266	19.94	209.95
+-quinn polk	507	60.28	447.66
+-sarah robinson	320	84.39	309.74
+-tom polk	346	56.05	320.33
+-ulysses ellison	381	59.34	358.66
+-ulysses quirinius	303	10.26	259.6
+-ulysses robinson	313	25.67	269.31
+-ulysses steinbeck	333	22.34	270.61
++mike king	275	74.92	211.81000137329102
++oscar garcia	362	43.73	340.6599998474121
++priscilla laertes	316	22.0	296.0599994659424
++priscilla quirinius	423	63.19	362.7200012207031
++priscilla zipper	485	21.34	400.61000061035156
++quinn ellison	266	19.94	209.95000076293945
++quinn polk	507	60.28	447.6599998474121
++sarah robinson	320	84.39	309.73999977111816
++tom polk	346	56.05	320.32999992370605
++ulysses ellison	381	59.34	358.6599998474121
++ulysses quirinius	303	10.26	259.5999984741211
++ulysses robinson	313	25.67	269.310001373291
++ulysses steinbeck	333	22.34	270.61000061035156
+ victor allen	337	43.4	311.5
+-victor hernandez	447	43.69	375.22
+-victor xylophone	438	62.39	424.33
++victor hernandez	447	43.69	375.2200012207031
++victor xylophone	438	62.39	424.32999992370605
+ wendy quirinius	279	25.5	250.25
+-wendy robinson	275	71.78	262.88
+-wendy xylophone	314	13.67	295.73
+-xavier garcia	493	28.75	474.56
+-zach thompson	386	12.12	377.63
+-zach young	286	18.27	263.65
+-alice falkner	280	18.44	227.7
+-bob ellison	339	8.37	300.95
+-bob johnson	374	22.35	326.49
+-calvin white	280	52.3	198.32
+-david carson	270	38.05	255.77
+-david falkner	469	47.51	388.35
+-david hernandez	408	81.68	339.27
+-ethan underhill	339	14.23	256.26
++wendy robinson	275	71.78	262.8800001144409
++wendy xylophone	314	13.67	295.7299995422363
++xavier garcia	493	28.75	474.5599994659424
++zach thompson	386	12.12	377.6300001144409
++zach young	286	18.27	263.6499996185303
++alice falkner	280	18.44	227.70000076293945
++bob ellison	339	8.37	300.95000076293945
++bob johnson	374	22.35	326.4900016784668
++calvin white	280	52.3	198.31999969482422
++david carson	270	38.05	255.77000045776367
++david falkner	469	47.51	388.3499984741211
++david hernandez	408	81.68	339.2699966430664
++ethan underhill	339	14.23	256.26000213623047
+ gabriella brown	498	80.65	413.25
+-holly nixon	505	68.73	440.71
+-holly polk	268	82.74	182.04001
+-holly thompson	387	84.75	298.22
+-irene young	458	64.29	401.8
+-jessica miller	299	85.96	243.41
+-katie ichabod	469	88.78	385.61
+-luke ichabod	289	56.2	286.74
+-luke king	337	55.59	274.88
+-mike allen	465	83.39	383.03
+-mike polk	500	2.26	427.74
+-mike white	454	62.12	430.78
+-mike xylophone	448	81.97	447.17
+-nick nixon	335	72.26	240.78
+-nick robinson	350	23.22	294.59
+-oscar davidson	432	0.83	420.93
+-oscar johnson	315	94.22	233.05
+-oscar johnson	469	55.41	468.44
+-oscar miller	324	11.07	265.19
+-rachel davidson	507	81.95	468.78
+-rachel thompson	344	0.56	246.12
+-sarah miller	386	58.81	304.36
+-sarah xylophone	275	38.22	177.48999
+-sarah zipper	376	97.88	294.61
+-tom hernandez	467	81.64	459.9
+-tom hernandez	477	97.51	415.19
+-tom steinbeck	414	81.39	361.87
+-ulysses carson	343	7.1	314.22
++holly nixon	505	68.73	440.70999908447266
++holly polk	268	82.74	182.04000091552734
++holly thompson	387	84.75	298.2200012207031
++irene young	458	64.29	401.79999923706055
++jessica miller	299	85.96	243.4099998474121
++katie ichabod	469	88.78	385.61000061035156
++luke ichabod	289	56.2	286.74000000953674
++luke king	337	55.59	274.88000106811523
++mike allen	465	83.39	383.0299987792969
++mike polk	500	2.26	427.73999786376953
++mike white	454	62.12	430.7800006866455
++mike xylophone	448	81.97	447.1700000166893
++nick nixon	335	72.26	240.77999877929688
++nick robinson	350	23.22	294.5900001525879
++oscar davidson	432	0.83	420.9300003051758
++oscar johnson	315	94.22	233.0500030517578
++oscar johnson	469	55.41	468.4399999976158
++oscar miller	324	11.07	265.189998626709
++rachel davidson	507	81.95	468.7799987792969
++rachel thompson	344	0.56	246.12000274658203
++sarah miller	386	58.81	304.36000061035156
++sarah xylophone	275	38.22	177.48999786376953
++sarah zipper	376	97.88	294.61000061035156
++tom hernandez	467	81.64	459.90000009536743
++tom hernandez	477	97.51	415.189998626709
++tom steinbeck	414	81.39	361.86999893188477
++ulysses carson	343	7.1	314.2199993133545
+ victor robinson	415	61.81	349.5
+ victor thompson	344	52.13	NULL
+ xavier ovid	280	28.78	NULL
+ yuri xylophone	430	65.5	NULL
+-alice underhill	389	26.68	368.06
+-alice underhill	446	6.49	444.21
+-bob ovid	331	67.12	236.43
+-bob van buren	406	20.94	383.32
+-david falkner	406	1.79	374.34
+-david miller	450	94.57	380.13
+-ethan allen	380	22.68	375.6
+-ethan king	395	31.66	361.51
+-ethan nixon	475	69.87	431.39
+-ethan polk	283	4.4	243.82
+-fred allen	331	33.49	281.68
+-fred king	511	43.61	457.22
+-fred polk	261	39.18	248.73
+-fred young	303	49.32	221.51001
++alice underhill	389	26.68	368.0599994659424
++alice underhill	446	6.49	444.210000038147
++bob ovid	331	67.12	236.43000030517578
++bob van buren	406	20.94	383.3199996948242
++david falkner	406	1.79	374.3400001525879
++david miller	450	94.57	380.12999725341797
++ethan allen	380	22.68	375.59999990463257
++ethan king	395	31.66	361.5099983215332
++ethan nixon	475	69.87	431.38999938964844
++ethan polk	283	4.4	243.81999969482422
++fred allen	331	33.49	281.6800003051758
++fred king	511	43.61	457.2200012207031
++fred polk	261	39.18	248.72999954223633
++fred young	303	49.32	221.51000213623047
+ PREHOOK: query: select s, i, i - lead(i, 3, 0) over (partition by si order by i,s) from over10k limit 100
+ PREHOOK: type: QUERY
+ PREHOOK: Input: default@over10k
+diff --git a/src/ql/src/test/results/compiler/plan/cast1.q.xml b/src/ql/src/test/results/compiler/plan/cast1.q.xml
+index 1380838..a731e97 100644
+--- a/src/ql/src/test/results/compiler/plan/cast1.q.xml
++++ b/src/ql/src/test/results/compiler/plan/cast1.q.xml
+@@ -498,17 +498,7 @@
+                      </object> 
+                     </void> 
+                     <void property="genericUDF"> 
+-                     <object class="org.apache.hadoop.hive.ql.udf.generic.GenericUDFBridge"> 
+-                      <void property="operator"> 
+-                       <boolean>true</boolean> 
+-                      </void> 
+-                      <void property="udfClassName"> 
+-                       <string>org.apache.hadoop.hive.ql.udf.UDFOPPlus</string> 
+-                      </void> 
+-                      <void property="udfName"> 
+-                       <string>+</string> 
+-                      </void> 
+-                     </object> 
++                     <object class="org.apache.hadoop.hive.ql.udf.generic.GenericUDFOPPlus"/> 
+                     </void> 
+                     <void property="typeInfo"> 
+                      <object idref="PrimitiveTypeInfo0"/> 
+@@ -543,17 +533,7 @@
+                      </object> 
+                     </void> 
+                     <void property="genericUDF"> 
+-                     <object class="org.apache.hadoop.hive.ql.udf.generic.GenericUDFBridge"> 
+-                      <void property="operator"> 
+-                       <boolean>true</boolean> 
+-                      </void> 
+-                      <void property="udfClassName"> 
+-                       <string>org.apache.hadoop.hive.ql.udf.UDFOPPlus</string> 
+-                      </void> 
+-                      <void property="udfName"> 
+-                       <string>+</string> 
+-                      </void> 
+-                     </object> 
++                     <object class="org.apache.hadoop.hive.ql.udf.generic.GenericUDFOPPlus"/> 
+                     </void> 
+                     <void property="typeInfo"> 
+                      <object idref="PrimitiveTypeInfo1"/> 
+@@ -588,17 +568,7 @@
+                      </object> 
+                     </void> 
+                     <void property="genericUDF"> 
+-                     <object class="org.apache.hadoop.hive.ql.udf.generic.GenericUDFBridge"> 
+-                      <void property="operator"> 
+-                       <boolean>true</boolean> 
+-                      </void> 
+-                      <void property="udfClassName"> 
+-                       <string>org.apache.hadoop.hive.ql.udf.UDFOPPlus</string> 
+-                      </void> 
+-                      <void property="udfName"> 
+-                       <string>+</string> 
+-                      </void> 
+-                     </object> 
++                     <object class="org.apache.hadoop.hive.ql.udf.generic.GenericUDFOPPlus"/> 
+                     </void> 
+                     <void property="typeInfo"> 
+                      <object idref="PrimitiveTypeInfo1"/> 
+@@ -633,17 +603,7 @@
+                      </object> 
+                     </void> 
+                     <void property="genericUDF"> 
+-                     <object class="org.apache.hadoop.hive.ql.udf.generic.GenericUDFBridge"> 
+-                      <void property="operator"> 
+-                       <boolean>true</boolean> 
+-                      </void> 
+-                      <void property="udfClassName"> 
+-                       <string>org.apache.hadoop.hive.ql.udf.UDFOPPlus</string> 
+-                      </void> 
+-                      <void property="udfName"> 
+-                       <string>+</string> 
+-                      </void> 
+-                     </object> 
++                     <object class="org.apache.hadoop.hive.ql.udf.generic.GenericUDFOPPlus"/> 
+                     </void> 
+                     <void property="typeInfo"> 
+                      <object idref="PrimitiveTypeInfo1"/> 
+@@ -678,17 +638,7 @@
+                      </object> 
+                     </void> 
+                     <void property="genericUDF"> 
+-                     <object class="org.apache.hadoop.hive.ql.udf.generic.GenericUDFBridge"> 
+-                      <void property="operator"> 
+-                       <boolean>true</boolean> 
+-                      </void> 
+-                      <void property="udfClassName"> 
+-                       <string>org.apache.hadoop.hive.ql.udf.UDFOPPlus</string> 
+-                      </void> 
+-                      <void property="udfName"> 
+-                       <string>+</string> 
+-                      </void> 
+-                     </object> 
++                     <object class="org.apache.hadoop.hive.ql.udf.generic.GenericUDFOPPlus"/> 
+                     </void> 
+                     <void property="typeInfo"> 
+                      <object idref="PrimitiveTypeInfo0"/> 
+diff --git a/src/ql/src/test/results/compiler/plan/input20.q.xml b/src/ql/src/test/results/compiler/plan/input20.q.xml
+index 04c19d9..9160505 100644
+--- a/src/ql/src/test/results/compiler/plan/input20.q.xml
++++ b/src/ql/src/test/results/compiler/plan/input20.q.xml
+@@ -587,17 +587,7 @@
+                  </object> 
+                 </void> 
+                 <void property="genericUDF"> 
+-                 <object class="org.apache.hadoop.hive.ql.udf.generic.GenericUDFBridge"> 
+-                  <void property="operator"> 
+-                   <boolean>true</boolean> 
+-                  </void> 
+-                  <void property="udfClassName"> 
+-                   <string>org.apache.hadoop.hive.ql.udf.UDFOPMod</string> 
+-                  </void> 
+-                  <void property="udfName"> 
+-                   <string>%</string> 
+-                  </void> 
+-                 </object> 
++                 <object class="org.apache.hadoop.hive.ql.udf.generic.GenericUDFOPMod"/> 
+                 </void> 
+                 <void property="typeInfo"> 
+                  <object id="PrimitiveTypeInfo2" class="org.apache.hadoop.hive.serde2.typeinfo.PrimitiveTypeInfo"> 
+@@ -639,17 +629,7 @@
+                  </object> 
+                 </void> 
+                 <void property="genericUDF"> 
+-                 <object class="org.apache.hadoop.hive.ql.udf.generic.GenericUDFBridge"> 
+-                  <void property="operator"> 
+-                   <boolean>true</boolean> 
+-                  </void> 
+-                  <void property="udfClassName"> 
+-                   <string>org.apache.hadoop.hive.ql.udf.UDFOPMod</string> 
+-                  </void> 
+-                  <void property="udfName"> 
+-                   <string>%</string> 
+-                  </void> 
+-                 </object> 
++                 <object class="org.apache.hadoop.hive.ql.udf.generic.GenericUDFOPMod"/> 
+                 </void> 
+                 <void property="typeInfo"> 
+                  <object idref="PrimitiveTypeInfo2"/> 
+diff --git a/src/ql/src/test/results/compiler/plan/input8.q.xml b/src/ql/src/test/results/compiler/plan/input8.q.xml
+index 2741ec9..b15a9cb 100644
+--- a/src/ql/src/test/results/compiler/plan/input8.q.xml
++++ b/src/ql/src/test/results/compiler/plan/input8.q.xml
+@@ -202,7 +202,7 @@
+                       </void> 
+                       <void method="put"> 
+                        <string>columns.types</string> 
+-                       <string>int:double:tinyint</string> 
++                       <string>double:double:double</string> 
+                       </void> 
+                       <void method="put"> 
+                        <string>escape.delim</string> 
+@@ -258,12 +258,12 @@
+                       <void property="type"> 
+                        <object id="PrimitiveTypeInfo0" class="org.apache.hadoop.hive.serde2.typeinfo.PrimitiveTypeInfo"> 
+                         <void property="typeName"> 
+-                         <string>int</string> 
++                         <string>double</string> 
+                         </void> 
+                        </object> 
+                       </void> 
+                       <void property="typeName"> 
+-                       <string>int</string> 
++                       <string>double</string> 
+                       </void> 
+                      </object> 
+                     </void> 
+@@ -276,11 +276,7 @@
+                        <string></string> 
+                       </void> 
+                       <void property="type"> 
+-                       <object id="PrimitiveTypeInfo1" class="org.apache.hadoop.hive.serde2.typeinfo.PrimitiveTypeInfo"> 
+-                        <void property="typeName"> 
+-                         <string>double</string> 
+-                        </void> 
+-                       </object> 
++                       <object idref="PrimitiveTypeInfo0"/> 
+                       </void> 
+                       <void property="typeName"> 
+                        <string>double</string> 
+@@ -296,14 +292,10 @@
+                        <string></string> 
+                       </void> 
+                       <void property="type"> 
+-                       <object id="PrimitiveTypeInfo2" class="org.apache.hadoop.hive.serde2.typeinfo.PrimitiveTypeInfo"> 
+-                        <void property="typeName"> 
+-                         <string>tinyint</string> 
+-                        </void> 
+-                       </object> 
++                       <object idref="PrimitiveTypeInfo0"/> 
+                       </void> 
+                       <void property="typeName"> 
+-                       <string>tinyint</string> 
++                       <string>double</string> 
+                       </void> 
+                      </object> 
+                     </void> 
+@@ -331,20 +323,10 @@
+                  </object> 
+                 </void> 
+                 <void property="genericUDF"> 
+-                 <object class="org.apache.hadoop.hive.ql.udf.generic.GenericUDFBridge"> 
+-                  <void property="operator"> 
+-                   <boolean>true</boolean> 
+-                  </void> 
+-                  <void property="udfClassName"> 
+-                   <string>org.apache.hadoop.hive.ql.udf.UDFOPPlus</string> 
+-                  </void> 
+-                  <void property="udfName"> 
+-                   <string>+</string> 
+-                  </void> 
+-                 </object> 
++                 <object class="org.apache.hadoop.hive.ql.udf.generic.GenericUDFOPPlus"/> 
+                 </void> 
+                 <void property="typeInfo"> 
+-                 <object idref="PrimitiveTypeInfo2"/> 
++                 <object idref="PrimitiveTypeInfo0"/> 
+                 </void> 
+                </object> 
+               </void> 
+@@ -362,7 +344,7 @@
+                      <string>src1</string> 
+                     </void> 
+                     <void property="typeInfo"> 
+-                     <object id="PrimitiveTypeInfo3" class="org.apache.hadoop.hive.serde2.typeinfo.PrimitiveTypeInfo"> 
++                     <object id="PrimitiveTypeInfo1" class="org.apache.hadoop.hive.serde2.typeinfo.PrimitiveTypeInfo"> 
+                       <void property="typeName"> 
+                        <string>string</string> 
+                       </void> 
+@@ -376,20 +358,10 @@
+                  </object> 
+                 </void> 
+                 <void property="genericUDF"> 
+-                 <object class="org.apache.hadoop.hive.ql.udf.generic.GenericUDFBridge"> 
+-                  <void property="operator"> 
+-                   <boolean>true</boolean> 
+-                  </void> 
+-                  <void property="udfClassName"> 
+-                   <string>org.apache.hadoop.hive.ql.udf.UDFOPMinus</string> 
+-                  </void> 
+-                  <void property="udfName"> 
+-                   <string>-</string> 
+-                  </void> 
+-                 </object> 
++                 <object class="org.apache.hadoop.hive.ql.udf.generic.GenericUDFOPMinus"/> 
+                 </void> 
+                 <void property="typeInfo"> 
+-                 <object idref="PrimitiveTypeInfo1"/> 
++                 <object idref="PrimitiveTypeInfo0"/> 
+                 </void> 
+                </object> 
+               </void> 
+@@ -401,7 +373,11 @@
+                   <void method="add"> 
+                    <object class="org.apache.hadoop.hive.ql.plan.ExprNodeConstantDesc"> 
+                     <void property="typeInfo"> 
+-                     <object idref="PrimitiveTypeInfo0"/> 
++                     <object class="org.apache.hadoop.hive.serde2.typeinfo.PrimitiveTypeInfo"> 
++                      <void property="typeName"> 
++                       <string>int</string> 
++                      </void> 
++                     </object> 
+                     </void> 
+                     <void property="value"> 
+                      <int>4</int> 
+@@ -414,17 +390,7 @@
+                  </object> 
+                 </void> 
+                 <void property="genericUDF"> 
+-                 <object class="org.apache.hadoop.hive.ql.udf.generic.GenericUDFBridge"> 
+-                  <void property="operator"> 
+-                   <boolean>true</boolean> 
+-                  </void> 
+-                  <void property="udfClassName"> 
+-                   <string>org.apache.hadoop.hive.ql.udf.UDFOPPlus</string> 
+-                  </void> 
+-                  <void property="udfName"> 
+-                   <string>+</string> 
+-                  </void> 
+-                 </object> 
++                 <object class="org.apache.hadoop.hive.ql.udf.generic.GenericUDFOPPlus"/> 
+                 </void> 
+                 <void property="typeInfo"> 
+                  <object idref="PrimitiveTypeInfo0"/> 
+@@ -505,7 +471,7 @@
+                    <object idref="PrimitiveTypeInfo0"/> 
+                   </void> 
+                   <void property="typeName"> 
+-                   <string>int</string> 
++                   <string>double</string> 
+                   </void> 
+                  </object> 
+                 </void> 
+@@ -518,7 +484,7 @@
+                    <string>_col1</string> 
+                   </void> 
+                   <void property="type"> 
+-                   <object idref="PrimitiveTypeInfo1"/> 
++                   <object idref="PrimitiveTypeInfo0"/> 
+                   </void> 
+                   <void property="typeName"> 
+                    <string>double</string> 
+@@ -534,10 +500,10 @@
+                    <string>_col2</string> 
+                   </void> 
+                   <void property="type"> 
+-                   <object idref="PrimitiveTypeInfo2"/> 
++                   <object idref="PrimitiveTypeInfo0"/> 
+                   </void> 
+                   <void property="typeName"> 
+-                   <string>tinyint</string> 
++                   <string>double</string> 
+                   </void> 
+                  </object> 
+                 </void> 
+@@ -605,7 +571,7 @@
+                <string>src1</string> 
+               </void> 
+               <void property="type"> 
+-               <object idref="PrimitiveTypeInfo3"/> 
++               <object idref="PrimitiveTypeInfo1"/> 
+               </void> 
+               <void property="typeName"> 
+                <string>string</string> 
+@@ -621,7 +587,7 @@
+                <string>src1</string> 
+               </void> 
+               <void property="type"> 
+-               <object idref="PrimitiveTypeInfo3"/> 
++               <object idref="PrimitiveTypeInfo1"/> 
+               </void> 
+               <void property="typeName"> 
+                <string>string</string> 
+@@ -663,7 +629,7 @@
+                <string>src1</string> 
+               </void> 
+               <void property="type"> 
+-               <object idref="PrimitiveTypeInfo3"/> 
++               <object idref="PrimitiveTypeInfo1"/> 
+               </void> 
+               <void property="typeName"> 
+                <string>string</string> 
+diff --git a/src/ql/src/test/results/compiler/plan/join2.q.xml b/src/ql/src/test/results/compiler/plan/join2.q.xml
+index 873ba04..ccfbedd 100644
+--- a/src/ql/src/test/results/compiler/plan/join2.q.xml
++++ b/src/ql/src/test/results/compiler/plan/join2.q.xml
+@@ -376,17 +376,7 @@
+                        </object> 
+                       </void> 
+                       <void property="genericUDF"> 
+-                       <object class="org.apache.hadoop.hive.ql.udf.generic.GenericUDFBridge"> 
+-                        <void property="operator"> 
+-                         <boolean>true</boolean> 
+-                        </void> 
+-                        <void property="udfClassName"> 
+-                         <string>org.apache.hadoop.hive.ql.udf.UDFOPPlus</string> 
+-                        </void> 
+-                        <void property="udfName"> 
+-                         <string>+</string> 
+-                        </void> 
+-                       </object> 
++                       <object class="org.apache.hadoop.hive.ql.udf.generic.GenericUDFOPPlus"/> 
+                       </void> 
+                       <void property="typeInfo"> 
+                        <object id="PrimitiveTypeInfo1" class="org.apache.hadoop.hive.serde2.typeinfo.PrimitiveTypeInfo"> 
+diff --git a/src/ql/src/test/results/compiler/plan/sample1.q.xml b/src/ql/src/test/results/compiler/plan/sample1.q.xml
+index e6052a7..8d5c352 100644
+--- a/src/ql/src/test/results/compiler/plan/sample1.q.xml
++++ b/src/ql/src/test/results/compiler/plan/sample1.q.xml
+@@ -685,17 +685,7 @@
+                      </object> 
+                     </void> 
+                     <void property="genericUDF"> 
+-                     <object class="org.apache.hadoop.hive.ql.udf.generic.GenericUDFBridge"> 
+-                      <void property="operator"> 
+-                       <boolean>true</boolean> 
+-                      </void> 
+-                      <void property="udfClassName"> 
+-                       <string>org.apache.hadoop.hive.ql.udf.UDFOPMod</string> 
+-                      </void> 
+-                      <void property="udfName"> 
+-                       <string>%</string> 
+-                      </void> 
+-                     </object> 
++                     <object class="org.apache.hadoop.hive.ql.udf.generic.GenericUDFOPMod"/> 
+                     </void> 
+                     <void property="typeInfo"> 
+                      <object idref="PrimitiveTypeInfo1"/> 
+diff --git a/src/ql/src/test/results/compiler/plan/sample2.q.xml b/src/ql/src/test/results/compiler/plan/sample2.q.xml
+index a4f14e5..149a8a8 100644
+--- a/src/ql/src/test/results/compiler/plan/sample2.q.xml
++++ b/src/ql/src/test/results/compiler/plan/sample2.q.xml
+@@ -985,17 +985,7 @@
+                      </object> 
+                     </void> 
+                     <void property="genericUDF"> 
+-                     <object class="org.apache.hadoop.hive.ql.udf.generic.GenericUDFBridge"> 
+-                      <void property="operator"> 
+-                       <boolean>true</boolean> 
+-                      </void> 
+-                      <void property="udfClassName"> 
+-                       <string>org.apache.hadoop.hive.ql.udf.UDFOPMod</string> 
+-                      </void> 
+-                      <void property="udfName"> 
+-                       <string>%</string> 
+-                      </void> 
+-                     </object> 
++                     <object class="org.apache.hadoop.hive.ql.udf.generic.GenericUDFOPMod"/> 
+                     </void> 
+                     <void property="typeInfo"> 
+                      <object idref="PrimitiveTypeInfo1"/> 
+diff --git a/src/ql/src/test/results/compiler/plan/sample3.q.xml b/src/ql/src/test/results/compiler/plan/sample3.q.xml
+index ff521be..5ebfb98 100644
+--- a/src/ql/src/test/results/compiler/plan/sample3.q.xml
++++ b/src/ql/src/test/results/compiler/plan/sample3.q.xml
+@@ -998,17 +998,7 @@
+                      </object> 
+                     </void> 
+                     <void property="genericUDF"> 
+-                     <object class="org.apache.hadoop.hive.ql.udf.generic.GenericUDFBridge"> 
+-                      <void property="operator"> 
+-                       <boolean>true</boolean> 
+-                      </void> 
+-                      <void property="udfClassName"> 
+-                       <string>org.apache.hadoop.hive.ql.udf.UDFOPMod</string> 
+-                      </void> 
+-                      <void property="udfName"> 
+-                       <string>%</string> 
+-                      </void> 
+-                     </object> 
++                     <object class="org.apache.hadoop.hive.ql.udf.generic.GenericUDFOPMod"/> 
+                     </void> 
+                     <void property="typeInfo"> 
+                      <object idref="PrimitiveTypeInfo1"/> 
+diff --git a/src/ql/src/test/results/compiler/plan/sample4.q.xml b/src/ql/src/test/results/compiler/plan/sample4.q.xml
+index a4f14e5..149a8a8 100644
+--- a/src/ql/src/test/results/compiler/plan/sample4.q.xml
++++ b/src/ql/src/test/results/compiler/plan/sample4.q.xml
+@@ -985,17 +985,7 @@
+                      </object> 
+                     </void> 
+                     <void property="genericUDF"> 
+-                     <object class="org.apache.hadoop.hive.ql.udf.generic.GenericUDFBridge"> 
+-                      <void property="operator"> 
+-                       <boolean>true</boolean> 
+-                      </void> 
+-                      <void property="udfClassName"> 
+-                       <string>org.apache.hadoop.hive.ql.udf.UDFOPMod</string> 
+-                      </void> 
+-                      <void property="udfName"> 
+-                       <string>%</string> 
+-                      </void> 
+-                     </object> 
++                     <object class="org.apache.hadoop.hive.ql.udf.generic.GenericUDFOPMod"/> 
+                     </void> 
+                     <void property="typeInfo"> 
+                      <object idref="PrimitiveTypeInfo1"/> 
+diff --git a/src/ql/src/test/results/compiler/plan/sample5.q.xml b/src/ql/src/test/results/compiler/plan/sample5.q.xml
+index f17c5a0..d87a7f8 100644
+--- a/src/ql/src/test/results/compiler/plan/sample5.q.xml
++++ b/src/ql/src/test/results/compiler/plan/sample5.q.xml
+@@ -985,17 +985,7 @@
+                      </object> 
+                     </void> 
+                     <void property="genericUDF"> 
+-                     <object class="org.apache.hadoop.hive.ql.udf.generic.GenericUDFBridge"> 
+-                      <void property="operator"> 
+-                       <boolean>true</boolean> 
+-                      </void> 
+-                      <void property="udfClassName"> 
+-                       <string>org.apache.hadoop.hive.ql.udf.UDFOPMod</string> 
+-                      </void> 
+-                      <void property="udfName"> 
+-                       <string>%</string> 
+-                      </void> 
+-                     </object> 
++                     <object class="org.apache.hadoop.hive.ql.udf.generic.GenericUDFOPMod"/> 
+                     </void> 
+                     <void property="typeInfo"> 
+                      <object idref="PrimitiveTypeInfo1"/> 
+diff --git a/src/ql/src/test/results/compiler/plan/sample6.q.xml b/src/ql/src/test/results/compiler/plan/sample6.q.xml
+index 0c5b244..5d1a723 100644
+--- a/src/ql/src/test/results/compiler/plan/sample6.q.xml
++++ b/src/ql/src/test/results/compiler/plan/sample6.q.xml
+@@ -985,17 +985,7 @@
+                      </object> 
+                     </void> 
+                     <void property="genericUDF"> 
+-                     <object class="org.apache.hadoop.hive.ql.udf.generic.GenericUDFBridge"> 
+-                      <void property="operator"> 
+-                       <boolean>true</boolean> 
+-                      </void> 
+-                      <void property="udfClassName"> 
+-                       <string>org.apache.hadoop.hive.ql.udf.UDFOPMod</string> 
+-                      </void> 
+-                      <void property="udfName"> 
+-                       <string>%</string> 
+-                      </void> 
+-                     </object> 
++                     <object class="org.apache.hadoop.hive.ql.udf.generic.GenericUDFOPMod"/> 
+                     </void> 
+                     <void property="typeInfo"> 
+                      <object idref="PrimitiveTypeInfo1"/> 
+diff --git a/src/ql/src/test/results/compiler/plan/sample7.q.xml b/src/ql/src/test/results/compiler/plan/sample7.q.xml
+index a3bded3..d3835b0 100644
+--- a/src/ql/src/test/results/compiler/plan/sample7.q.xml
++++ b/src/ql/src/test/results/compiler/plan/sample7.q.xml
+@@ -986,17 +986,7 @@
+                          </object> 
+                         </void> 
+                         <void property="genericUDF"> 
+-                         <object class="org.apache.hadoop.hive.ql.udf.generic.GenericUDFBridge"> 
+-                          <void property="operator"> 
+-                           <boolean>true</boolean> 
+-                          </void> 
+-                          <void property="udfClassName"> 
+-                           <string>org.apache.hadoop.hive.ql.udf.UDFOPMod</string> 
+-                          </void> 
+-                          <void property="udfName"> 
+-                           <string>%</string> 
+-                          </void> 
+-                         </object> 
++                         <object class="org.apache.hadoop.hive.ql.udf.generic.GenericUDFOPMod"/> 
+                         </void> 
+                         <void property="typeInfo"> 
+                          <object idref="PrimitiveTypeInfo1"/> 
+diff --git a/src/ql/src/test/results/compiler/plan/udf4.q.xml b/src/ql/src/test/results/compiler/plan/udf4.q.xml
+index 67779e5..8b71b8b 100644
+--- a/src/ql/src/test/results/compiler/plan/udf4.q.xml
++++ b/src/ql/src/test/results/compiler/plan/udf4.q.xml
+@@ -1103,17 +1103,7 @@
+                  </object> 
+                 </void> 
+                 <void property="genericUDF"> 
+-                 <object class="org.apache.hadoop.hive.ql.udf.generic.GenericUDFBridge"> 
+-                  <void property="operator"> 
+-                   <boolean>true</boolean> 
+-                  </void> 
+-                  <void property="udfClassName"> 
+-                   <string>org.apache.hadoop.hive.ql.udf.UDFOPPlus</string> 
+-                  </void> 
+-                  <void property="udfName"> 
+-                   <string>+</string> 
+-                  </void> 
+-                 </object> 
++                 <object class="org.apache.hadoop.hive.ql.udf.generic.GenericUDFOPPlus"/> 
+                 </void> 
+                 <void property="typeInfo"> 
+                  <object idref="PrimitiveTypeInfo2"/> 
+@@ -1148,17 +1138,7 @@
+                  </object> 
+                 </void> 
+                 <void property="genericUDF"> 
+-                 <object class="org.apache.hadoop.hive.ql.udf.generic.GenericUDFBridge"> 
+-                  <void property="operator"> 
+-                   <boolean>true</boolean> 
+-                  </void> 
+-                  <void property="udfClassName"> 
+-                   <string>org.apache.hadoop.hive.ql.udf.UDFOPPlus</string> 
+-                  </void> 
+-                  <void property="udfName"> 
+-                   <string>+</string> 
+-                  </void> 
+-                 </object> 
++                 <object class="org.apache.hadoop.hive.ql.udf.generic.GenericUDFOPPlus"/> 
+                 </void> 
+                 <void property="typeInfo"> 
+                  <object idref="PrimitiveTypeInfo2"/> 
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/PrimitiveObjectInspector.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/PrimitiveObjectInspector.java
+index 22e5ec5..5a11ae1 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/PrimitiveObjectInspector.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/PrimitiveObjectInspector.java
+@@ -80,4 +80,14 @@
+    */
+   boolean preferWritable();
+ 
++  /**
++   * The precision of the underlying data.
++   */
++  int precision();
++
++  /**
++   * The scale of the underlying data.
++   */
++  int scale();
++
+ }
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/AbstractPrimitiveObjectInspector.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/AbstractPrimitiveObjectInspector.java
+index c19f5aa..baa4a94 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/AbstractPrimitiveObjectInspector.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/AbstractPrimitiveObjectInspector.java
+@@ -18,6 +18,7 @@
+ package org.apache.hadoop.hive.serde2.objectinspector.primitive;
+ 
+ import org.apache.hadoop.hive.serde2.objectinspector.PrimitiveObjectInspector;
++import org.apache.hadoop.hive.serde2.typeinfo.HiveDecimalUtils;
+ import org.apache.hadoop.hive.serde2.typeinfo.PrimitiveTypeInfo;
+ 
+ /**
+@@ -86,4 +87,20 @@ public PrimitiveTypeInfo getTypeInfo() {
+     return this.typeInfo;
+   }
+ 
++  /**
++   * Default implementation.  Maybe overridden by exact types.
++   */
++  @Override
++  public int precision() {
++    return HiveDecimalUtils.getPrecisionForType(typeInfo);
++  }
++
++  /**
++   * Default implementation.  Maybe overridden by exact types.
++   */
++  @Override
++  public int scale() {
++    return HiveDecimalUtils.getScaleForType(typeInfo);
++  }
++
+ }
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantByteObjectInspector.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantByteObjectInspector.java
+index 0915562..7931021 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantByteObjectInspector.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantByteObjectInspector.java
+@@ -17,9 +17,10 @@
+  */
+ package org.apache.hadoop.hive.serde2.objectinspector.primitive;
+ 
+-import org.apache.hadoop.hive.serde2.objectinspector.ConstantObjectInspector;
++import java.math.BigDecimal;
+ 
+ import org.apache.hadoop.hive.serde2.io.ByteWritable;
++import org.apache.hadoop.hive.serde2.objectinspector.ConstantObjectInspector;
+ 
+ /**
+  * A WritableConstantByteObjectInspector is a WritableByteObjectInspector
+@@ -34,6 +35,7 @@
+   protected WritableConstantByteObjectInspector() {
+     super();
+   }
++
+   WritableConstantByteObjectInspector(ByteWritable value) {
+     super();
+     this.value = value;
+@@ -43,4 +45,10 @@ protected WritableConstantByteObjectInspector() {
+   public ByteWritable getWritableConstantValue() {
+     return value;
+   }
++
++  @Override
++  public int precision() {
++    return BigDecimal.valueOf(value.get()).precision();
++  }
++
+ }
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantHiveDecimalObjectInspector.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantHiveDecimalObjectInspector.java
+index a9ca7bd..5e3ad62 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantHiveDecimalObjectInspector.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantHiveDecimalObjectInspector.java
+@@ -56,4 +56,14 @@ public HiveDecimalWritable getWritableConstantValue() {
+     return new HiveDecimalWritable(dec);
+   }
+ 
++  @Override
++  public int precision() {
++    return value.getHiveDecimal().precision();
++  }
++
++  @Override
++  public int scale() {
++    return value.getHiveDecimal().scale();
++  }
++
+ }
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantIntObjectInspector.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantIntObjectInspector.java
+index 942a178..18389a9 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantIntObjectInspector.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantIntObjectInspector.java
+@@ -17,8 +17,9 @@
+  */
+ package org.apache.hadoop.hive.serde2.objectinspector.primitive;
+ 
+-import org.apache.hadoop.hive.serde2.objectinspector.ConstantObjectInspector;
++import java.math.BigDecimal;
+ 
++import org.apache.hadoop.hive.serde2.objectinspector.ConstantObjectInspector;
+ import org.apache.hadoop.io.IntWritable;
+ 
+ /**
+@@ -34,6 +35,7 @@
+   protected WritableConstantIntObjectInspector() {
+     super();
+   }
++
+   WritableConstantIntObjectInspector(IntWritable value) {
+     super();
+     this.value = value;
+@@ -43,4 +45,10 @@ protected WritableConstantIntObjectInspector() {
+   public IntWritable getWritableConstantValue() {
+     return value;
+   }
++
++  @Override
++  public int precision() {
++    return BigDecimal.valueOf(value.get()).precision();
++  }
++
+ }
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantLongObjectInspector.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantLongObjectInspector.java
+index ad3a063..52f8a26 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantLongObjectInspector.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantLongObjectInspector.java
+@@ -17,8 +17,9 @@
+  */
+ package org.apache.hadoop.hive.serde2.objectinspector.primitive;
+ 
+-import org.apache.hadoop.hive.serde2.objectinspector.ConstantObjectInspector;
++import java.math.BigDecimal;
+ 
++import org.apache.hadoop.hive.serde2.objectinspector.ConstantObjectInspector;
+ import org.apache.hadoop.io.LongWritable;
+ 
+ /**
+@@ -34,6 +35,7 @@
+   protected WritableConstantLongObjectInspector() {
+     super();
+   }
++
+   WritableConstantLongObjectInspector(LongWritable value) {
+     super();
+     this.value = value;
+@@ -43,4 +45,10 @@ protected WritableConstantLongObjectInspector() {
+   public LongWritable getWritableConstantValue() {
+     return value;
+   }
++
++  @Override
++  public int precision() {
++    return BigDecimal.valueOf(value.get()).precision();
++  }
++
+ }
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantShortObjectInspector.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantShortObjectInspector.java
+index 6b67dac..85e4f1d 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantShortObjectInspector.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantShortObjectInspector.java
+@@ -17,9 +17,10 @@
+  */
+ package org.apache.hadoop.hive.serde2.objectinspector.primitive;
+ 
+-import org.apache.hadoop.hive.serde2.objectinspector.ConstantObjectInspector;
++import java.math.BigDecimal;
+ 
+ import org.apache.hadoop.hive.serde2.io.ShortWritable;
++import org.apache.hadoop.hive.serde2.objectinspector.ConstantObjectInspector;
+ 
+ /**
+  * A WritableConstantShortObjectInspector is a WritableShortObjectInspector
+@@ -34,6 +35,7 @@
+   protected WritableConstantShortObjectInspector() {
+     super();
+   }
++
+   WritableConstantShortObjectInspector(ShortWritable value) {
+     super();
+     this.value = value;
+@@ -43,4 +45,10 @@ protected WritableConstantShortObjectInspector() {
+   public ShortWritable getWritableConstantValue() {
+     return value;
+   }
++
++  @Override
++  public int precision() {
++    return BigDecimal.valueOf(value.get()).precision();
++  }
++
+ }
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/typeinfo/HiveDecimalUtils.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/typeinfo/HiveDecimalUtils.java
+index 420509c..fec0dc0 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/typeinfo/HiveDecimalUtils.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/typeinfo/HiveDecimalUtils.java
+@@ -67,10 +67,7 @@ public static void validateParameter(int precision, int scale) {
+   }
+ 
+   /**
+-   * Get the precision of double type can be tricky. While a double may have more digits than
+-   * a HiveDecimal can hold, in reality those numbers are of no practical use. Thus, we assume
+-   * that a double can have at most HiveDecimal.MAX_PRECISION, which is generous enough. This
+-   * implies that casting a double to a decimal type is always valid.
++   * Need to keep consistent with JdbcColumn.columnPrecision
+    *
+    */
+   public static int getPrecisionForType(PrimitiveTypeInfo typeInfo) {
+@@ -78,7 +75,9 @@ public static int getPrecisionForType(PrimitiveTypeInfo typeInfo) {
+     case DECIMAL:
+       return ((DecimalTypeInfo)typeInfo).precision();
+     case FLOAT:
+-      return 23;
++      return 7;
++    case DOUBLE:
++      return 15;
+     case BYTE:
+       return 3;
+     case SHORT:
+@@ -87,16 +86,15 @@ public static int getPrecisionForType(PrimitiveTypeInfo typeInfo) {
+       return 10;
+     case LONG:
+       return 19;
++    case VOID:
++      return 1;
+     default:
+       return HiveDecimal.MAX_PRECISION;
+     }
+   }
+ 
+   /**
+-   * Get the scale of double type can be tricky. While a double may have more decimal digits than
+-   * HiveDecimal, in reality those numbers are of no practical use. Thus, we assume that a double
+-   * can have at most HiveDecimal.MAX_SCALE, which is generous enough. This implies implies that
+-   * casting a double to a decimal type is always valid.
++   * Need to keep consistent with JdbcColumn.columnScale()
+    *
+    */
+   public static int getScaleForType(PrimitiveTypeInfo typeInfo) {
+@@ -105,13 +103,13 @@ public static int getScaleForType(PrimitiveTypeInfo typeInfo) {
+       return ((DecimalTypeInfo)typeInfo).scale();
+     case FLOAT:
+       return 7;
++    case DOUBLE:
++      return 15;
+     case BYTE:
+-      return 0;
+     case SHORT:
+-      return 0;
+     case INT:
+-      return 0;
+     case LONG:
++    case VOID:
+       return 0;
+     default:
+       return HiveDecimal.MAX_SCALE;
+-- 
+1.7.0.4
+

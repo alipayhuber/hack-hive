@@ -1,0 +1,26 @@
+From 4db59d25b408e90b46d4a1a249d44c21977f9c44 Mon Sep 17 00:00:00 2001
+From: Szehon Ho <szehon@cloudera.com>
+Date: Wed, 29 Jan 2014 15:35:58 -0800
+Subject: [PATCH 257/375] CDH-16994: Hive tests with Java6 are failing intermittently with unbalance transaction errors
+
+Turning off RetryingRawStore to test theory.
+---
+ .../java/org/apache/hadoop/hive/conf/HiveConf.java |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+
+diff --git a/src/common/src/java/org/apache/hadoop/hive/conf/HiveConf.java b/src/common/src/java/org/apache/hadoop/hive/conf/HiveConf.java
+index 904c486..b23e1b8 100644
+--- a/src/common/src/java/org/apache/hadoop/hive/conf/HiveConf.java
++++ b/src/common/src/java/org/apache/hadoop/hive/conf/HiveConf.java
+@@ -266,7 +266,7 @@
+     METASTORECONNECTURLKEY("javax.jdo.option.ConnectionURL",
+         "jdbc:derby:;databaseName=metastore_db;create=true"),
+     // Number of attempts to retry connecting after there is a JDO datastore err
+-    METASTOREATTEMPTS("hive.metastore.ds.retry.attempts", 1),
++    METASTOREATTEMPTS("hive.metastore.ds.retry.attempts", 0),
+     // Number of miliseconds to wait between attepting
+     METASTOREINTERVAL("hive.metastore.ds.retry.interval", 1000),
+     // Whether to force reloading of the metastore configuration (including
+-- 
+1.7.0.4
+

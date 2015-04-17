@@ -1,0 +1,417 @@
+From 14f028c69f065c3411a2cb9a316ebb618e8b23af Mon Sep 17 00:00:00 2001
+From: Brock Noland <brock@cloudera.com>
+Date: Tue, 13 Aug 2013 08:17:51 -0500
+Subject: [PATCH 113/375] CDH-13524 - CDH-9850 HS2: Obtain and correctly populate client IPaddress in HS2
+
+---
+ ql/src/java/org/apache/hadoop/hive/ql/Driver.java  |   11 +++++++-
+ .../apache/hadoop/hive/ql/hooks/HookContext.java   |   11 ++++++-
+ .../apache/hive/service/auth/HiveAuthFactory.java  |    4 +++
+ .../org/apache/hive/service/cli/CLIService.java    |   29 ++++++++++++++++++++
+ .../hive/service/cli/operation/SQLOperation.java   |    2 +-
+ .../hive/service/cli/session/HiveSession.java      |    5 +++
+ .../hive/service/cli/session/HiveSessionImpl.java  |   14 +++++++++-
+ .../cli/session/HiveSessionImplwithUGI.java        |    4 +-
+ .../hive/service/cli/session/SessionManager.java   |   10 +++---
+ .../hive/service/cli/thrift/ThriftCLIService.java  |   13 +++++++++
+ 10 files changed, 91 insertions(+), 12 deletions(-)
+
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/Driver.java b/src/ql/src/java/org/apache/hadoop/hive/ql/Driver.java
+index d303292..b850eb7 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/Driver.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/Driver.java
+@@ -139,6 +139,9 @@
+   private int maxthreads;
+   private static final int SLEEP_TIME = 2000;
+   protected int tryCount = Integer.MAX_VALUE;
++  // This value is set only if the operation is launched through HiveServer2 and the underlying
++  // transport is derived from TSocket
++  private String ipAddress;
+ 
+   private String userName;
+ 
+@@ -343,6 +346,12 @@ public Driver() {
+     }
+   }
+ 
++  public Driver(HiveConf conf, String userName, String ipAddress) {
++    this.conf = conf;
++    this.userName = userName;
++    this.ipAddress = ipAddress;
++  }
++
+   /**
+    * Compile a new query. Any currently-planned query associated with this Driver is discarded.
+    *
+@@ -1155,7 +1164,7 @@ public int execute() throws CommandNeedRetryException {
+       }
+       resStream = null;
+ 
+-      HookContext hookContext = new HookContext(plan, conf, ctx.getPathToCS());
++      HookContext hookContext = new HookContext(plan, conf, ctx.getPathToCS(), ipAddress);
+       hookContext.setHookType(HookContext.HookType.PRE_EXEC_HOOK);
+ 
+       for (Hook peh : getHooks(HiveConf.ConfVars.PREEXECHOOKS)) {
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/hooks/HookContext.java b/src/ql/src/java/org/apache/hadoop/hive/ql/hooks/HookContext.java
+index b11cb86..35fbd85 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/hooks/HookContext.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/hooks/HookContext.java
+@@ -51,13 +51,15 @@
+   private UserGroupInformation ugi;
+   private HookType hookType;
+   final private Map<String, ContentSummary> inputPathToContentSummary;
++  private final String ipAddress;
+ 
+   public HookContext(QueryPlan queryPlan, HiveConf conf) throws Exception{
+-    this(queryPlan, conf, new ConcurrentHashMap<String, ContentSummary>());
++    this(queryPlan, conf, new ConcurrentHashMap<String, ContentSummary>(), null);
+   }
+ 
+   public HookContext(QueryPlan queryPlan, HiveConf conf,
+-      Map<String, ContentSummary> inputPathToContentSummary) throws Exception {
++      Map<String, ContentSummary> inputPathToContentSummary,
++      String ipAddress) throws Exception {
+     this.queryPlan = queryPlan;
+     this.conf = conf;
+     this.inputPathToContentSummary = inputPathToContentSummary;
+@@ -69,6 +71,7 @@ public HookContext(QueryPlan queryPlan, HiveConf conf,
+     if(SessionState.get() != null){
+       linfo = SessionState.get().getLineageState().getLineageInfo();
+     }
++    this.ipAddress = ipAddress;
+   }
+ 
+   public QueryPlan getQueryPlan() {
+@@ -143,6 +146,10 @@ public void setHookType(HookType hookType) {
+     this.hookType = hookType;
+   }
+ 
++  public String getIpAddress() {
++    return this.ipAddress;
++  }
++
+   public String getOperationName() {
+     return SessionState.get().getHiveOperation().name();
+   }
+diff --git a/src/service/src/java/org/apache/hive/service/auth/HiveAuthFactory.java b/src/service/src/java/org/apache/hive/service/auth/HiveAuthFactory.java
+index 5a66a6c..e7930d9 100644
+--- a/src/service/src/java/org/apache/hive/service/auth/HiveAuthFactory.java
++++ b/src/service/src/java/org/apache/hive/service/auth/HiveAuthFactory.java
+@@ -139,6 +139,10 @@ public String getRemoteUser() {
+     }
+   }
+ 
++  public String getIpAddress() {
++    return saslServer != null ? saslServer.getRemoteAddress().toString() : null;
++  }
++
+   /* perform kerberos login using the hadoop shim API if the configuration is available */
+   public static void loginFromKeytab(HiveConf hiveConf) throws IOException {
+     String principal = hiveConf.getVar(ConfVars.HIVE_SERVER2_KERBEROS_PRINCIPAL);
+diff --git a/src/service/src/java/org/apache/hive/service/cli/CLIService.java b/src/service/src/java/org/apache/hive/service/cli/CLIService.java
+index 1a7f338..2c1216a 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/CLIService.java
++++ b/src/service/src/java/org/apache/hive/service/cli/CLIService.java
+@@ -35,6 +35,7 @@
+ import org.apache.hive.service.CompositeService;
+ import org.apache.hive.service.ServiceException;
+ import org.apache.hive.service.auth.HiveAuthFactory;
++import org.apache.hive.service.cli.session.HiveSession;
+ import org.apache.hive.service.cli.session.SessionManager;
+ 
+ /**
+@@ -103,6 +104,7 @@ public SessionHandle openSession(String username, String password, Map<String, S
+       throws HiveSQLException {
+     SessionHandle sessionHandle = sessionManager.openSession(username, password, configuration, false, null);
+     LOG.info(sessionHandle + ": openSession()");
++    sessionManager.clearIpAddress();
+     return sessionHandle;
+   }
+ 
+@@ -126,6 +128,7 @@ public void closeSession(SessionHandle sessionHandle)
+       throws HiveSQLException {
+     sessionManager.closeSession(sessionHandle);
+     LOG.info(sessionHandle + ": closeSession()");
++    sessionManager.clearIpAddress();
+   }
+ 
+   /* (non-Javadoc)
+@@ -136,6 +139,7 @@ public GetInfoValue getInfo(SessionHandle sessionHandle, GetInfoType getInfoType
+       throws HiveSQLException {
+     GetInfoValue infoValue = sessionManager.getSession(sessionHandle).getInfo(getInfoType);
+     LOG.info(sessionHandle + ": getInfo()");
++    sessionManager.clearIpAddress();
+     return infoValue;
+   }
+ 
+@@ -150,6 +154,7 @@ public OperationHandle executeStatement(SessionHandle sessionHandle, String stat
+     OperationHandle opHandle = sessionManager.getSession(sessionHandle)
+         .executeStatement(statement, confOverlay);
+     LOG.info(sessionHandle + ": executeStatement()");
++    sessionManager.clearIpAddress();
+     return opHandle;
+   }
+ 
+@@ -175,6 +180,7 @@ public OperationHandle getTypeInfo(SessionHandle sessionHandle)
+       throws HiveSQLException {
+     OperationHandle opHandle = sessionManager.getSession(sessionHandle).getTypeInfo();
+     LOG.info(sessionHandle + ": getTypeInfo()");
++    sessionManager.clearIpAddress();
+     return opHandle;
+   }
+ 
+@@ -186,6 +192,7 @@ public OperationHandle getCatalogs(SessionHandle sessionHandle)
+       throws HiveSQLException {
+     OperationHandle opHandle = sessionManager.getSession(sessionHandle).getCatalogs();
+     LOG.info(sessionHandle + ": getCatalogs()");
++    sessionManager.clearIpAddress();
+     return opHandle;
+   }
+ 
+@@ -199,6 +206,7 @@ public OperationHandle getSchemas(SessionHandle sessionHandle,
+     OperationHandle opHandle = sessionManager.getSession(sessionHandle)
+         .getSchemas(catalogName, schemaName);
+     LOG.info(sessionHandle + ": getSchemas()");
++    sessionManager.clearIpAddress();
+     return opHandle;
+   }
+ 
+@@ -212,6 +220,7 @@ public OperationHandle getTables(SessionHandle sessionHandle,
+     OperationHandle opHandle = sessionManager
+         .getSession(sessionHandle).getTables(catalogName, schemaName, tableName, tableTypes);
+     LOG.info(sessionHandle + ": getTables()");
++    sessionManager.clearIpAddress();
+     return opHandle;
+   }
+ 
+@@ -223,6 +232,7 @@ public OperationHandle getTableTypes(SessionHandle sessionHandle)
+       throws HiveSQLException {
+     OperationHandle opHandle = sessionManager.getSession(sessionHandle).getTableTypes();
+     LOG.info(sessionHandle + ": getTableTypes()");
++    sessionManager.clearIpAddress();
+     return opHandle;
+   }
+ 
+@@ -236,6 +246,7 @@ public OperationHandle getColumns(SessionHandle sessionHandle,
+     OperationHandle opHandle = sessionManager.getSession(sessionHandle)
+         .getColumns(catalogName, schemaName, tableName, columnName);
+     LOG.info(sessionHandle + ": getColumns()");
++    sessionManager.clearIpAddress();
+     return opHandle;
+   }
+ 
+@@ -249,6 +260,7 @@ public OperationHandle getFunctions(SessionHandle sessionHandle,
+     OperationHandle opHandle = sessionManager.getSession(sessionHandle)
+         .getFunctions(catalogName, schemaName, functionName);
+     LOG.info(sessionHandle + ": getFunctions()");
++    sessionManager.clearIpAddress();
+     return opHandle;
+   }
+ 
+@@ -260,6 +272,7 @@ public OperationState getOperationStatus(OperationHandle opHandle)
+       throws HiveSQLException {
+     OperationState opState = sessionManager.getOperationManager().getOperationState(opHandle);
+     LOG.info(opHandle + ": getOperationStatus()");
++    sessionManager.clearIpAddress();
+     return opState;
+   }
+ 
+@@ -272,6 +285,7 @@ public void cancelOperation(OperationHandle opHandle)
+     sessionManager.getOperationManager().getOperation(opHandle).
+         getParentSession().cancelOperation(opHandle);
+     LOG.info(opHandle + ": cancelOperation()");
++    sessionManager.clearIpAddress();
+   }
+ 
+   /* (non-Javadoc)
+@@ -283,6 +297,7 @@ public void closeOperation(OperationHandle opHandle)
+     sessionManager.getOperationManager().getOperation(opHandle).
+         getParentSession().closeOperation(opHandle);
+     LOG.info(opHandle + ": closeOperation");
++    sessionManager.clearIpAddress();
+   }
+ 
+   /* (non-Javadoc)
+@@ -294,6 +309,7 @@ public TableSchema getResultSetMetadata(OperationHandle opHandle)
+     TableSchema tableSchema = sessionManager.getOperationManager().getOperation(opHandle).
+         getParentSession().getResultSetMetadata(opHandle);
+     LOG.info(opHandle + ": getResultSetMetadata()");
++    sessionManager.clearIpAddress();
+     return tableSchema;
+   }
+ 
+@@ -306,6 +322,7 @@ public RowSet fetchResults(OperationHandle opHandle, FetchOrientation orientatio
+     RowSet rowSet = sessionManager.getOperationManager().getOperation(opHandle).
+         getParentSession().fetchResults(opHandle, orientation, maxRows);
+     LOG.info(opHandle + ": fetchResults()");
++    sessionManager.clearIpAddress();
+     return rowSet;
+   }
+ 
+@@ -318,9 +335,21 @@ public RowSet fetchResults(OperationHandle opHandle)
+     RowSet rowSet = sessionManager.getOperationManager().getOperation(opHandle).
+         getParentSession().fetchResults(opHandle);
+     LOG.info(opHandle + ": fetchResults()");
++    sessionManager.clearIpAddress();
+     return rowSet;
+   }
+ 
++  public void setIpAddress(SessionHandle sessionHandle, String ipAddress) {
++    try {
++      HiveSession session = sessionManager.getSession(sessionHandle);
++      session.setIpAddress(ipAddress);
++    } catch (HiveSQLException e) {
++      // This should not happen
++      LOG.error("Unable to get session to set ipAddress", e);
++    }
++  }
++
++
+   // obtain delegation token for the give user from metastore
+   public synchronized String getDelegationTokenFromMetaStore(String owner)
+       throws HiveSQLException, UnsupportedOperationException, LoginException, IOException {
+diff --git a/src/service/src/java/org/apache/hive/service/cli/operation/SQLOperation.java b/src/service/src/java/org/apache/hive/service/cli/operation/SQLOperation.java
+index f6adf92..492eaf6 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/operation/SQLOperation.java
++++ b/src/service/src/java/org/apache/hive/service/cli/operation/SQLOperation.java
+@@ -91,7 +91,7 @@ private void runInternal() throws HiveSQLException {
+     String SQLState = null;
+ 
+     try {
+-      driver = new Driver(getParentSession().getHiveConf(), getParentSession().getUserName());
++      driver = new Driver(getParentSession().getHiveConf(), getParentSession().getUserName(), getParentSession().getIpAddress());
+       // In Hive server mode, we are not able to retry in the FetchTask
+       // case, when calling fetch queries since execute() has returned.
+       // For now, we disable the test attempts.
+diff --git a/src/service/src/java/org/apache/hive/service/cli/session/HiveSession.java b/src/service/src/java/org/apache/hive/service/cli/session/HiveSession.java
+index 00058cc..a261f44 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/session/HiveSession.java
++++ b/src/service/src/java/org/apache/hive/service/cli/session/HiveSession.java
+@@ -179,4 +179,9 @@ public RowSet fetchResults(OperationHandle opHandle, FetchOrientation orientatio
+   public String getUserName();
+ 
+   public void setUserName(String userName);
++
++  public String getIpAddress();
++
++  public void setIpAddress(String ipAddress);
++
+ }
+diff --git a/src/service/src/java/org/apache/hive/service/cli/session/HiveSessionImpl.java b/src/service/src/java/org/apache/hive/service/cli/session/HiveSessionImpl.java
+index 5b2a30c..c6921f7 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/session/HiveSessionImpl.java
++++ b/src/service/src/java/org/apache/hive/service/cli/session/HiveSessionImpl.java
+@@ -65,6 +65,7 @@
+   private final Map<String, String> sessionConf = new HashMap<String, String>();
+   private final HiveConf hiveConf = new HiveConf();
+   private final SessionState sessionState;
++  private String ipAddress;
+ 
+   private static final String FETCH_WORK_SERDE_CLASS =
+       "org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe";
+@@ -76,9 +77,10 @@
+   private IMetaStoreClient metastoreClient = null;
+   private final Set<OperationHandle> opHandleSet = new HashSet<OperationHandle>();
+ 
+-  public HiveSessionImpl(String username, String password, Map<String, String> sessionConf) {
++  public HiveSessionImpl(String username, String password, Map<String, String> sessionConf, String ipAddress) {
+     this.username = username;
+     this.password = password;
++    this.ipAddress = ipAddress;
+ 
+     if (sessionConf != null) {
+       for (Map.Entry<String, String> entry : sessionConf.entrySet()) {
+@@ -434,4 +436,14 @@ public RowSet fetchResults(OperationHandle opHandle) throws HiveSQLException {
+   protected HiveSession getSession() {
+     return this;
+   }
++
++  @Override
++  public String getIpAddress() {
++    return ipAddress;
++  }
++
++  @Override
++  public void setIpAddress(String ipAddress) {
++    this.ipAddress = ipAddress;
++  }
+ }
+diff --git a/src/service/src/java/org/apache/hive/service/cli/session/HiveSessionImplwithUGI.java b/src/service/src/java/org/apache/hive/service/cli/session/HiveSessionImplwithUGI.java
+index ae7bb6b..13e30fc 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/session/HiveSessionImplwithUGI.java
++++ b/src/service/src/java/org/apache/hive/service/cli/session/HiveSessionImplwithUGI.java
+@@ -43,8 +43,8 @@
+   private HiveSession proxySession = null;
+ 
+   public HiveSessionImplwithUGI(String username, String password, Map<String, String> sessionConf,
+-      String delegationToken) throws HiveSQLException {
+-    super(username, password, sessionConf);
++      String ipAddress, String delegationToken) throws HiveSQLException {
++    super(username, password, sessionConf, ipAddress);
+     setSessionUGI(username);
+     setUserPath(username);
+     setDelegationToken(delegationToken);
+diff --git a/src/service/src/java/org/apache/hive/service/cli/session/SessionManager.java b/src/service/src/java/org/apache/hive/service/cli/session/SessionManager.java
+index f392d62..47c09da 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/session/SessionManager.java
++++ b/src/service/src/java/org/apache/hive/service/cli/session/SessionManager.java
+@@ -98,12 +98,12 @@ public SessionHandle openSession(String username, String password, Map<String, S
+     }
+     HiveSession session;
+     if (withImpersonation) {
+-      HiveSessionImplwithUGI hiveSessionUgi = new HiveSessionImplwithUGI(username, password,
+-        sessionConf, delegationToken);
+-      session = HiveSessionProxy.getProxy(hiveSessionUgi, hiveSessionUgi.getSessionUgi());
++      HiveSessionImplwithUGI hiveSessionUgi = new HiveSessionImplwithUGI(username, password, sessionConf,
++          threadLocalIpAddress.get(), delegationToken);
++      session = (HiveSession)HiveSessionProxy.getProxy(hiveSessionUgi, hiveSessionUgi.getSessionUgi());
+       hiveSessionUgi.setProxySession(session);
+     } else {
+-      session = new HiveSessionImpl(username, password, sessionConf);
++      session = new HiveSessionImpl(username, password, sessionConf, threadLocalIpAddress.get());
+     }
+     session.setSessionManager(this);
+     session.setOperationManager(operationManager);
+@@ -156,7 +156,7 @@ public static void setIpAddress(String ipAddress) {
+     threadLocalIpAddress.set(ipAddress);
+   }
+ 
+-  private void clearIpAddress() {
++  public static void clearIpAddress() {
+     threadLocalIpAddress.remove();
+   }
+ 
+diff --git a/src/service/src/java/org/apache/hive/service/cli/thrift/ThriftCLIService.java b/src/service/src/java/org/apache/hive/service/cli/thrift/ThriftCLIService.java
+index 857e627..c31b2aa 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/thrift/ThriftCLIService.java
++++ b/src/service/src/java/org/apache/hive/service/cli/thrift/ThriftCLIService.java
+@@ -128,6 +128,13 @@ public TOpenSessionResp OpenSession(TOpenSessionReq req) throws TException {
+     return resp;
+   }
+ 
++  private String getIpAddress() {
++    if(hiveAuthFactory != null) {
++      return hiveAuthFactory.getIpAddress();
++    }
++    return null;
++  }
++
+   private String getUserName(TOpenSessionReq req) {
+     if (hiveAuthFactory != null
+         && hiveAuthFactory.getRemoteUser() != null) {
+@@ -163,6 +170,12 @@ SessionHandle getSessionHandle(TOpenSessionReq req)
+       sessionHandle = cliService.openSession(userName, req.getPassword(),
+           req.getConfiguration());
+     }
++    // Cannot break the b/w compatibility of API to accept ipAddress as another parameter in
++    // openSession call. Hence making this call
++    String ipAddress = getIpAddress();
++    if (ipAddress != null) {
++      cliService.setIpAddress(sessionHandle, ipAddress);
++    }
+     return sessionHandle;
+   }
+ 
+-- 
+1.7.0.4
+

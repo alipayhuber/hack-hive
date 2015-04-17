@@ -1,0 +1,39 @@
+From 2650d6e78d26eebaf56e6e03a917677eabdd5f12 Mon Sep 17 00:00:00 2001
+From: Ashutosh Chauhan <hashutosh@apache.org>
+Date: Wed, 18 Sep 2013 02:29:35 +0000
+Subject: [PATCH 038/375] HIVE-5300 : MapredLocalTask logs success message twice (Navis via Ashutosh Chauhan)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1524277 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../hive/ql/exec/mr/HadoopJobExecHelper.java       |    2 +-
+ .../hadoop/hive/ql/exec/mr/MapredLocalTask.java    |    1 -
+ 2 files changed, 1 insertions(+), 2 deletions(-)
+
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/mr/HadoopJobExecHelper.java b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/mr/HadoopJobExecHelper.java
+index b0e6ef3..0a2f976 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/mr/HadoopJobExecHelper.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/mr/HadoopJobExecHelper.java
+@@ -503,7 +503,7 @@ public int progressLocal(Process runningJob, String taskId) {
+       }
+     } else {
+       console.printInfo("Execution completed successfully");
+-      console.printInfo("Mapred Local Task Succeeded . Convert the Join into MapJoin");
++      console.printInfo("MapredLocal task succeeded");
+     }
+     return exitVal;
+   }
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/mr/MapredLocalTask.java b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/mr/MapredLocalTask.java
+index 96f6a8c..0f29a0e 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/mr/MapredLocalTask.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/mr/MapredLocalTask.java
+@@ -270,7 +270,6 @@ public int execute(DriverContext driverContext) {
+         }
+       } else {
+         LOG.info("Execution completed successfully");
+-        console.printInfo("Mapred Local Task Succeeded . Convert the Join into MapJoin");
+       }
+ 
+       return exitVal;
+-- 
+1.7.0.4
+

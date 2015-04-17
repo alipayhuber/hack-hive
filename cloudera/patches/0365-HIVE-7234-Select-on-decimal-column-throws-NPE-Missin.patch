@@ -1,0 +1,23 @@
+From d97e0c53e21f5858edeaf491f4081337a62ce33c Mon Sep 17 00:00:00 2001
+From: Navis Ryu <navis@apache.org>
+Date: Mon, 23 Jun 2014 04:14:26 +0000
+Subject: [PATCH 365/375]  HIVE-7234: Select on decimal column throws NPE (Missing files)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1604690 13f79535-47bb-0310-9956-ffa450edef68
+---
+ data/files/decimal_10_0.txt |    2 ++
+ 1 files changed, 2 insertions(+), 0 deletions(-)
+ create mode 100644 data/files/decimal_10_0.txt
+
+diff --git a/src/data/files/decimal_10_0.txt b/src/data/files/decimal_10_0.txt
+new file mode 100644
+index 0000000..121e88f
+--- /dev/null
++++ b/src/data/files/decimal_10_0.txt
+@@ -0,0 +1,2 @@
++999999999.999
++9999999999.999
+\ No newline at end of file
+-- 
+1.7.0.4
+

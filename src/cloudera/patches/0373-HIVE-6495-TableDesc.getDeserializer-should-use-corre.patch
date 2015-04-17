@@ -1,0 +1,35 @@
+From 74d87f451857067b6fd98593c41ed839f677a65a Mon Sep 17 00:00:00 2001
+From: Xuefu Zhang <xzhang@xzlt.(none)>
+Date: Fri, 25 Apr 2014 10:20:31 -0700
+Subject: [PATCH 373/375]     HIVE-6495 : TableDesc.getDeserializer() should use correct classloader when calling Class.forName() (Jason Dere via Ashutosh Chauhan)
+
+    git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1576833 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../org/apache/hadoop/hive/ql/plan/TableDesc.java  |    4 +++-
+ 1 files changed, 3 insertions(+), 1 deletions(-)
+
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/plan/TableDesc.java b/src/ql/src/java/org/apache/hadoop/hive/ql/plan/TableDesc.java
+index f48a800..25b1cb7 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/plan/TableDesc.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/plan/TableDesc.java
+@@ -24,6 +24,7 @@
+ import java.util.Map;
+ import java.util.Properties;
+ 
++import org.apache.hadoop.hive.common.JavaUtils;
+ import org.apache.hadoop.hive.metastore.api.hive_metastoreConstants;
+ import org.apache.hadoop.hive.ql.io.HiveFileFormatUtils;
+ import org.apache.hadoop.hive.ql.io.HiveOutputFormat;
+@@ -63,7 +64,8 @@ public TableDesc(
+ 
+   public Class<? extends Deserializer> getDeserializerClass() {
+     try {
+-      return (Class<? extends Deserializer>) Class.forName(getSerdeClassName());
++      return (Class<? extends Deserializer>) Class.forName(
++          getSerdeClassName(), true, JavaUtils.getClassLoader());
+     } catch (ClassNotFoundException e) {
+       throw new RuntimeException(e);
+     }
+-- 
+1.7.0.4
+

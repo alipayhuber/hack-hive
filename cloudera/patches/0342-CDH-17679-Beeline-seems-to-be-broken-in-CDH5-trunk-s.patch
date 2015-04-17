@@ -1,0 +1,25 @@
+From f3682c00758955ce9b7d1217d2192568c5acc1d6 Mon Sep 17 00:00:00 2001
+From: xzhang <xzhang@xzdt.(none)>
+Date: Tue, 11 Mar 2014 15:06:53 -0700
+Subject: [PATCH 342/375] CDH-17679: Beeline seems to be broken in CDH5 trunk - secure clusters only
+
+---
+ bin/hive |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+
+diff --git a/src/bin/hive b/src/bin/hive
+index 0035b59..4579b07 100755
+--- a/src/bin/hive
++++ b/src/bin/hive
+@@ -197,7 +197,7 @@ if [ "$hadoop_major_ver" -lt "1" -a  "$hadoop_minor_ver$hadoop_patch_ver" -lt "2
+ fi
+ 
+ if [ "${AUX_PARAM}" != "" ]; then
+-  HIVE_OPTS="$HIVE_OPTS --hiveconf hive.aux.jars.path=${AUX_PARAM}"
++  HIVE_OPTS="$HIVE_OPTS -hiveconf hive.aux.jars.path=${AUX_PARAM}"
+   AUX_JARS_CMD_LINE="-libjars ${AUX_PARAM}"
+ fi
+ 
+-- 
+1.7.0.4
+

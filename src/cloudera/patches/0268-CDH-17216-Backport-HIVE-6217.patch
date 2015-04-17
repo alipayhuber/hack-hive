@@ -1,0 +1,115 @@
+From ca436b8ea4147ba9336bcfcd9d911919994c9d59 Mon Sep 17 00:00:00 2001
+From: xzhang <xzhang@xzdt.(none)>
+Date: Tue, 4 Feb 2014 20:44:35 -0800
+Subject: [PATCH 268/375] CDH-17216: Backport HIVE-6217
+
+---
+ .../apache/hive/beeline/DatabaseConnection.java    |   38 ++++----------------
+ .../java/org/apache/hive/jdbc/HiveConnection.java  |   11 ++++++
+ 2 files changed, 18 insertions(+), 31 deletions(-)
+
+diff --git a/src/beeline/src/java/org/apache/hive/beeline/DatabaseConnection.java b/src/beeline/src/java/org/apache/hive/beeline/DatabaseConnection.java
+index d5736ce..9fdc238 100644
+--- a/src/beeline/src/java/org/apache/hive/beeline/DatabaseConnection.java
++++ b/src/beeline/src/java/org/apache/hive/beeline/DatabaseConnection.java
+@@ -28,7 +28,6 @@
+ import java.sql.DriverManager;
+ import java.sql.ResultSet;
+ import java.sql.SQLException;
+-import java.util.Iterator;
+ import java.util.LinkedList;
+ import java.util.List;
+ import java.util.Properties;
+@@ -40,6 +39,8 @@
+ import jline.Completor;
+ 
+ class DatabaseConnection {
++  private static final String HIVE_VAR_PREFIX = "hivevar:";
++
+   private final BeeLine beeLine;
+   private Connection connection;
+   private DatabaseMetaData meta;
+@@ -55,38 +56,9 @@ public DatabaseConnection(BeeLine beeLine, String driver, String url,
+     this.beeLine = beeLine;
+     this.driver = driver;
+     this.props = props;
+-    this.url = appendHiveVariables(beeLine, url);
++    this.url = url;
+   }
+ 
+-/**
+- * Append hive variables specified on the command line to the connection url
+- * (after #). They will be set later on the session on the server side.
+- */
+-  private static String appendHiveVariables(BeeLine beeLine, String url) {
+-    StringBuilder sb = new StringBuilder( url );
+-    Map<String, String> hiveVars = beeLine.getOpts().getHiveVariables();
+-    if (hiveVars.size() > 0) {
+-      if (url.indexOf("#") == -1) {
+-        sb.append("#");
+-      } else {
+-        sb.append(";");
+-      }
+-      Set<Map.Entry<String, String>> vars = hiveVars.entrySet();
+-      Iterator<Map.Entry<String, String>> it = vars.iterator();
+-      while (it.hasNext()) {
+-        Map.Entry<String, String> var = it.next();
+-        sb.append(var.getKey());
+-        sb.append("=");
+-        sb.append(var.getValue());
+-        if (it.hasNext()) {
+-          sb.append(";");
+-        }
+-      }
+-    }
+-    return sb.toString();
+-  }
+-
+-
+   @Override
+   public String toString() {
+     return getUrl() + "";
+@@ -156,6 +128,10 @@ boolean connect() throws SQLException {
+       return beeLine.error(e);
+     }
+ 
++    Map<String, String> hiveVars = beeLine.getOpts().getHiveVariables();
++    for (Map.Entry<String, String> var : hiveVars.entrySet()) {
++      props.put(HIVE_VAR_PREFIX + var.getKey(), var.getValue());
++    }
+     setConnection(DriverManager.getConnection(getUrl(), props));
+     setDatabaseMetaData(getConnection().getMetaData());
+ 
+diff --git a/src/jdbc/src/java/org/apache/hive/jdbc/HiveConnection.java b/src/jdbc/src/java/org/apache/hive/jdbc/HiveConnection.java
+index ef9b4e2..ac641b0 100644
+--- a/src/jdbc/src/java/org/apache/hive/jdbc/HiveConnection.java
++++ b/src/jdbc/src/java/org/apache/hive/jdbc/HiveConnection.java
+@@ -93,6 +93,7 @@
+   private static final String HIVE_USE_SSL = "ssl";
+   private static final String HIVE_SSL_TRUST_STORE = "sslTrustStore";
+   private static final String HIVE_SSL_TRUST_STORE_PASSWORD = "trustStorePassword";
++  private static final String HIVE_VAR_PREFIX = "hivevar:";
+ 
+   private final String jdbcURI;
+   private final String host;
+@@ -129,7 +130,17 @@ public HiveConnection(String uri, Properties info) throws SQLException {
+     port = connParams.getPort();
+     sessConfMap = connParams.getSessionVars();
+     hiveConfMap = connParams.getHiveConfs();
++
+     hiveVarMap = connParams.getHiveVars();
++    for (Map.Entry<Object, Object> kv : info.entrySet()) {
++      if ((kv.getKey() instanceof String)) {
++        String key = (String) kv.getKey();
++        if (key.startsWith(HIVE_VAR_PREFIX)) {
++          hiveVarMap.put(key.substring(HIVE_VAR_PREFIX.length()), info.getProperty(key));
++        }
++      }
++    }
++
+     isEmbeddedMode = connParams.isEmbeddedMode();
+ 
+     if (isEmbeddedMode) {
+-- 
+1.7.0.4
+

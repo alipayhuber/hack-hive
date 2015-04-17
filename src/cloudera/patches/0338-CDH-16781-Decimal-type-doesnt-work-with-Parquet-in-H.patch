@@ -1,0 +1,1010 @@
+From 73d45566c643866ab7f8d17a1e01a3d528116b28 Mon Sep 17 00:00:00 2001
+From: xzhang <xzhang@xzdt.(none)>
+Date: Thu, 15 May 2014 11:26:08 -0700
+Subject: [PATCH 338/375] CDH-16781: Decimal type doesnt work with Parquet in Hive (for testing only)
+
+---
+ data/files/dec.parq                                |  Bin 0 -> 335 bytes
+ data/files/dec_comp.txt                            |    2 +
+ .../hive/ql/io/parquet/convert/ETypeConverter.java |  127 +++++++++-----
+ .../ql/io/parquet/convert/HiveGroupConverter.java  |    3 +-
+ .../ql/io/parquet/convert/HiveSchemaConverter.java |    9 +-
+ .../serde/ArrayWritableObjectInspector.java        |    3 +
+ .../hive/ql/io/parquet/serde/ParquetHiveSerDe.java |    5 +
+ .../ql/io/parquet/writable/BigDecimalWritable.java |  143 --------------
+ .../ql/io/parquet/write/DataWritableWriter.java    |    7 +-
+ .../ql/io/parquet/TestHiveSchemaConverter.java     |   40 ++++-
+ .../test/queries/clientpositive/parquet_decimal.q  |   35 ++++
+ .../test/queries/clientpositive/parquet_decimal1.q |   22 +++
+ .../results/clientpositive/parquet_decimal.q.out   |  197 ++++++++++++++++++++
+ .../results/clientpositive/parquet_decimal1.q.out  |   91 +++++++++
+ 14 files changed, 491 insertions(+), 193 deletions(-)
+ create mode 100644 data/files/dec.parq
+ create mode 100644 data/files/dec_comp.txt
+ delete mode 100644 ql/src/java/org/apache/hadoop/hive/ql/io/parquet/writable/BigDecimalWritable.java
+ create mode 100644 ql/src/test/queries/clientpositive/parquet_decimal.q
+ create mode 100644 ql/src/test/queries/clientpositive/parquet_decimal1.q
+ create mode 100644 ql/src/test/results/clientpositive/parquet_decimal.q.out
+ create mode 100644 ql/src/test/results/clientpositive/parquet_decimal1.q.out
+
+diff --git a/src/data/files/dec.parq b/src/data/files/dec.parq
+new file mode 100644
+index 0000000000000000000000000000000000000000..f580630dac8ecd5b1f2160d1ef3073e50168ff5f
+GIT binary patch
+literal 335
+zcmXw#O-sW-5Qb;-QDTiJGocGX>mk8ITPQ^@dZ~i+;72gId5|S6w6sYyH4*=TKcROo
+z9`)o^@Z`U8rYbDYEIc#AyBm+MhiGAp@j1590x$s}EpxiTiO%L+lcId&dZDT(o9gMJ
+z&gKXhV9-O4rd#L$7-T$Q+Rtb11_0>>8`gl%zrOk4rkz73elf*6(@2@tH*?Dt#O<{_
+zVw$^X$m7Z8bk^wGWj58hqMYc4M#m~tu0z`8hS0GawWxJSkH9wgo(yC!asqVafn&Ag
+zZ!ePYUj?0r5=U=>edvJvn_l~s@K=Hyfd6Uu9_;Vksp`Jg5B<FAHo98Q%Az|Qj0U5A
+RaygEZ$yEw36f~x<`~e`LHktqc
+
+literal 0
+HcmV?d00001
+
+diff --git a/src/data/files/dec_comp.txt b/src/data/files/dec_comp.txt
+new file mode 100644
+index 0000000..008ebfc
+--- /dev/null
++++ b/src/data/files/dec_comp.txt
+@@ -0,0 +1,2 @@
++3.14,6.28,7.30|k1:92.77,k2:29.39|5,9.03
++12.4,1.33,0.34|k2:2.79,k4:29.09|11,0.0314
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/io/parquet/convert/ETypeConverter.java b/src/ql/src/java/org/apache/hadoop/hive/ql/io/parquet/convert/ETypeConverter.java
+index f7b9668..4da0d30 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/io/parquet/convert/ETypeConverter.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/io/parquet/convert/ETypeConverter.java
+@@ -15,18 +15,24 @@
+ 
+ import java.math.BigDecimal;
+ 
++import java.util.ArrayList;
++
+ import org.apache.hadoop.hive.ql.io.parquet.writable.BinaryWritable;
+-import org.apache.hadoop.hive.ql.io.parquet.writable.BinaryWritable.DicBinaryWritable;
+ import org.apache.hadoop.hive.serde2.io.DoubleWritable;
++import org.apache.hadoop.hive.serde2.io.HiveDecimalWritable;
+ import org.apache.hadoop.io.BooleanWritable;
+ import org.apache.hadoop.io.FloatWritable;
+ import org.apache.hadoop.io.IntWritable;
+ import org.apache.hadoop.io.LongWritable;
+ 
++import org.apache.hadoop.io.Text;
++import org.apache.hadoop.io.Writable;
+ import parquet.column.Dictionary;
+ import parquet.io.api.Binary;
+ import parquet.io.api.Converter;
+ import parquet.io.api.PrimitiveConverter;
++import parquet.schema.OriginalType;
++import parquet.schema.PrimitiveType;
+ 
+ /**
+  *
+@@ -37,7 +43,7 @@
+ 
+   EDOUBLE_CONVERTER(Double.TYPE) {
+     @Override
+-    Converter getConverter(final Class<?> type, final int index, final HiveGroupConverter parent) {
++    Converter getConverter(final PrimitiveType type, final int index, final HiveGroupConverter parent) {
+       return new PrimitiveConverter() {
+         @Override
+         public void addDouble(final double value) {
+@@ -48,7 +54,7 @@ public void addDouble(final double value) {
+   },
+   EBOOLEAN_CONVERTER(Boolean.TYPE) {
+     @Override
+-    Converter getConverter(final Class<?> type, final int index, final HiveGroupConverter parent) {
++    Converter getConverter(final PrimitiveType type, final int index, final HiveGroupConverter parent) {
+       return new PrimitiveConverter() {
+         @Override
+         public void addBoolean(final boolean value) {
+@@ -59,7 +65,7 @@ public void addBoolean(final boolean value) {
+   },
+   EFLOAT_CONVERTER(Float.TYPE) {
+     @Override
+-    Converter getConverter(final Class<?> type, final int index, final HiveGroupConverter parent) {
++    Converter getConverter(final PrimitiveType type, final int index, final HiveGroupConverter parent) {
+       return new PrimitiveConverter() {
+         @Override
+         public void addFloat(final float value) {
+@@ -70,7 +76,7 @@ public void addFloat(final float value) {
+   },
+   EINT32_CONVERTER(Integer.TYPE) {
+     @Override
+-    Converter getConverter(final Class<?> type, final int index, final HiveGroupConverter parent) {
++    Converter getConverter(final PrimitiveType type, final int index, final HiveGroupConverter parent) {
+       return new PrimitiveConverter() {
+         @Override
+         public void addInt(final int value) {
+@@ -81,7 +87,7 @@ public void addInt(final int value) {
+   },
+   EINT64_CONVERTER(Long.TYPE) {
+     @Override
+-    Converter getConverter(final Class<?> type, final int index, final HiveGroupConverter parent) {
++    Converter getConverter(final PrimitiveType type, final int index, final HiveGroupConverter parent) {
+       return new PrimitiveConverter() {
+         @Override
+         public void addLong(final long value) {
+@@ -90,53 +96,40 @@ public void addLong(final long value) {
+       };
+     }
+   },
+-  EINT96_CONVERTER(BigDecimal.class) {
++  EBINARY_CONVERTER(Binary.class) {
+     @Override
+-    Converter getConverter(final Class<?> type, final int index, final HiveGroupConverter parent) {
+-      return new PrimitiveConverter() {
+-        // TODO in HIVE-6367 decimal should not be treated as a double
++    Converter getConverter(final PrimitiveType type, final int index, final HiveGroupConverter parent) {
++      return new BinaryConverter<BinaryWritable>(type, parent, index) {
+         @Override
+-        public void addDouble(final double value) {
+-          parent.set(index, new DoubleWritable(value));
++        protected BinaryWritable convert(Binary binary) {
++          return new BinaryWritable(binary);
+         }
+       };
+     }
+   },
+-  EBINARY_CONVERTER(Binary.class) {
++  ESTRING_CONVERTER(String.class) {
+     @Override
+-    Converter getConverter(final Class<?> type, final int index, final HiveGroupConverter parent) {
+-      return new PrimitiveConverter() {
+-        private Binary[] dictBinary;
+-        private String[] dict;
+-
+-        @Override
+-        public boolean hasDictionarySupport() {
+-          return true;
+-        }
+-
++    Converter getConverter(final PrimitiveType type, final int index, final HiveGroupConverter parent) {
++      return new BinaryConverter<Text>(type, parent, index) {
+         @Override
+-        public void setDictionary(Dictionary dictionary) {
+-          dictBinary = new Binary[dictionary.getMaxId() + 1];
+-          dict = new String[dictionary.getMaxId() + 1];
+-          for (int i = 0; i <= dictionary.getMaxId(); i++) {
+-            Binary binary = dictionary.decodeToBinary(i);
+-            dictBinary[i] = binary;
+-            dict[i] = binary.toStringUsingUTF8();
+-          }
++        protected Text convert(Binary binary) {
++          return new Text(binary.getBytes());
+         }
+-
+-        @Override
+-        public void addValueFromDictionary(int dictionaryId) {
+-          parent.set(index, new DicBinaryWritable(dictBinary[dictionaryId],  dict[dictionaryId]));
+-        }
+-
++      };
++    }
++  },
++  EDECIMAL_CONVERTER(BigDecimal.class) {
++    @Override
++    Converter getConverter(final PrimitiveType type, final int index, final HiveGroupConverter parent) {
++      return new BinaryConverter<HiveDecimalWritable>(type, parent, index) {
+         @Override
+-        public void addBinary(Binary value) {
+-          parent.set(index, new BinaryWritable(value));
++        protected HiveDecimalWritable convert(Binary binary) {
++          return new HiveDecimalWritable(binary.getBytes(), type.getDecimalMetadata().getScale());
+         }
+       };
+     }
+   };
++
+   final Class<?> _type;
+ 
+   private ETypeConverter(final Class<?> type) {
+@@ -147,14 +140,62 @@ private ETypeConverter(final Class<?> type) {
+     return _type;
+   }
+ 
+-  abstract Converter getConverter(final Class<?> type, final int index, final HiveGroupConverter parent);
++  abstract Converter getConverter(final PrimitiveType type, final int index, final HiveGroupConverter parent);
++
++  public static Converter getNewConverter(final PrimitiveType type, final int index, final HiveGroupConverter parent) {
++    if (OriginalType.DECIMAL == type.getOriginalType()) {
++      return EDECIMAL_CONVERTER.getConverter(type, index, parent);
++    } else if (OriginalType.UTF8 == type.getOriginalType()) {
++      return ESTRING_CONVERTER.getConverter(type, index, parent);
++    }
+ 
+-  public static Converter getNewConverter(final Class<?> type, final int index, final HiveGroupConverter parent) {
++    Class<?> javaType = type.getPrimitiveTypeName().javaType;
+     for (final ETypeConverter eConverter : values()) {
+-      if (eConverter.getType() == type) {
++      if (eConverter.getType() == javaType) {
+         return eConverter.getConverter(type, index, parent);
+       }
+     }
++
+     throw new IllegalArgumentException("Converter not found ... for type : " + type);
+   }
+-}
+\ No newline at end of file
++
++  public abstract static class BinaryConverter<T extends Writable> extends PrimitiveConverter {
++    protected final PrimitiveType type;
++    private final HiveGroupConverter parent;
++    private final int index;
++    private ArrayList<T> lookupTable;
++
++    public BinaryConverter(PrimitiveType type, HiveGroupConverter parent, int index) {
++      this.type = type;
++      this.parent = parent;
++      this.index = index;
++    }
++
++    protected abstract T convert(Binary binary);
++
++    @Override
++    public boolean hasDictionarySupport() {
++      return true;
++    }
++
++    @Override
++    public void setDictionary(Dictionary dictionary) {
++      int length = dictionary.getMaxId() + 1;
++      lookupTable = new ArrayList<T>();
++      for (int i = 0; i < length; i++) {
++        lookupTable.add(convert(dictionary.decodeToBinary(i)));
++      }
++    }
++
++    @Override
++    public void addValueFromDictionary(int dictionaryId) {
++      parent.set(index, lookupTable.get(dictionaryId));
++    }
++
++    @Override
++    public void addBinary(Binary value) {
++      parent.set(index, convert(value));
++    }
++  }
++
++}
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/io/parquet/convert/HiveGroupConverter.java b/src/ql/src/java/org/apache/hadoop/hive/ql/io/parquet/convert/HiveGroupConverter.java
+index 20c8445..524a293 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/io/parquet/convert/HiveGroupConverter.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/io/parquet/convert/HiveGroupConverter.java
+@@ -28,8 +28,7 @@ protected static Converter getConverterFromDescription(final Type type, final in
+       return null;
+     }
+     if (type.isPrimitive()) {
+-      return ETypeConverter.getNewConverter(type.asPrimitiveType().getPrimitiveTypeName().javaType,
+-          index, parent);
++      return ETypeConverter.getNewConverter(type.asPrimitiveType(), index, parent);
+     } else {
+       if (type.asGroupType().getRepetition() == Repetition.REPEATED) {
+         return new ArrayWritableGroupConverter(type.asGroupType(), parent, index);
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/io/parquet/convert/HiveSchemaConverter.java b/src/ql/src/java/org/apache/hadoop/hive/ql/io/parquet/convert/HiveSchemaConverter.java
+index d96d5bc..1243585 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/io/parquet/convert/HiveSchemaConverter.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/io/parquet/convert/HiveSchemaConverter.java
+@@ -17,6 +17,7 @@
+ 
+ import org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe;
+ import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspector.Category;
++import org.apache.hadoop.hive.serde2.typeinfo.DecimalTypeInfo;
+ import org.apache.hadoop.hive.serde2.typeinfo.ListTypeInfo;
+ import org.apache.hadoop.hive.serde2.typeinfo.MapTypeInfo;
+ import org.apache.hadoop.hive.serde2.typeinfo.StructTypeInfo;
+@@ -24,6 +25,7 @@
+ import org.apache.hadoop.hive.serde2.typeinfo.TypeInfoFactory;
+ 
+ import parquet.schema.ConversionPatterns;
++import parquet.schema.DecimalMetadata;
+ import parquet.schema.GroupType;
+ import parquet.schema.MessageType;
+ import parquet.schema.OriginalType;
+@@ -31,6 +33,7 @@
+ import parquet.schema.PrimitiveType.PrimitiveTypeName;
+ import parquet.schema.Type;
+ import parquet.schema.Type.Repetition;
++import parquet.schema.Types;
+ 
+ public class HiveSchemaConverter {
+ 
+@@ -58,7 +61,7 @@ private static Type convertType(final String name, final TypeInfo typeInfo) {
+   private static Type convertType(final String name, final TypeInfo typeInfo, final Repetition repetition) {
+     if (typeInfo.getCategory().equals(Category.PRIMITIVE)) {
+       if (typeInfo.equals(TypeInfoFactory.stringTypeInfo)) {
+-        return new PrimitiveType(repetition, PrimitiveTypeName.BINARY, name);
++        return new PrimitiveType(repetition, PrimitiveTypeName.BINARY, name, OriginalType.UTF8);
+       } else if (typeInfo.equals(TypeInfoFactory.intTypeInfo) ||
+           typeInfo.equals(TypeInfoFactory.shortTypeInfo) ||
+           typeInfo.equals(TypeInfoFactory.byteTypeInfo)) {
+@@ -78,6 +81,10 @@ private static Type convertType(final String name, final TypeInfo typeInfo, fina
+         throw new UnsupportedOperationException("Timestamp type not implemented");
+       } else if (typeInfo.equals(TypeInfoFactory.voidTypeInfo)) {
+         throw new UnsupportedOperationException("Void type not implemented");
++      } else if (typeInfo instanceof DecimalTypeInfo) {
++        DecimalTypeInfo decimalTypeInfo = (DecimalTypeInfo) typeInfo;
++        return Types.primitive(PrimitiveTypeName.BINARY, repetition).as(OriginalType.DECIMAL).scale(decimalTypeInfo.scale()).
++            precision(decimalTypeInfo.precision()).named(name);
+       } else if (typeInfo.equals(TypeInfoFactory.unknownTypeInfo)) {
+         throw new UnsupportedOperationException("Unknown type not implemented");
+       } else {
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/io/parquet/serde/ArrayWritableObjectInspector.java b/src/ql/src/java/org/apache/hadoop/hive/ql/io/parquet/serde/ArrayWritableObjectInspector.java
+index a2c7fe0..1e5e389 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/io/parquet/serde/ArrayWritableObjectInspector.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/io/parquet/serde/ArrayWritableObjectInspector.java
+@@ -23,6 +23,7 @@
+ import org.apache.hadoop.hive.serde2.objectinspector.SettableStructObjectInspector;
+ import org.apache.hadoop.hive.serde2.objectinspector.StructField;
+ import org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorFactory;
++import org.apache.hadoop.hive.serde2.typeinfo.DecimalTypeInfo;
+ import org.apache.hadoop.hive.serde2.typeinfo.ListTypeInfo;
+ import org.apache.hadoop.hive.serde2.typeinfo.MapTypeInfo;
+ import org.apache.hadoop.hive.serde2.typeinfo.StructTypeInfo;
+@@ -75,6 +76,8 @@ private ObjectInspector getObjectInspector(final TypeInfo typeInfo) {
+       return PrimitiveObjectInspectorFactory.writableLongObjectInspector;
+     } else if (typeInfo.equals(TypeInfoFactory.stringTypeInfo)) {
+       return ParquetPrimitiveInspectorFactory.parquetStringInspector;
++    }  else if (typeInfo instanceof DecimalTypeInfo) {
++      return PrimitiveObjectInspectorFactory.getPrimitiveWritableObjectInspector((DecimalTypeInfo) typeInfo);
+     } else if (typeInfo.getCategory().equals(Category.STRUCT)) {
+       return new ArrayWritableObjectInspector((StructTypeInfo) typeInfo);
+     } else if (typeInfo.getCategory().equals(Category.LIST)) {
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/io/parquet/serde/ParquetHiveSerDe.java b/src/ql/src/java/org/apache/hadoop/hive/ql/io/parquet/serde/ParquetHiveSerDe.java
+index b689336..6291574 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/io/parquet/serde/ParquetHiveSerDe.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/io/parquet/serde/ParquetHiveSerDe.java
+@@ -21,6 +21,7 @@
+ import java.util.Properties;
+ 
+ import org.apache.hadoop.conf.Configuration;
++import org.apache.hadoop.hive.common.type.HiveDecimal;
+ import org.apache.hadoop.hive.ql.io.IOConstants;
+ import org.apache.hadoop.hive.ql.io.parquet.writable.BinaryWritable;
+ import org.apache.hadoop.hive.serde2.AbstractSerDe;
+@@ -36,6 +37,7 @@
+ import org.apache.hadoop.hive.serde2.objectinspector.PrimitiveObjectInspector;
+ import org.apache.hadoop.hive.serde2.objectinspector.StructField;
+ import org.apache.hadoop.hive.serde2.objectinspector.StructObjectInspector;
++import org.apache.hadoop.hive.serde2.objectinspector.primitive.BinaryObjectInspector;
+ import org.apache.hadoop.hive.serde2.objectinspector.primitive.BooleanObjectInspector;
+ import org.apache.hadoop.hive.serde2.objectinspector.primitive.ByteObjectInspector;
+ import org.apache.hadoop.hive.serde2.objectinspector.primitive.DoubleObjectInspector;
+@@ -240,6 +242,9 @@ private Writable createPrimitive(final Object obj, final PrimitiveObjectInspecto
+       return new ShortWritable((short) ((ShortObjectInspector) inspector).get(obj));
+     case STRING:
+       return new BinaryWritable(Binary.fromString(((StringObjectInspector) inspector).getPrimitiveJavaObject(obj)));
++    case DECIMAL:
++      HiveDecimal hd = (HiveDecimal)inspector.getPrimitiveJavaObject(obj);
++      return new BinaryWritable(Binary.fromByteArray(hd.unscaledValue().toByteArray()));
+     default:
+       throw new SerDeException("Unknown primitive : " + inspector.getPrimitiveCategory());
+     }
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/io/parquet/writable/BigDecimalWritable.java b/src/ql/src/java/org/apache/hadoop/hive/ql/io/parquet/writable/BigDecimalWritable.java
+deleted file mode 100644
+index c5d6394..0000000
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/io/parquet/writable/BigDecimalWritable.java
++++ /dev/null
+@@ -1,143 +0,0 @@
+-/**
+- * Licensed under the Apache License, Version 2.0 (the "License");
+- * you may not use this file except in compliance with the License.
+- * You may obtain a copy of the License at
+- *
+- * http://www.apache.org/licenses/LICENSE-2.0
+- *
+- * Unless required by applicable law or agreed to in writing, software
+- * distributed under the License is distributed on an "AS IS" BASIS,
+- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- * See the License for the specific language governing permissions and
+- * limitations under the License.
+- */
+-package org.apache.hadoop.hive.ql.io.parquet.writable;
+-
+-import java.io.DataInput;
+-import java.io.DataOutput;
+-import java.io.IOException;
+-import java.math.BigDecimal;
+-import java.math.BigInteger;
+-
+-import org.apache.hadoop.hive.serde2.ByteStream.Output;
+-import org.apache.hadoop.hive.serde2.lazybinary.LazyBinaryUtils;
+-import org.apache.hadoop.hive.serde2.lazybinary.LazyBinaryUtils.VInt;
+-import org.apache.hadoop.io.WritableComparable;
+-import org.apache.hadoop.io.WritableUtils;
+-
+-/**
+- * This file is taken from a patch to hive 0.11
+- * Issue : https://issues.apache.org/jira/browse/HIVE-2693
+- *
+- */
+-public class BigDecimalWritable implements WritableComparable<BigDecimalWritable> {
+-
+-  private byte[] internalStorage = new byte[0];
+-  private int scale;
+-
+-  private final VInt vInt = new VInt(); // reusable integer
+-
+-  public BigDecimalWritable() {
+-  }
+-
+-  public BigDecimalWritable(final byte[] bytes, final int scale) {
+-    set(bytes, scale);
+-  }
+-
+-  public BigDecimalWritable(final BigDecimalWritable writable) {
+-    set(writable.getBigDecimal());
+-  }
+-
+-  public BigDecimalWritable(final BigDecimal value) {
+-    set(value);
+-  }
+-
+-  public void set(BigDecimal value) {
+-    value = value.stripTrailingZeros();
+-    if (value.compareTo(BigDecimal.ZERO) == 0) {
+-      // Special case for 0, because java doesn't strip zeros correctly on
+-      // that number.
+-      value = BigDecimal.ZERO;
+-    }
+-    set(value.unscaledValue().toByteArray(), value.scale());
+-  }
+-
+-  public void set(final BigDecimalWritable writable) {
+-    set(writable.getBigDecimal());
+-  }
+-
+-  public void set(final byte[] bytes, final int scale) {
+-    this.internalStorage = bytes;
+-    this.scale = scale;
+-  }
+-
+-  public void setFromBytes(final byte[] bytes, int offset, final int length) {
+-    LazyBinaryUtils.readVInt(bytes, offset, vInt);
+-    scale = vInt.value;
+-    offset += vInt.length;
+-    LazyBinaryUtils.readVInt(bytes, offset, vInt);
+-    offset += vInt.length;
+-    if (internalStorage.length != vInt.value) {
+-      internalStorage = new byte[vInt.value];
+-    }
+-    System.arraycopy(bytes, offset, internalStorage, 0, vInt.value);
+-  }
+-
+-  public BigDecimal getBigDecimal() {
+-    return new BigDecimal(new BigInteger(internalStorage), scale);
+-  }
+-
+-  @Override
+-  public void readFields(final DataInput in) throws IOException {
+-    scale = WritableUtils.readVInt(in);
+-    final int byteArrayLen = WritableUtils.readVInt(in);
+-    if (internalStorage.length != byteArrayLen) {
+-      internalStorage = new byte[byteArrayLen];
+-    }
+-    in.readFully(internalStorage);
+-  }
+-
+-  @Override
+-  public void write(final DataOutput out) throws IOException {
+-    WritableUtils.writeVInt(out, scale);
+-    WritableUtils.writeVInt(out, internalStorage.length);
+-    out.write(internalStorage);
+-  }
+-
+-  @Override
+-  public int compareTo(final BigDecimalWritable that) {
+-    return getBigDecimal().compareTo(that.getBigDecimal());
+-  }
+-
+-  public void writeToByteStream(final Output byteStream) {
+-    LazyBinaryUtils.writeVInt(byteStream, scale);
+-    LazyBinaryUtils.writeVInt(byteStream, internalStorage.length);
+-    byteStream.write(internalStorage, 0, internalStorage.length);
+-  }
+-
+-  @Override
+-  public String toString() {
+-    return getBigDecimal().toString();
+-  }
+-
+-  @Override
+-  public boolean equals(final Object other) {
+-    if (other == null || !(other instanceof BigDecimalWritable)) {
+-      return false;
+-    }
+-    final BigDecimalWritable bdw = (BigDecimalWritable) other;
+-
+-    // 'equals' and 'compareTo' are not compatible with BigDecimals. We want
+-    // compareTo which returns true iff the numbers are equal (e.g.: 3.14 is
+-        // the same as 3.140). 'Equals' returns true iff equal and the same
+-    // scale
+-    // is set in the decimals (e.g.: 3.14 is not the same as 3.140)
+-    return getBigDecimal().compareTo(bdw.getBigDecimal()) == 0;
+-  }
+-
+-  @Override
+-  public int hashCode() {
+-    return getBigDecimal().hashCode();
+-  }
+-
+-}
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/io/parquet/write/DataWritableWriter.java b/src/ql/src/java/org/apache/hadoop/hive/ql/io/parquet/write/DataWritableWriter.java
+index a98f6be..3490061 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/io/parquet/write/DataWritableWriter.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/io/parquet/write/DataWritableWriter.java
+@@ -13,10 +13,10 @@
+  */
+ package org.apache.hadoop.hive.ql.io.parquet.write;
+ 
+-import org.apache.hadoop.hive.ql.io.parquet.writable.BigDecimalWritable;
+ import org.apache.hadoop.hive.ql.io.parquet.writable.BinaryWritable;
+ import org.apache.hadoop.hive.serde2.io.ByteWritable;
+ import org.apache.hadoop.hive.serde2.io.DoubleWritable;
++import org.apache.hadoop.hive.serde2.io.HiveDecimalWritable;
+ import org.apache.hadoop.hive.serde2.io.ShortWritable;
+ import org.apache.hadoop.io.ArrayWritable;
+ import org.apache.hadoop.io.BooleanWritable;
+@@ -69,6 +69,7 @@ private void writeData(final ArrayWritable arr, final GroupType type) {
+       if (value == null) {
+         continue;
+       }
++
+       recordConsumer.startField(fieldName, field);
+ 
+       if (fieldType.isPrimitive()) {
+@@ -143,8 +144,8 @@ private void writePrimitive(final Writable value) {
+       recordConsumer.addInteger(((ShortWritable) value).get());
+     } else if (value instanceof ByteWritable) {
+       recordConsumer.addInteger(((ByteWritable) value).get());
+-    } else if (value instanceof BigDecimalWritable) {
+-      throw new UnsupportedOperationException("BigDecimal writing not implemented");
++    } else if (value instanceof HiveDecimalWritable) {
++      throw new UnsupportedOperationException("HiveDecimalWritable writing not implemented");
+     } else if (value instanceof BinaryWritable) {
+       recordConsumer.addBinary(((BinaryWritable) value).getBinary());
+     } else {
+diff --git a/src/ql/src/test/org/apache/hadoop/hive/ql/io/parquet/TestHiveSchemaConverter.java b/src/ql/src/test/org/apache/hadoop/hive/ql/io/parquet/TestHiveSchemaConverter.java
+index 89d95df..ff604ab 100644
+--- a/src/ql/src/test/org/apache/hadoop/hive/ql/io/parquet/TestHiveSchemaConverter.java
++++ b/src/ql/src/test/org/apache/hadoop/hive/ql/io/parquet/TestHiveSchemaConverter.java
+@@ -75,6 +75,16 @@ public void testSimpleType() throws Exception {
+   }
+ 
+   @Test
++  public void testDecimalType() throws Exception {
++    testConversion(
++            "a",
++            "decimal(5,2)",
++            "message hive_schema {\n"
++            + "  optional binary a (DECIMAL(5,2));\n"
++            + "}\n");
++  }
++
++  @Test
+   public void testArray() throws Exception {
+     testConversion("arrayCol",
+             "array<int>",
+@@ -88,14 +98,28 @@ public void testArray() throws Exception {
+   }
+ 
+   @Test
++  public void testArrayDecimal() throws Exception {
++    testConversion("arrayCol",
++            "array<decimal(5,2)>",
++            "message hive_schema {\n"
++            + "  optional group arrayCol (LIST) {\n"
++            + "    repeated group bag {\n"
++            + "      optional binary array_element (DECIMAL(5,2));\n"
++            + "    }\n"
++            + "  }\n"
++            + "}\n");
++  }
++
++  @Test
+   public void testStruct() throws Exception {
+     testConversion("structCol",
+-            "struct<a:int,b:double,c:boolean>",
++            "struct<a:int,b:double,c:boolean,d:decimal(5,2)>",
+             "message hive_schema {\n"
+             + "  optional group structCol {\n"
+             + "    optional int32 a;\n"
+             + "    optional double b;\n"
+             + "    optional boolean c;\n"
++            + "    optional binary d (DECIMAL(5,2));\n"
+             + "  }\n"
+             + "}\n");
+   }
+@@ -115,6 +139,20 @@ public void testMap() throws Exception {
+   }
+ 
+   @Test
++  public void testMapDecimal() throws Exception {
++    testConversion("mapCol",
++            "map<string,decimal(5,2)>",
++            "message hive_schema {\n"
++            + "  optional group mapCol (MAP) {\n"
++            + "    repeated group map (MAP_KEY_VALUE) {\n"
++            + "      required binary key;\n"
++            + "      optional binary value (DECIMAL(5,2));\n"
++            + "    }\n"
++            + "  }\n"
++            + "}\n");
++  }
++
++  @Test
+   public void testMapOriginalType() throws Exception {
+     final String hiveColumnTypes = "map<string,string>";
+     final String hiveColumnNames = "mapCol";
+diff --git a/src/ql/src/test/queries/clientpositive/parquet_decimal.q b/src/ql/src/test/queries/clientpositive/parquet_decimal.q
+new file mode 100644
+index 0000000..b62153d
+--- /dev/null
++++ b/src/ql/src/test/queries/clientpositive/parquet_decimal.q
+@@ -0,0 +1,35 @@
++DROP TABLE IF EXISTS dec;
++
++CREATE TABLE dec(name string, value decimal(8,4));
++
++LOAD DATA LOCAL INPATH '../../data/files/dec.txt' INTO TABLE dec;
++
++DROP TABLE IF EXISTS parq_dec;
++
++CREATE TABLE parq_dec(name string, value decimal(5,2)) STORED AS PARQUET;
++
++DESC parq_dec;
++
++INSERT OVERWRITE TABLE parq_dec SELECT name, value FROM dec;
++
++SELECT * FROM parq_dec;
++
++TRUNCATE TABLE parq_dec;
++
++INSERT OVERWRITE TABLE parq_dec SELECT name, NULL FROM dec;
++
++SELECT * FROM parq_dec;
++
++DROP TABLE IF EXISTS parq_dec1;
++
++CREATE TABLE parq_dec1(name string, value decimal(4,1)) STORED AS PARQUET;
++
++DESC parq_dec1;
++
++LOAD DATA LOCAL INPATH '../../data/files/dec.parq' INTO TABLE parq_dec1;
++
++SELECT VALUE FROM parq_dec1;
++
++DROP TABLE dec;
++DROP TABLE parq_dec;
++DROP TABLE parq_dec1;
+diff --git a/src/ql/src/test/queries/clientpositive/parquet_decimal1.q b/src/ql/src/test/queries/clientpositive/parquet_decimal1.q
+new file mode 100644
+index 0000000..fa3e2b8
+--- /dev/null
++++ b/src/ql/src/test/queries/clientpositive/parquet_decimal1.q
+@@ -0,0 +1,22 @@
++DROP TABLE IF EXISTS dec_comp;
++
++CREATE TABLE dec_comp(arr ARRAY<decimal(5,2)>, m MAP<String, decimal(5,2)>, s STRUCT<i:int, d:decimal(5,2)>)
++ROW FORMAT DELIMITED FIELDS TERMINATED BY '|' COLLECTION ITEMS TERMINATED BY ','  MAP KEYS TERMINATED by ':';
++
++LOAD DATA LOCAL INPATH '../../data/files/dec_comp.txt' INTO TABLE dec_comp;
++
++SELECT * FROM dec_comp;
++
++DROP TABLE IF EXISTS parq_dec_comp;
++
++CREATE TABLE parq_dec_comp(arr ARRAY<decimal(5,2)>, m MAP<String, decimal(5,2)>, s STRUCT<i:int, d:decimal(5,2)>)
++STORED AS PARQUET;
++
++DESC parq_dec_comp;
++
++INSERT OVERWRITE TABLE parq_dec_comp SELECT * FROM dec_comp;
++
++SELECT * FROM parq_dec_comp;
++
++DROP TABLE dec_comp;
++DROP TABLE parq_dec_comp;
+diff --git a/src/ql/src/test/results/clientpositive/parquet_decimal.q.out b/src/ql/src/test/results/clientpositive/parquet_decimal.q.out
+new file mode 100644
+index 0000000..34ad94d
+--- /dev/null
++++ b/src/ql/src/test/results/clientpositive/parquet_decimal.q.out
+@@ -0,0 +1,197 @@
++PREHOOK: query: DROP TABLE IF EXISTS dec
++PREHOOK: type: DROPTABLE
++POSTHOOK: query: DROP TABLE IF EXISTS dec
++POSTHOOK: type: DROPTABLE
++PREHOOK: query: CREATE TABLE dec(name string, value decimal(8,4))
++PREHOOK: type: CREATETABLE
++POSTHOOK: query: CREATE TABLE dec(name string, value decimal(8,4))
++POSTHOOK: type: CREATETABLE
++POSTHOOK: Output: default@dec
++PREHOOK: query: LOAD DATA LOCAL INPATH '../../data/files/dec.txt' INTO TABLE dec
++PREHOOK: type: LOAD
++PREHOOK: Output: default@dec
++POSTHOOK: query: LOAD DATA LOCAL INPATH '../../data/files/dec.txt' INTO TABLE dec
++POSTHOOK: type: LOAD
++POSTHOOK: Output: default@dec
++PREHOOK: query: DROP TABLE IF EXISTS parq_dec
++PREHOOK: type: DROPTABLE
++POSTHOOK: query: DROP TABLE IF EXISTS parq_dec
++POSTHOOK: type: DROPTABLE
++PREHOOK: query: CREATE TABLE parq_dec(name string, value decimal(5,2)) STORED AS PARQUET
++PREHOOK: type: CREATETABLE
++POSTHOOK: query: CREATE TABLE parq_dec(name string, value decimal(5,2)) STORED AS PARQUET
++POSTHOOK: type: CREATETABLE
++POSTHOOK: Output: default@parq_dec
++PREHOOK: query: DESC parq_dec
++PREHOOK: type: DESCTABLE
++POSTHOOK: query: DESC parq_dec
++POSTHOOK: type: DESCTABLE
++name                	string              	from deserializer   
++value               	decimal(5,2)        	from deserializer   
++PREHOOK: query: INSERT OVERWRITE TABLE parq_dec SELECT name, value FROM dec
++PREHOOK: type: QUERY
++PREHOOK: Input: default@dec
++PREHOOK: Output: default@parq_dec
++POSTHOOK: query: INSERT OVERWRITE TABLE parq_dec SELECT name, value FROM dec
++POSTHOOK: type: QUERY
++POSTHOOK: Input: default@dec
++POSTHOOK: Output: default@parq_dec
++POSTHOOK: Lineage: parq_dec.name SIMPLE [(dec)dec.FieldSchema(name:name, type:string, comment:null), ]
++POSTHOOK: Lineage: parq_dec.value EXPRESSION [(dec)dec.FieldSchema(name:value, type:decimal(8,4), comment:null), ]
++PREHOOK: query: SELECT * FROM parq_dec
++PREHOOK: type: QUERY
++PREHOOK: Input: default@parq_dec
++#### A masked pattern was here ####
++POSTHOOK: query: SELECT * FROM parq_dec
++POSTHOOK: type: QUERY
++POSTHOOK: Input: default@parq_dec
++#### A masked pattern was here ####
++POSTHOOK: Lineage: parq_dec.name SIMPLE [(dec)dec.FieldSchema(name:name, type:string, comment:null), ]
++POSTHOOK: Lineage: parq_dec.value EXPRESSION [(dec)dec.FieldSchema(name:value, type:decimal(8,4), comment:null), ]
++Tom	234.79
++Beck	77.34
++Snow	55.71
++Mary	4.33
++Cluck	5.96
++Tom	12.25
++Mary	33.33
++Tom	0.19
++Beck	3.15
++Beck	7.99
++PREHOOK: query: TRUNCATE TABLE parq_dec
++PREHOOK: type: TRUNCATETABLE
++PREHOOK: Output: default@parq_dec
++POSTHOOK: query: TRUNCATE TABLE parq_dec
++POSTHOOK: type: TRUNCATETABLE
++POSTHOOK: Output: default@parq_dec
++POSTHOOK: Lineage: parq_dec.name SIMPLE [(dec)dec.FieldSchema(name:name, type:string, comment:null), ]
++POSTHOOK: Lineage: parq_dec.value EXPRESSION [(dec)dec.FieldSchema(name:value, type:decimal(8,4), comment:null), ]
++PREHOOK: query: INSERT OVERWRITE TABLE parq_dec SELECT name, NULL FROM dec
++PREHOOK: type: QUERY
++PREHOOK: Input: default@dec
++PREHOOK: Output: default@parq_dec
++POSTHOOK: query: INSERT OVERWRITE TABLE parq_dec SELECT name, NULL FROM dec
++POSTHOOK: type: QUERY
++POSTHOOK: Input: default@dec
++POSTHOOK: Output: default@parq_dec
++POSTHOOK: Lineage: parq_dec.name SIMPLE [(dec)dec.FieldSchema(name:name, type:string, comment:null), ]
++POSTHOOK: Lineage: parq_dec.name SIMPLE [(dec)dec.FieldSchema(name:name, type:string, comment:null), ]
++POSTHOOK: Lineage: parq_dec.value EXPRESSION [(dec)dec.FieldSchema(name:value, type:decimal(8,4), comment:null), ]
++POSTHOOK: Lineage: parq_dec.value EXPRESSION []
++PREHOOK: query: SELECT * FROM parq_dec
++PREHOOK: type: QUERY
++PREHOOK: Input: default@parq_dec
++#### A masked pattern was here ####
++POSTHOOK: query: SELECT * FROM parq_dec
++POSTHOOK: type: QUERY
++POSTHOOK: Input: default@parq_dec
++#### A masked pattern was here ####
++POSTHOOK: Lineage: parq_dec.name SIMPLE [(dec)dec.FieldSchema(name:name, type:string, comment:null), ]
++POSTHOOK: Lineage: parq_dec.name SIMPLE [(dec)dec.FieldSchema(name:name, type:string, comment:null), ]
++POSTHOOK: Lineage: parq_dec.value EXPRESSION [(dec)dec.FieldSchema(name:value, type:decimal(8,4), comment:null), ]
++POSTHOOK: Lineage: parq_dec.value EXPRESSION []
++Tom	NULL
++Beck	NULL
++Snow	NULL
++Mary	NULL
++Cluck	NULL
++Tom	NULL
++Mary	NULL
++Tom	NULL
++Beck	NULL
++Beck	NULL
++PREHOOK: query: DROP TABLE IF EXISTS parq_dec1
++PREHOOK: type: DROPTABLE
++POSTHOOK: query: DROP TABLE IF EXISTS parq_dec1
++POSTHOOK: type: DROPTABLE
++POSTHOOK: Lineage: parq_dec.name SIMPLE [(dec)dec.FieldSchema(name:name, type:string, comment:null), ]
++POSTHOOK: Lineage: parq_dec.name SIMPLE [(dec)dec.FieldSchema(name:name, type:string, comment:null), ]
++POSTHOOK: Lineage: parq_dec.value EXPRESSION [(dec)dec.FieldSchema(name:value, type:decimal(8,4), comment:null), ]
++POSTHOOK: Lineage: parq_dec.value EXPRESSION []
++PREHOOK: query: CREATE TABLE parq_dec1(name string, value decimal(4,1)) STORED AS PARQUET
++PREHOOK: type: CREATETABLE
++POSTHOOK: query: CREATE TABLE parq_dec1(name string, value decimal(4,1)) STORED AS PARQUET
++POSTHOOK: type: CREATETABLE
++POSTHOOK: Output: default@parq_dec1
++POSTHOOK: Lineage: parq_dec.name SIMPLE [(dec)dec.FieldSchema(name:name, type:string, comment:null), ]
++POSTHOOK: Lineage: parq_dec.name SIMPLE [(dec)dec.FieldSchema(name:name, type:string, comment:null), ]
++POSTHOOK: Lineage: parq_dec.value EXPRESSION [(dec)dec.FieldSchema(name:value, type:decimal(8,4), comment:null), ]
++POSTHOOK: Lineage: parq_dec.value EXPRESSION []
++PREHOOK: query: DESC parq_dec1
++PREHOOK: type: DESCTABLE
++POSTHOOK: query: DESC parq_dec1
++POSTHOOK: type: DESCTABLE
++POSTHOOK: Lineage: parq_dec.name SIMPLE [(dec)dec.FieldSchema(name:name, type:string, comment:null), ]
++POSTHOOK: Lineage: parq_dec.name SIMPLE [(dec)dec.FieldSchema(name:name, type:string, comment:null), ]
++POSTHOOK: Lineage: parq_dec.value EXPRESSION [(dec)dec.FieldSchema(name:value, type:decimal(8,4), comment:null), ]
++POSTHOOK: Lineage: parq_dec.value EXPRESSION []
++name                	string              	from deserializer   
++value               	decimal(4,1)        	from deserializer   
++PREHOOK: query: LOAD DATA LOCAL INPATH '../../data/files/dec.parq' INTO TABLE parq_dec1
++PREHOOK: type: LOAD
++PREHOOK: Output: default@parq_dec1
++POSTHOOK: query: LOAD DATA LOCAL INPATH '../../data/files/dec.parq' INTO TABLE parq_dec1
++POSTHOOK: type: LOAD
++POSTHOOK: Output: default@parq_dec1
++POSTHOOK: Lineage: parq_dec.name SIMPLE [(dec)dec.FieldSchema(name:name, type:string, comment:null), ]
++POSTHOOK: Lineage: parq_dec.name SIMPLE [(dec)dec.FieldSchema(name:name, type:string, comment:null), ]
++POSTHOOK: Lineage: parq_dec.value EXPRESSION [(dec)dec.FieldSchema(name:value, type:decimal(8,4), comment:null), ]
++POSTHOOK: Lineage: parq_dec.value EXPRESSION []
++PREHOOK: query: SELECT VALUE FROM parq_dec1
++PREHOOK: type: QUERY
++PREHOOK: Input: default@parq_dec1
++#### A masked pattern was here ####
++POSTHOOK: query: SELECT VALUE FROM parq_dec1
++POSTHOOK: type: QUERY
++POSTHOOK: Input: default@parq_dec1
++#### A masked pattern was here ####
++POSTHOOK: Lineage: parq_dec.name SIMPLE [(dec)dec.FieldSchema(name:name, type:string, comment:null), ]
++POSTHOOK: Lineage: parq_dec.name SIMPLE [(dec)dec.FieldSchema(name:name, type:string, comment:null), ]
++POSTHOOK: Lineage: parq_dec.value EXPRESSION [(dec)dec.FieldSchema(name:value, type:decimal(8,4), comment:null), ]
++POSTHOOK: Lineage: parq_dec.value EXPRESSION []
++234.8
++77.3
++55.7
++4.3
++6
++12.3
++33.3
++0.2
++3.2
++8
++PREHOOK: query: DROP TABLE dec
++PREHOOK: type: DROPTABLE
++PREHOOK: Input: default@dec
++PREHOOK: Output: default@dec
++POSTHOOK: query: DROP TABLE dec
++POSTHOOK: type: DROPTABLE
++POSTHOOK: Input: default@dec
++POSTHOOK: Output: default@dec
++POSTHOOK: Lineage: parq_dec.name SIMPLE [(dec)dec.FieldSchema(name:name, type:string, comment:null), ]
++POSTHOOK: Lineage: parq_dec.name SIMPLE [(dec)dec.FieldSchema(name:name, type:string, comment:null), ]
++POSTHOOK: Lineage: parq_dec.value EXPRESSION [(dec)dec.FieldSchema(name:value, type:decimal(8,4), comment:null), ]
++POSTHOOK: Lineage: parq_dec.value EXPRESSION []
++PREHOOK: query: DROP TABLE parq_dec
++PREHOOK: type: DROPTABLE
++PREHOOK: Input: default@parq_dec
++PREHOOK: Output: default@parq_dec
++POSTHOOK: query: DROP TABLE parq_dec
++POSTHOOK: type: DROPTABLE
++POSTHOOK: Input: default@parq_dec
++POSTHOOK: Output: default@parq_dec
++POSTHOOK: Lineage: parq_dec.name SIMPLE [(dec)dec.FieldSchema(name:name, type:string, comment:null), ]
++POSTHOOK: Lineage: parq_dec.name SIMPLE [(dec)dec.FieldSchema(name:name, type:string, comment:null), ]
++POSTHOOK: Lineage: parq_dec.value EXPRESSION [(dec)dec.FieldSchema(name:value, type:decimal(8,4), comment:null), ]
++POSTHOOK: Lineage: parq_dec.value EXPRESSION []
++PREHOOK: query: DROP TABLE parq_dec1
++PREHOOK: type: DROPTABLE
++PREHOOK: Input: default@parq_dec1
++PREHOOK: Output: default@parq_dec1
++POSTHOOK: query: DROP TABLE parq_dec1
++POSTHOOK: type: DROPTABLE
++POSTHOOK: Input: default@parq_dec1
++POSTHOOK: Output: default@parq_dec1
++POSTHOOK: Lineage: parq_dec.name SIMPLE [(dec)dec.FieldSchema(name:name, type:string, comment:null), ]
++POSTHOOK: Lineage: parq_dec.name SIMPLE [(dec)dec.FieldSchema(name:name, type:string, comment:null), ]
++POSTHOOK: Lineage: parq_dec.value EXPRESSION [(dec)dec.FieldSchema(name:value, type:decimal(8,4), comment:null), ]
++POSTHOOK: Lineage: parq_dec.value EXPRESSION []
+diff --git a/src/ql/src/test/results/clientpositive/parquet_decimal1.q.out b/src/ql/src/test/results/clientpositive/parquet_decimal1.q.out
+new file mode 100644
+index 0000000..ae1a430
+--- /dev/null
++++ b/src/ql/src/test/results/clientpositive/parquet_decimal1.q.out
+@@ -0,0 +1,91 @@
++PREHOOK: query: DROP TABLE IF EXISTS dec_comp
++PREHOOK: type: DROPTABLE
++POSTHOOK: query: DROP TABLE IF EXISTS dec_comp
++POSTHOOK: type: DROPTABLE
++PREHOOK: query: CREATE TABLE dec_comp(arr ARRAY<decimal(5,2)>, m MAP<String, decimal(5,2)>, s STRUCT<i:int, d:decimal(5,2)>)
++ROW FORMAT DELIMITED FIELDS TERMINATED BY '|' COLLECTION ITEMS TERMINATED BY ','  MAP KEYS TERMINATED by ':'
++PREHOOK: type: CREATETABLE
++POSTHOOK: query: CREATE TABLE dec_comp(arr ARRAY<decimal(5,2)>, m MAP<String, decimal(5,2)>, s STRUCT<i:int, d:decimal(5,2)>)
++ROW FORMAT DELIMITED FIELDS TERMINATED BY '|' COLLECTION ITEMS TERMINATED BY ','  MAP KEYS TERMINATED by ':'
++POSTHOOK: type: CREATETABLE
++POSTHOOK: Output: default@dec_comp
++PREHOOK: query: LOAD DATA LOCAL INPATH '../../data/files/dec_comp.txt' INTO TABLE dec_comp
++PREHOOK: type: LOAD
++PREHOOK: Output: default@dec_comp
++POSTHOOK: query: LOAD DATA LOCAL INPATH '../../data/files/dec_comp.txt' INTO TABLE dec_comp
++POSTHOOK: type: LOAD
++POSTHOOK: Output: default@dec_comp
++PREHOOK: query: SELECT * FROM dec_comp
++PREHOOK: type: QUERY
++PREHOOK: Input: default@dec_comp
++#### A masked pattern was here ####
++POSTHOOK: query: SELECT * FROM dec_comp
++POSTHOOK: type: QUERY
++POSTHOOK: Input: default@dec_comp
++#### A masked pattern was here ####
++[3.14,6.28,7.3]	{"k1":92.77,"k2":29.39}	{"i":5,"d":9.03}
++[12.4,1.33,0.34]	{"k2":2.79,"k4":29.09}	{"i":11,"d":0.03}
++PREHOOK: query: DROP TABLE IF EXISTS parq_dec_comp
++PREHOOK: type: DROPTABLE
++POSTHOOK: query: DROP TABLE IF EXISTS parq_dec_comp
++POSTHOOK: type: DROPTABLE
++PREHOOK: query: CREATE TABLE parq_dec_comp(arr ARRAY<decimal(5,2)>, m MAP<String, decimal(5,2)>, s STRUCT<i:int, d:decimal(5,2)>)
++STORED AS PARQUET
++PREHOOK: type: CREATETABLE
++POSTHOOK: query: CREATE TABLE parq_dec_comp(arr ARRAY<decimal(5,2)>, m MAP<String, decimal(5,2)>, s STRUCT<i:int, d:decimal(5,2)>)
++STORED AS PARQUET
++POSTHOOK: type: CREATETABLE
++POSTHOOK: Output: default@parq_dec_comp
++PREHOOK: query: DESC parq_dec_comp
++PREHOOK: type: DESCTABLE
++POSTHOOK: query: DESC parq_dec_comp
++POSTHOOK: type: DESCTABLE
++arr                 	array<decimal(5,2)> 	from deserializer   
++m                   	map<string,decimal(5,2)>	from deserializer   
++s                   	struct<i:int,d:decimal(5,2)>	from deserializer   
++PREHOOK: query: INSERT OVERWRITE TABLE parq_dec_comp SELECT * FROM dec_comp
++PREHOOK: type: QUERY
++PREHOOK: Input: default@dec_comp
++PREHOOK: Output: default@parq_dec_comp
++POSTHOOK: query: INSERT OVERWRITE TABLE parq_dec_comp SELECT * FROM dec_comp
++POSTHOOK: type: QUERY
++POSTHOOK: Input: default@dec_comp
++POSTHOOK: Output: default@parq_dec_comp
++POSTHOOK: Lineage: parq_dec_comp.arr SIMPLE [(dec_comp)dec_comp.FieldSchema(name:arr, type:array<decimal(5,2)>, comment:null), ]
++POSTHOOK: Lineage: parq_dec_comp.m SIMPLE [(dec_comp)dec_comp.FieldSchema(name:m, type:map<string,decimal(5,2)>, comment:null), ]
++POSTHOOK: Lineage: parq_dec_comp.s SIMPLE [(dec_comp)dec_comp.FieldSchema(name:s, type:struct<i:int,d:decimal(5,2)>, comment:null), ]
++PREHOOK: query: SELECT * FROM parq_dec_comp
++PREHOOK: type: QUERY
++PREHOOK: Input: default@parq_dec_comp
++#### A masked pattern was here ####
++POSTHOOK: query: SELECT * FROM parq_dec_comp
++POSTHOOK: type: QUERY
++POSTHOOK: Input: default@parq_dec_comp
++#### A masked pattern was here ####
++POSTHOOK: Lineage: parq_dec_comp.arr SIMPLE [(dec_comp)dec_comp.FieldSchema(name:arr, type:array<decimal(5,2)>, comment:null), ]
++POSTHOOK: Lineage: parq_dec_comp.m SIMPLE [(dec_comp)dec_comp.FieldSchema(name:m, type:map<string,decimal(5,2)>, comment:null), ]
++POSTHOOK: Lineage: parq_dec_comp.s SIMPLE [(dec_comp)dec_comp.FieldSchema(name:s, type:struct<i:int,d:decimal(5,2)>, comment:null), ]
++[3.14,6.28,0.73]	{"k2":29.39,"k1":92.77}	{"i":5,"d":9.03}
++[1.24,1.33,0.34]	{"k4":29.09,"k2":2.79}	{"i":11,"d":0.03}
++PREHOOK: query: DROP TABLE dec_comp
++PREHOOK: type: DROPTABLE
++PREHOOK: Input: default@dec_comp
++PREHOOK: Output: default@dec_comp
++POSTHOOK: query: DROP TABLE dec_comp
++POSTHOOK: type: DROPTABLE
++POSTHOOK: Input: default@dec_comp
++POSTHOOK: Output: default@dec_comp
++POSTHOOK: Lineage: parq_dec_comp.arr SIMPLE [(dec_comp)dec_comp.FieldSchema(name:arr, type:array<decimal(5,2)>, comment:null), ]
++POSTHOOK: Lineage: parq_dec_comp.m SIMPLE [(dec_comp)dec_comp.FieldSchema(name:m, type:map<string,decimal(5,2)>, comment:null), ]
++POSTHOOK: Lineage: parq_dec_comp.s SIMPLE [(dec_comp)dec_comp.FieldSchema(name:s, type:struct<i:int,d:decimal(5,2)>, comment:null), ]
++PREHOOK: query: DROP TABLE parq_dec_comp
++PREHOOK: type: DROPTABLE
++PREHOOK: Input: default@parq_dec_comp
++PREHOOK: Output: default@parq_dec_comp
++POSTHOOK: query: DROP TABLE parq_dec_comp
++POSTHOOK: type: DROPTABLE
++POSTHOOK: Input: default@parq_dec_comp
++POSTHOOK: Output: default@parq_dec_comp
++POSTHOOK: Lineage: parq_dec_comp.arr SIMPLE [(dec_comp)dec_comp.FieldSchema(name:arr, type:array<decimal(5,2)>, comment:null), ]
++POSTHOOK: Lineage: parq_dec_comp.m SIMPLE [(dec_comp)dec_comp.FieldSchema(name:m, type:map<string,decimal(5,2)>, comment:null), ]
++POSTHOOK: Lineage: parq_dec_comp.s SIMPLE [(dec_comp)dec_comp.FieldSchema(name:s, type:struct<i:int,d:decimal(5,2)>, comment:null), ]
+-- 
+1.7.0.4
+

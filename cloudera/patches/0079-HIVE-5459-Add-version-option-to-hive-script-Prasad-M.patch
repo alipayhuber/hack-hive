@@ -1,0 +1,73 @@
+From 77f67340d7fa5291d63a37e20c1cdb9b6ac48d3f Mon Sep 17 00:00:00 2001
+From: Thejas Madhavan Nair <thejas@apache.org>
+Date: Wed, 9 Oct 2013 20:01:59 +0000
+Subject: [PATCH 079/375] HIVE-5459 : Add --version option to hive script (Prasad Mujumdar via Thejas Nair)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1530776 13f79535-47bb-0310-9956-ffa450edef68
+---
+ bin/ext/version.sh |   37 +++++++++++++++++++++++++++++++++++++
+ bin/hive           |    4 ++++
+ 2 files changed, 41 insertions(+), 0 deletions(-)
+ create mode 100644 bin/ext/version.sh
+
+diff --git a/src/bin/ext/version.sh b/src/bin/ext/version.sh
+new file mode 100644
+index 0000000..bb6449d
+--- /dev/null
++++ b/src/bin/ext/version.sh
+@@ -0,0 +1,37 @@
++# Licensed to the Apache Software Foundation (ASF) under one or more
++# contributor license agreements.  See the NOTICE file distributed with
++# this work for additional information regarding copyright ownership.
++# The ASF licenses this file to You under the Apache License, Version 2.0
++# (the "License"); you may not use this file except in compliance with
++# the License.  You may obtain a copy of the License at
++#
++#     http://www.apache.org/licenses/LICENSE-2.0
++#
++# Unless required by applicable law or agreed to in writing, software
++# distributed under the License is distributed on an "AS IS" BASIS,
++# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++# See the License for the specific language governing permissions and
++# limitations under the License.
++
++# Need arguments [host [port [db]]]
++THISSERVICE=version
++export SERVICE_LIST="${SERVICE_LIST}${THISSERVICE} "
++
++version () {
++  JAR=$1
++  if [ -z "$JAR" ] ; then
++    JAR=${HIVE_LIB}/hive-exec-*.jar
++  else
++    JAR=${HIVE_LIB}/$1
++  fi
++
++  # hadoop 20 or newer - skip the aux_jars option and hiveconf
++  CLASS=org.apache.hive.common.util.HiveVersionInfo
++  exec $HADOOP jar $JAR $CLASS
++}
++
++version_help () {
++  echo "Show Version information of hive jars"
++  echo "./hive --version [hiveJar]"
++} 
++
+diff --git a/src/bin/hive b/src/bin/hive
+index ba2efd2..d26d867 100755
+--- a/src/bin/hive
++++ b/src/bin/hive
+@@ -29,6 +29,10 @@ SERVICE=""
+ HELP=""
+ while [ $# -gt 0 ]; do
+   case "$1" in
++    --version)
++      shift
++      SERVICE=version
++      ;;
+     --service)
+       shift
+       SERVICE=$1
+-- 
+1.7.0.4
+

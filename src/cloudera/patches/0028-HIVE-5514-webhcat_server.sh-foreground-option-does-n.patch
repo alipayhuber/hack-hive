@@ -1,0 +1,26 @@
+From 94ec68927395ff07852bf98541a17284c0b759c3 Mon Sep 17 00:00:00 2001
+From: Brock Noland <brock@apache.org>
+Date: Tue, 22 Oct 2013 15:24:37 +0000
+Subject: [PATCH 028/375] HIVE-5514 - webhcat_server.sh foreground option does not work as expected
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1534662 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../webhcat/svr/src/main/bin/webhcat_server.sh     |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+
+diff --git a/src/hcatalog/webhcat/svr/src/main/bin/webhcat_server.sh b/src/hcatalog/webhcat/svr/src/main/bin/webhcat_server.sh
+index 098ef08..600c16d 100644
+--- a/src/hcatalog/webhcat/svr/src/main/bin/webhcat_server.sh
++++ b/src/hcatalog/webhcat/svr/src/main/bin/webhcat_server.sh
+@@ -121,7 +121,7 @@ function check_pid() {
+ 
+ # Start the webhcat server in the foreground
+ function foreground_webhcat() {
+-        $start_cmd
++        exec $start_cmd
+ }
+ 
+ # Start the webhcat server in the background.  Record the PID for
+-- 
+1.7.0.4
+

@@ -1,0 +1,180 @@
+From 6c94584888fe15f596e6faffbe543b3c75e83b14 Mon Sep 17 00:00:00 2001
+From: Ashutosh Chauhan <hashutosh@apache.org>
+Date: Thu, 12 Dec 2013 17:59:31 +0000
+Subject: [PATCH 192/375] HIVE-6018 : FetchTask should not reference metastore classes (Navis via Prasad Mujumdar)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1550461 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../hadoop/hive/metastore/MetaStoreUtils.java      |   36 --------------------
+ .../apache/hadoop/hive/ql/exec/FetchOperator.java  |    4 +-
+ .../hadoop/hive/ql/io/CombineHiveInputFormat.java  |    8 +++-
+ .../apache/hadoop/hive/ql/metadata/Partition.java  |   13 -------
+ .../apache/hadoop/hive/ql/plan/PartitionDesc.java  |   21 +++++++----
+ 5 files changed, 21 insertions(+), 61 deletions(-)
+
+diff --git a/src/metastore/src/java/org/apache/hadoop/hive/metastore/MetaStoreUtils.java b/src/metastore/src/java/org/apache/hadoop/hive/metastore/MetaStoreUtils.java
+index ffcdc02..33e7426 100644
+--- a/src/metastore/src/java/org/apache/hadoop/hive/metastore/MetaStoreUtils.java
++++ b/src/metastore/src/java/org/apache/hadoop/hive/metastore/MetaStoreUtils.java
+@@ -142,42 +142,6 @@ static public void recursiveDelete(File f) throws IOException {
+   /**
+    * getDeserializer
+    *
+-   * Get the Deserializer for a table given its name and properties.
+-   *
+-   * @param conf
+-   *          hadoop config
+-   * @param schema
+-   *          the properties to use to instantiate the deserializer
+-   * @return
+-   *   Returns instantiated deserializer by looking up class name of deserializer stored in passed
+-   *   in properties. Also, initializes the deserializer with schema stored in passed in properties.
+-   * @exception MetaException
+-   *              if any problems instantiating the Deserializer
+-   *
+-   *              todo - this should move somewhere into serde.jar
+-   *
+-   */
+-  static public Deserializer getDeserializer(Configuration conf,
+-      Properties schema) throws MetaException {
+-    try {
+-      String clazzName = schema.getProperty(serdeConstants.SERIALIZATION_LIB);
+-      if(clazzName == null) {
+-        throw new IllegalStateException("Property " + serdeConstants.SERIALIZATION_LIB + " cannot be null");
+-      }
+-      Deserializer deserializer = ReflectionUtils.newInstance(conf.getClassByName(clazzName)
+-          .asSubclass(Deserializer.class), conf);
+-      deserializer.initialize(conf, schema);
+-      return deserializer;
+-    } catch (Exception e) {
+-      LOG.error("error in initSerDe: " + e.getClass().getName() + " "
+-          + e.getMessage(), e);
+-      throw new MetaException(e.getClass().getName() + " " + e.getMessage());
+-    }
+-  }
+-
+-  /**
+-   * getDeserializer
+-   *
+    * Get the Deserializer for a table.
+    *
+    * @param conf
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/FetchOperator.java b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/FetchOperator.java
+index 7803044..7d2511f 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/FetchOperator.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/FetchOperator.java
+@@ -394,7 +394,7 @@ private void getNextPath() throws Exception {
+       this.inputSplits = inputSplits;
+ 
+       splitNum = 0;
+-      serde = partDesc.getDeserializer();
++      serde = partDesc.getDeserializer(job);
+       serde.initialize(job, partDesc.getOverlayedProperties());
+ 
+       if (currTbl != null) {
+@@ -630,7 +630,7 @@ public ObjectInspector getOutputObjectInspector() throws HiveException {
+       // Get the OI corresponding to all the partitions
+       for (PartitionDesc listPart : listParts) {
+         partition = listPart;
+-        Deserializer partSerde = listPart.getDeserializer();
++        Deserializer partSerde = listPart.getDeserializer(job);
+         partSerde.initialize(job, listPart.getOverlayedProperties());
+ 
+         partitionedTableOI = ObjectInspectorConverters.getConvertedOI(
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/io/CombineHiveInputFormat.java b/src/ql/src/java/org/apache/hadoop/hive/ql/io/CombineHiveInputFormat.java
+index 6ca4d5b..4e480c5 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/io/CombineHiveInputFormat.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/io/CombineHiveInputFormat.java
+@@ -307,8 +307,12 @@ public int hashCode() {
+       Class inputFormatClass = part.getInputFileFormatClass();
+       String inputFormatClassName = inputFormatClass.getName();
+       InputFormat inputFormat = getInputFormatFromCache(inputFormatClass, job);
+-      String deserializerClassName = part.getDeserializer() == null ? null
+-          : part.getDeserializer().getClass().getName();
++      String deserializerClassName = null;
++      try {
++        deserializerClassName = part.getDeserializer(job).getClass().getName();
++      } catch (Exception e) {
++        // ignore
++      }
+ 
+       // Since there is no easy way of knowing whether MAPREDUCE-1597 is present in the tree or not,
+       // we use a configuration variable for the same
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/metadata/Partition.java b/src/ql/src/java/org/apache/hadoop/hive/ql/metadata/Partition.java
+index f4476a9..0fe260d 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/metadata/Partition.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/metadata/Partition.java
+@@ -260,19 +260,6 @@ final public Deserializer getDeserializer() {
+     return deserializer;
+   }
+ 
+-  final public Deserializer getDeserializer(Properties props) {
+-    if (deserializer == null) {
+-      try {
+-        deserializer = MetaStoreUtils.getDeserializer(Hive.get().getConf(), props);
+-      } catch (HiveException e) {
+-        throw new RuntimeException(e);
+-      } catch (MetaException e) {
+-        throw new RuntimeException(e);
+-      }
+-    }
+-    return deserializer;
+-  }
+-
+   public Properties getSchema() {
+     return MetaStoreUtils.getSchema(tPartition, table.getTTable());
+   }
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/plan/PartitionDesc.java b/src/ql/src/java/org/apache/hadoop/hive/ql/plan/PartitionDesc.java
+index 8a7c3c4..fc65bb6 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/plan/PartitionDesc.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/plan/PartitionDesc.java
+@@ -23,18 +23,18 @@
+ import java.util.LinkedHashMap;
+ import java.util.Properties;
+ 
++import org.apache.hadoop.conf.Configuration;
+ import org.apache.hadoop.fs.Path;
+-import org.apache.hadoop.hive.metastore.MetaStoreUtils;
+ import org.apache.hadoop.hive.metastore.api.hive_metastoreConstants;
+ import org.apache.hadoop.hive.ql.exec.Utilities;
+ import org.apache.hadoop.hive.ql.io.HiveFileFormatUtils;
+ import org.apache.hadoop.hive.ql.io.HiveOutputFormat;
+-import org.apache.hadoop.hive.ql.metadata.Hive;
+ import org.apache.hadoop.hive.ql.metadata.HiveException;
+ import org.apache.hadoop.hive.ql.metadata.Partition;
+ import org.apache.hadoop.hive.serde.serdeConstants;
+ import org.apache.hadoop.hive.serde2.Deserializer;
+ import org.apache.hadoop.mapred.InputFormat;
++import org.apache.hadoop.util.ReflectionUtils;
+ 
+ /**
+  * PartitionDesc.
+@@ -105,14 +105,19 @@ public void setPartSpec(final LinkedHashMap<String, String> partSpec) {
+   }
+ 
+   /**
+-   * Return a deserializer object corresponding to the tableDesc.
++   * Return a deserializer object corresponding to the partitionDesc.
+    */
+-  public Deserializer getDeserializer() {
+-    try {
+-      return MetaStoreUtils.getDeserializer(Hive.get().getConf(), getProperties());
+-    } catch (Exception e) {
+-      return null;
++  public Deserializer getDeserializer(Configuration conf) throws Exception {
++    Properties schema = getProperties();
++    String clazzName = schema.getProperty(serdeConstants.SERIALIZATION_LIB);
++    if (clazzName == null) {
++      throw new IllegalStateException("Property " + serdeConstants.SERIALIZATION_LIB +
++          " cannot be null");
+     }
++    Deserializer deserializer = ReflectionUtils.newInstance(conf.getClassByName(clazzName)
++        .asSubclass(Deserializer.class), conf);
++    deserializer.initialize(conf, schema);
++    return deserializer;
+   }
+ 
+   public void setInputFileFormatClass(
+-- 
+1.7.0.4
+

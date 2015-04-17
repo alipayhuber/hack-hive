@@ -1,0 +1,53 @@
+From 74fab8182edafa2fef54683e5278960741c0034f Mon Sep 17 00:00:00 2001
+From: Xuefu Zhang <xzhang@xzlt.(none)>
+Date: Thu, 13 Feb 2014 19:05:59 -0800
+Subject: [PATCH 275/375] HIVE-17465: Backport HIVE-6385: UDF degrees() doesn't take decimal as input
+
+---
+ .../org/apache/hadoop/hive/ql/udf/UDFDegrees.java  |    3 +--
+ .../org/apache/hadoop/hive/ql/udf/TestUDFMath.java |    8 ++++++++
+ 2 files changed, 9 insertions(+), 2 deletions(-)
+
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/udf/UDFDegrees.java b/src/ql/src/java/org/apache/hadoop/hive/ql/udf/UDFDegrees.java
+index 1546f4c..c08e130 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/udf/UDFDegrees.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/udf/UDFDegrees.java
+@@ -20,7 +20,6 @@
+ import org.apache.commons.logging.Log;
+ import org.apache.commons.logging.LogFactory;
+ import org.apache.hadoop.hive.ql.exec.Description;
+-import org.apache.hadoop.hive.ql.exec.UDF;
+ import org.apache.hadoop.hive.serde2.io.DoubleWritable;
+ 
+ @Description(
+@@ -30,7 +29,7 @@
+         "  > SELECT _FUNC_(30) FROM src LIMIT 1;\n" +
+         "  -1\n"
+     )
+-public class UDFDegrees extends UDF{
++public class UDFDegrees extends UDFMath {
+ 
+   @SuppressWarnings("unused")
+   private static Log LOG = LogFactory.getLog(UDFDegrees.class.getName());
+diff --git a/src/ql/src/test/org/apache/hadoop/hive/ql/udf/TestUDFMath.java b/src/ql/src/test/org/apache/hadoop/hive/ql/udf/TestUDFMath.java
+index dde978e..8cf0452 100644
+--- a/src/ql/src/test/org/apache/hadoop/hive/ql/udf/TestUDFMath.java
++++ b/src/ql/src/test/org/apache/hadoop/hive/ql/udf/TestUDFMath.java
+@@ -136,6 +136,14 @@ public void testRadians() throws HiveException {
+   }
+ 
+   @Test
++  public void testDegrees() throws HiveException {
++    UDFDegrees udf = new UDFDegrees();
++    input = createDecimal("0.7853981633974483");
++    DoubleWritable res = udf.evaluate(input);
++    Assert.assertEquals(45.0, res.get(), 0.000001);
++  }
++
++  @Test
+   public void testSqrt() throws HiveException {
+     UDFSqrt udf = new UDFSqrt();
+     input = createDecimal("49.0");
+-- 
+1.7.0.4
+

@@ -1,0 +1,50 @@
+From 6e62648639408cc54cb1ce6b538d7b53f5871a3a Mon Sep 17 00:00:00 2001
+From: Szehon Ho <szehon@cloudera.com>
+Date: Wed, 26 Feb 2014 18:27:56 -0800
+Subject: [PATCH 291/375] CLOUDERA-BUILD: CDH-17604: Unit test failures analysis
+
+---
+ hcatalog/core/pom.xml |    6 ++++++
+ hwi/pom.xml           |    9 ++++++++-
+ 2 files changed, 14 insertions(+), 1 deletions(-)
+
+diff --git a/src/hcatalog/core/pom.xml b/src/hcatalog/core/pom.xml
+index dc457cd..e776fc3 100644
+--- a/src/hcatalog/core/pom.xml
++++ b/src/hcatalog/core/pom.xml
+@@ -118,6 +118,12 @@
+       <artifactId>pig</artifactId>
+       <version>${pig.version}</version>
+       <scope>test</scope>
++      <exclusions>
++        <exclusion>
++          <groupId>org.apache.hadoop</groupId>
++          <artifactId>hadoop-core</artifactId>
++        </exclusion>
++      </exclusions>
+     </dependency>
+   </dependencies>
+ 
+diff --git a/src/hwi/pom.xml b/src/hwi/pom.xml
+index c1ccc83..cacf55e 100644
+--- a/src/hwi/pom.xml
++++ b/src/hwi/pom.xml
+@@ -117,7 +117,14 @@
+     </profile>
+    <profile>
+       <id>hadoop-2</id>
+-
++      <dependencies>
++        <dependency>
++          <groupId>org.apache.hadoop</groupId>
++          <artifactId>hadoop-mapreduce-client-core</artifactId>
++          <version>${hadoop-23.version}</version>
++          <optional>true</optional>
++        </dependency>
++       </dependencies>
+     </profile>
+   </profiles>
+ 
+-- 
+1.7.0.4
+

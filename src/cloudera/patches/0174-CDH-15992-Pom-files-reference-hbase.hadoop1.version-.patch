@@ -1,0 +1,387 @@
+From 76fcf61c96c731e3b778bf8333a839f84e9b7634 Mon Sep 17 00:00:00 2001
+From: Brock Noland <brock@cloudera.com>
+Date: Tue, 3 Dec 2013 17:01:33 -0600
+Subject: [PATCH 174/375] CDH-15992 - Pom files reference hbase.hadoop1.version which does not exist in CDH
+
+---
+ cli/pom.xml                             |    2 +-
+ hbase-handler/pom.xml                   |   20 ++++++++++----------
+ hcatalog/storage-handlers/hbase/pom.xml |   22 +++++++++++-----------
+ itests/hcatalog-unit/pom.xml            |   22 +++++++++++-----------
+ itests/hive-unit/pom.xml                |    2 +-
+ itests/qtest/pom.xml                    |   20 ++++++++++----------
+ itests/util/pom.xml                     |    8 ++++----
+ pom.xml                                 |   10 +++++-----
+ 8 files changed, 53 insertions(+), 53 deletions(-)
+
+diff --git a/src/cli/pom.xml b/src/cli/pom.xml
+index fd1ce86..0493951 100644
+--- a/src/cli/pom.xml
++++ b/src/cli/pom.xml
+@@ -127,7 +127,7 @@
+         <dependency>
+           <groupId>org.apache.hbase</groupId>
+           <artifactId>hbase-common</artifactId>
+-          <version>${hbase.hadoop1.version}</version>
++          <version>${hbase.hadoop2.version}</version>
+           <scope>test</scope>
+         </dependency>
+       </dependencies>
+diff --git a/src/hbase-handler/pom.xml b/src/hbase-handler/pom.xml
+index 307103e..18b7e6a 100644
+--- a/src/hbase-handler/pom.xml
++++ b/src/hbase-handler/pom.xml
+@@ -100,52 +100,52 @@
+         <dependency>
+           <groupId>org.apache.hbase</groupId>
+           <artifactId>hbase-hadoop-compat</artifactId>
+-          <version>${hbase.hadoop1.version}</version>
++          <version>${hbase.hadoop2.version}</version>
+           <classifier>tests</classifier>
+         </dependency>
+         <dependency>
+           <groupId>org.apache.hbase</groupId>
+-          <artifactId>hbase-hadoop1-compat</artifactId>
+-          <version>${hbase.hadoop1.version}</version>
++          <artifactId>hbase-hadoop2-compat</artifactId>
++          <version>${hbase.hadoop2.version}</version>
+         </dependency>
+         <dependency>
+           <groupId>org.apache.hbase</groupId>
+           <artifactId>hbase-client</artifactId>
+-          <version>${hbase.hadoop1.version}</version>
++          <version>${hbase.hadoop2.version}</version>
+         </dependency>
+         <dependency>
+           <groupId>org.apache.hbase</groupId>
+           <artifactId>hbase-server</artifactId>
+-          <version>${hbase.hadoop1.version}</version>
++          <version>${hbase.hadoop2.version}</version>
+         </dependency>
+         <dependency>
+           <groupId>org.apache.hbase</groupId>
+           <artifactId>hbase-common</artifactId>
+-          <version>${hbase.hadoop1.version}</version>
++          <version>${hbase.hadoop2.version}</version>
+         </dependency>
+         <dependency>
+           <groupId>org.apache.hbase</groupId>
+           <artifactId>hbase-hadoop-compat</artifactId>
+-          <version>${hbase.hadoop1.version}</version>
++          <version>${hbase.hadoop2.version}</version>
+         </dependency>
+         <dependency>
+           <groupId>org.apache.hbase</groupId>
+           <artifactId>hbase-common</artifactId>
+-          <version>${hbase.hadoop1.version}</version>
++          <version>${hbase.hadoop2.version}</version>
+           <type>test-jar</type>
+           <scope>test</scope>
+         </dependency>
+         <dependency>
+           <groupId>org.apache.hbase</groupId>
+           <artifactId>hbase-server</artifactId>
+-          <version>${hbase.hadoop1.version}</version>
++          <version>${hbase.hadoop2.version}</version>
+           <type>test-jar</type>
+           <scope>test</scope>
+         </dependency>
+         <dependency>
+           <groupId>org.apache.hbase</groupId>
+           <artifactId>hbase-hadoop-compat</artifactId>
+-          <version>${hbase.hadoop1.version}</version>
++          <version>${hbase.hadoop2.version}</version>
+           <type>test-jar</type>
+           <scope>test</scope>
+         </dependency>
+diff --git a/src/hcatalog/storage-handlers/hbase/pom.xml b/src/hcatalog/storage-handlers/hbase/pom.xml
+index 15ff173..599cec0 100644
+--- a/src/hcatalog/storage-handlers/hbase/pom.xml
++++ b/src/hcatalog/storage-handlers/hbase/pom.xml
+@@ -103,33 +103,33 @@
+         <dependency>
+           <groupId>org.apache.hbase</groupId>
+           <artifactId>hbase-client</artifactId>
+-          <version>${hbase.hadoop1.version}</version>
++          <version>${hbase.hadoop2.version}</version>
+         </dependency>
+         <dependency>
+           <groupId>org.apache.hbase</groupId>
+           <artifactId>hbase-server</artifactId>
+-          <version>${hbase.hadoop1.version}</version>
++          <version>${hbase.hadoop2.version}</version>
+         </dependency>
+         <dependency>
+           <groupId>org.apache.hbase</groupId>
+           <artifactId>hbase-common</artifactId>
+-          <version>${hbase.hadoop1.version}</version>
++          <version>${hbase.hadoop2.version}</version>
+         </dependency>
+         <dependency>
+           <groupId>org.apache.hbase</groupId>
+           <artifactId>hbase-hadoop-compat</artifactId>
+-          <version>${hbase.hadoop1.version}</version>
++          <version>${hbase.hadoop2.version}</version>
+         </dependency>
+         <dependency>
+           <groupId>org.apache.hbase</groupId>
+-          <artifactId>hbase-hadoop1-compat</artifactId>
+-          <version>${hbase.hadoop1.version}</version>
++          <artifactId>hbase-hadoop2-compat</artifactId>
++          <version>${hbase.hadoop2.version}</version>
+           <classifier>tests</classifier>
+         </dependency>
+         <dependency>
+           <groupId>org.apache.hbase</groupId>
+-          <artifactId>hbase-hadoop1-compat</artifactId>
+-          <version>${hbase.hadoop1.version}</version>
++          <artifactId>hbase-hadoop2-compat</artifactId>
++          <version>${hbase.hadoop2.version}</version>
+         </dependency>
+         <!-- test -->
+         <dependency>
+@@ -141,21 +141,21 @@
+         <dependency>
+           <groupId>org.apache.hbase</groupId>
+           <artifactId>hbase-common</artifactId>
+-          <version>${hbase.hadoop1.version}</version>
++          <version>${hbase.hadoop2.version}</version>
+           <type>test-jar</type>
+           <scope>test</scope>
+         </dependency>
+         <dependency>
+           <groupId>org.apache.hbase</groupId>
+           <artifactId>hbase-server</artifactId>
+-          <version>${hbase.hadoop1.version}</version>
++          <version>${hbase.hadoop2.version}</version>
+           <type>test-jar</type>
+           <scope>test</scope>
+         </dependency>
+         <dependency>
+           <groupId>org.apache.hbase</groupId>
+           <artifactId>hbase-hadoop-compat</artifactId>
+-          <version>${hbase.hadoop1.version}</version>
++          <version>${hbase.hadoop2.version}</version>
+           <type>test-jar</type>
+           <scope>test</scope>
+         </dependency>
+diff --git a/src/itests/hcatalog-unit/pom.xml b/src/itests/hcatalog-unit/pom.xml
+index b465ef9..33a3c8c 100644
+--- a/src/itests/hcatalog-unit/pom.xml
++++ b/src/itests/hcatalog-unit/pom.xml
+@@ -134,58 +134,58 @@
+         <dependency>
+           <groupId>org.apache.hbase</groupId>
+           <artifactId>hbase-client</artifactId>
+-          <version>${hbase.hadoop1.version}</version>
++          <version>${hbase.hadoop2.version}</version>
+           <scope>test</scope>
+         </dependency>
+         <dependency>
+           <groupId>org.apache.hbase</groupId>
+           <artifactId>hbase-common</artifactId>
+-          <version>${hbase.hadoop1.version}</version>
++          <version>${hbase.hadoop2.version}</version>
+           <scope>test</scope>
+         </dependency>
+         <dependency>
+           <groupId>org.apache.hbase</groupId>
+           <artifactId>hbase-common</artifactId>
+-          <version>${hbase.hadoop1.version}</version>
++          <version>${hbase.hadoop2.version}</version>
+           <scope>test</scope>
+           <classifier>tests</classifier>
+         </dependency>
+         <dependency>
+           <groupId>org.apache.hbase</groupId>
+           <artifactId>hbase-hadoop-compat</artifactId>
+-          <version>${hbase.hadoop1.version}</version>
++          <version>${hbase.hadoop2.version}</version>
+           <scope>test</scope>
+         </dependency>
+         <dependency>
+           <groupId>org.apache.hbase</groupId>
+           <artifactId>hbase-hadoop-compat</artifactId>
+-          <version>${hbase.hadoop1.version}</version>
++          <version>${hbase.hadoop2.version}</version>
+           <scope>test</scope>
+           <classifier>tests</classifier>
+         </dependency>
+         <dependency>
+           <groupId>org.apache.hbase</groupId>
+-          <artifactId>hbase-hadoop1-compat</artifactId>
+-          <version>${hbase.hadoop1.version}</version>
++          <artifactId>hbase-hadoop2-compat</artifactId>
++          <version>${hbase.hadoop2.version}</version>
+           <scope>test</scope>
+         </dependency>
+         <dependency>
+           <groupId>org.apache.hbase</groupId>
+-          <artifactId>hbase-hadoop1-compat</artifactId>
+-          <version>${hbase.hadoop1.version}</version>
++          <artifactId>hbase-hadoop2-compat</artifactId>
++          <version>${hbase.hadoop2.version}</version>
+           <scope>test</scope>
+           <classifier>tests</classifier>
+         </dependency>
+         <dependency>
+           <groupId>org.apache.hbase</groupId>
+           <artifactId>hbase-server</artifactId>
+-          <version>${hbase.hadoop1.version}</version>
++          <version>${hbase.hadoop2.version}</version>
+           <scope>test</scope>
+         </dependency>
+         <dependency>
+           <groupId>org.apache.hbase</groupId>
+           <artifactId>hbase-server</artifactId>
+-          <version>${hbase.hadoop1.version}</version>
++          <version>${hbase.hadoop2.version}</version>
+           <classifier>tests</classifier>
+           <scope>test</scope>
+         </dependency>
+diff --git a/src/itests/hive-unit/pom.xml b/src/itests/hive-unit/pom.xml
+index 53f3609..8db6278 100644
+--- a/src/itests/hive-unit/pom.xml
++++ b/src/itests/hive-unit/pom.xml
+@@ -177,7 +177,7 @@
+         <dependency>
+           <groupId>org.apache.hbase</groupId>
+           <artifactId>hbase-server</artifactId>
+-          <version>${hbase.hadoop1.version}</version>
++          <version>${hbase.hadoop2.version}</version>
+           <scope>test</scope>
+         </dependency>
+       </dependencies>
+diff --git a/src/itests/qtest/pom.xml b/src/itests/qtest/pom.xml
+index 64b8364..2a726c5 100644
+--- a/src/itests/qtest/pom.xml
++++ b/src/itests/qtest/pom.xml
+@@ -147,52 +147,52 @@
+         <dependency>
+           <groupId>org.apache.hbase</groupId>
+           <artifactId>hbase-common</artifactId>
+-          <version>${hbase.hadoop1.version}</version>
++          <version>${hbase.hadoop2.version}</version>
+           <scope>test</scope>
+         </dependency>
+         <dependency>
+           <groupId>org.apache.hbase</groupId>
+           <artifactId>hbase-common</artifactId>
+-          <version>${hbase.hadoop1.version}</version>
++          <version>${hbase.hadoop2.version}</version>
+           <scope>test</scope>
+           <classifier>tests</classifier>
+         </dependency>
+         <dependency>
+           <groupId>org.apache.hbase</groupId>
+           <artifactId>hbase-hadoop-compat</artifactId>
+-          <version>${hbase.hadoop1.version}</version>
++          <version>${hbase.hadoop2.version}</version>
+           <scope>test</scope>
+         </dependency>
+         <dependency>
+           <groupId>org.apache.hbase</groupId>
+           <artifactId>hbase-hadoop-compat</artifactId>
+-          <version>${hbase.hadoop1.version}</version>
++          <version>${hbase.hadoop2.version}</version>
+           <scope>test</scope>
+           <classifier>tests</classifier>
+         </dependency>
+         <dependency>
+           <groupId>org.apache.hbase</groupId>
+-          <artifactId>hbase-hadoop1-compat</artifactId>
+-          <version>${hbase.hadoop1.version}</version>
++          <artifactId>hbase-hadoop2-compat</artifactId>
++          <version>${hbase.hadoop2.version}</version>
+           <scope>test</scope>
+         </dependency>
+         <dependency>
+           <groupId>org.apache.hbase</groupId>
+-          <artifactId>hbase-hadoop1-compat</artifactId>
+-          <version>${hbase.hadoop1.version}</version>
++          <artifactId>hbase-hadoop2-compat</artifactId>
++          <version>${hbase.hadoop2.version}</version>
+           <scope>test</scope>
+           <classifier>tests</classifier>
+         </dependency>
+         <dependency>
+           <groupId>org.apache.hbase</groupId>
+           <artifactId>hbase-server</artifactId>
+-          <version>${hbase.hadoop1.version}</version>
++          <version>${hbase.hadoop2.version}</version>
+           <scope>test</scope>
+         </dependency>
+         <dependency>
+           <groupId>org.apache.hbase</groupId>
+           <artifactId>hbase-server</artifactId>
+-          <version>${hbase.hadoop1.version}</version>
++          <version>${hbase.hadoop2.version}</version>
+           <classifier>tests</classifier>
+           <scope>test</scope>
+         </dependency>
+diff --git a/src/itests/util/pom.xml b/src/itests/util/pom.xml
+index 8c15daf..3c0e748 100644
+--- a/src/itests/util/pom.xml
++++ b/src/itests/util/pom.xml
+@@ -88,22 +88,22 @@
+         <dependency>
+           <groupId>org.apache.hbase</groupId>
+           <artifactId>hbase-client</artifactId>
+-          <version>${hbase.hadoop1.version}</version>
++          <version>${hbase.hadoop2.version}</version>
+         </dependency>
+         <dependency>
+           <groupId>org.apache.hbase</groupId>
+           <artifactId>hbase-common</artifactId>
+-          <version>${hbase.hadoop1.version}</version>
++          <version>${hbase.hadoop2.version}</version>
+         </dependency>
+         <dependency>
+           <groupId>org.apache.hbase</groupId>
+           <artifactId>hbase-server</artifactId>
+-          <version>${hbase.hadoop1.version}</version>
++          <version>${hbase.hadoop2.version}</version>
+         </dependency>
+         <dependency>
+           <groupId>org.apache.hbase</groupId>
+           <artifactId>hbase-server</artifactId>
+-          <version>${hbase.hadoop1.version}</version>
++          <version>${hbase.hadoop2.version}</version>
+           <classifier>tests</classifier>
+         </dependency>
+       </dependencies>
+diff --git a/src/pom.xml b/src/pom.xml
+index 6468af8..a66c063 100644
+--- a/src/pom.xml
++++ b/src/pom.xml
+@@ -882,22 +882,22 @@
+           <dependency>
+             <groupId>org.apache.hbase</groupId>
+             <artifactId>hbase-common</artifactId>
+-            <version>${hbase.hadoop1.version}</version>
++            <version>${hbase.hadoop2.version}</version>
+           </dependency>
+           <dependency>
+             <groupId>org.apache.hbase</groupId>
+             <artifactId>hbase-hadoop-compat</artifactId>
+-            <version>${hbase.hadoop1.version}</version>
++            <version>${hbase.hadoop2.version}</version>
+           </dependency>
+           <dependency>
+             <groupId>org.apache.hbase</groupId>
+-            <artifactId>hbase-hadoop1-compat</artifactId>
+-            <version>${hbase.hadoop1.version}</version>
++            <artifactId>hbase-hadoop2-compat</artifactId>
++            <version>${hbase.hadoop2.version}</version>
+           </dependency>
+           <dependency>
+             <groupId>org.apache.hbase</groupId>
+             <artifactId>hbase-server</artifactId>
+-            <version>${hbase.hadoop1.version}</version>
++            <version>${hbase.hadoop2.version}</version>
+           </dependency>
+         </dependencies>
+       </dependencyManagement>
+-- 
+1.7.0.4
+

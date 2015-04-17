@@ -1,0 +1,26 @@
+From 4da67af015d0d6fc1257e0df2c2af563c02b2be5 Mon Sep 17 00:00:00 2001
+From: Navis Ryu <navis@apache.org>
+Date: Tue, 22 Oct 2013 07:10:51 +0000
+Subject: [PATCH 025/375] HIVE-5596 : hive-default.xml.template is invalid (Killua Huang via Navis)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1534522 13f79535-47bb-0310-9956-ffa450edef68
+---
+ conf/hive-default.xml.template |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+
+diff --git a/src/conf/hive-default.xml.template b/src/conf/hive-default.xml.template
+index 2be1378..6d38ceb 100644
+--- a/src/conf/hive-default.xml.template
++++ b/src/conf/hive-default.xml.template
+@@ -1997,7 +1997,7 @@
+ 
+ <property>
+   <name>hive.server2.thrift.sasl.qop</name>
+-  <value>auth</auth>
++  <value>auth</value>
+   <description>Sasl QOP value; Set it to one of following values to enable higher levels of
+      protection for hive server2 communication with clients.
+       "auth" - authentication only (default)
+-- 
+1.7.0.4
+

@@ -1,0 +1,65 @@
+From 3af50be5e273a46b04b2d7116ed2ca8226ea83e5 Mon Sep 17 00:00:00 2001
+From: Shreepadma Venugopalan <shreepadma@cloudera.com>
+Date: Tue, 13 Aug 2013 14:05:54 -0700
+Subject: [PATCH 116/375] CDH-13585 - HookContext should contain userName
+
+---
+ ql/src/java/org/apache/hadoop/hive/ql/Driver.java  |    2 +-
+ .../apache/hadoop/hive/ql/hooks/HookContext.java   |   10 ++++++++--
+ 2 files changed, 9 insertions(+), 3 deletions(-)
+
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/Driver.java b/src/ql/src/java/org/apache/hadoop/hive/ql/Driver.java
+index 78a5e01..45d49cf 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/Driver.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/Driver.java
+@@ -1166,7 +1166,7 @@ public int execute() throws CommandNeedRetryException {
+       }
+       resStream = null;
+ 
+-      HookContext hookContext = new HookContext(plan, conf, ctx.getPathToCS(), ipAddress);
++      HookContext hookContext = new HookContext(plan, conf, ctx.getPathToCS(), userName, ipAddress);
+       hookContext.setHookType(HookContext.HookType.PRE_EXEC_HOOK);
+ 
+       for (Hook peh : getHooks(HiveConf.ConfVars.PREEXECHOOKS)) {
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/hooks/HookContext.java b/src/ql/src/java/org/apache/hadoop/hive/ql/hooks/HookContext.java
+index 35fbd85..46326c5 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/hooks/HookContext.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/hooks/HookContext.java
+@@ -52,14 +52,15 @@
+   private HookType hookType;
+   final private Map<String, ContentSummary> inputPathToContentSummary;
+   private final String ipAddress;
++  private final String userName;
+ 
+   public HookContext(QueryPlan queryPlan, HiveConf conf) throws Exception{
+-    this(queryPlan, conf, new ConcurrentHashMap<String, ContentSummary>(), null);
++    this(queryPlan, conf, new ConcurrentHashMap<String, ContentSummary>(), null, null);
+   }
+ 
+   public HookContext(QueryPlan queryPlan, HiveConf conf,
+       Map<String, ContentSummary> inputPathToContentSummary,
+-      String ipAddress) throws Exception {
++      String userName, String ipAddress) throws Exception {
+     this.queryPlan = queryPlan;
+     this.conf = conf;
+     this.inputPathToContentSummary = inputPathToContentSummary;
+@@ -72,6 +73,7 @@ public HookContext(QueryPlan queryPlan, HiveConf conf,
+       linfo = SessionState.get().getLineageState().getLineageInfo();
+     }
+     this.ipAddress = ipAddress;
++    this.userName = userName;
+   }
+ 
+   public QueryPlan getQueryPlan() {
+@@ -153,4 +155,8 @@ public String getIpAddress() {
+   public String getOperationName() {
+     return SessionState.get().getHiveOperation().name();
+   }
++
++  public String getUserName() {
++    return this.userName;
++  }
+ }
+-- 
+1.7.0.4
+

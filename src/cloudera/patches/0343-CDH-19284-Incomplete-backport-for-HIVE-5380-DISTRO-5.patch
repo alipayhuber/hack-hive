@@ -1,0 +1,32 @@
+From 78ea92d9e88344da8eea9dc7869107a0b4857ec0 Mon Sep 17 00:00:00 2001
+From: Brock Noland <brock@apache.org>
+Date: Fri, 7 Feb 2014 21:55:37 +0000
+Subject: [PATCH 343/375] CDH-19284: Incomplete backport for HIVE-5380 (DISTRO-595)
+
+---
+ .../org/apache/hadoop/hive/ql/exec/Utilities.java  |    2 ++
+ 1 files changed, 2 insertions(+), 0 deletions(-)
+
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/Utilities.java b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/Utilities.java
+index 9791f4b..85d7f3a 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/Utilities.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/Utilities.java
+@@ -840,6 +840,7 @@ protected synchronized Kryo initialValue() {
+       kryo.setClassLoader(Thread.currentThread().getContextClassLoader());
+       kryo.register(java.sql.Date.class, new SqlDateSerializer());
+       kryo.register(java.sql.Timestamp.class, new TimestampSerializer());
++      kryo.setInstantiatorStrategy(new StdInstantiatorStrategy());
+       removeField(kryo, Operator.class, "colExprMap");
+       removeField(kryo, ColumnInfo.class, "objectInspector");
+       removeField(kryo, MapWork.class, "opParseCtxMap");
+@@ -862,6 +863,7 @@ protected synchronized Kryo initialValue() {
+       kryo.register(CommonToken.class, new CommonTokenSerializer());
+       kryo.register(java.sql.Date.class, new SqlDateSerializer());
+       kryo.register(java.sql.Timestamp.class, new TimestampSerializer());
++      kryo.setInstantiatorStrategy(new StdInstantiatorStrategy());
+       return kryo;
+     };
+   };
+-- 
+1.7.0.4
+

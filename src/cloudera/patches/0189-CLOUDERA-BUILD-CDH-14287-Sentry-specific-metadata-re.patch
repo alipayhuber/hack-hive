@@ -1,0 +1,44 @@
+From 21be7308f603df24af3584ad2fbf00fce76841c3 Mon Sep 17 00:00:00 2001
+From: Prasad Mujumdar <prasadm@cloudera.com>
+Date: Mon, 9 Dec 2013 22:28:19 -0800
+Subject: [PATCH 189/375] CLOUDERA-BUILD: CDH-14287: Sentry specific metadata resultset filtering is missing in the GetColumns for CDH5
+
+---
+ .../service/cli/operation/GetColumnsOperation.java |   13 +++++++++----
+ 1 files changed, 9 insertions(+), 4 deletions(-)
+
+diff --git a/src/service/src/java/org/apache/hive/service/cli/operation/GetColumnsOperation.java b/src/service/src/java/org/apache/hive/service/cli/operation/GetColumnsOperation.java
+index af87a90..0e4893c 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/operation/GetColumnsOperation.java
++++ b/src/service/src/java/org/apache/hive/service/cli/operation/GetColumnsOperation.java
+@@ -25,6 +25,8 @@
+ 
+ import org.apache.hadoop.hive.metastore.IMetaStoreClient;
+ import org.apache.hadoop.hive.metastore.api.Table;
++import org.apache.hadoop.hive.ql.plan.HiveOperation;
++import org.apache.hadoop.hive.ql.session.SessionState;
+ import org.apache.hive.service.cli.ColumnDescriptor;
+ import org.apache.hive.service.cli.FetchOrientation;
+ import org.apache.hive.service.cli.HiveSQLException;
+@@ -129,11 +131,14 @@ public void run() throws HiveSQLException {
+       }
+ 
+       List<String> dbNames = metastoreClient.getDatabases(schemaPattern);
+-      Collections.sort(dbNames);
+-      for (String dbName : dbNames) {
++      String currentDbName = SessionState.get().getCurrentDatabase();
++      List<String> filteredDbNames = filterResultSet(dbNames, HiveOperation.SHOWDATABASES, currentDbName);
++      Collections.sort(filteredDbNames);
++      for (String dbName : filteredDbNames) {
+         List<String> tableNames = metastoreClient.getTables(dbName, tablePattern);
+-        Collections.sort(tableNames);
+-        for (Table table : metastoreClient.getTableObjectsByName(dbName, tableNames)) {
++        List<String> filteredTableNames = filterResultSet(tableNames, HiveOperation.SHOWTABLES, dbName);
++        Collections.sort(filteredTableNames);
++        for (Table table : metastoreClient.getTableObjectsByName(dbName, filteredTableNames)) {
+           TableSchema schema = new TableSchema(metastoreClient.getSchema(dbName, table.getTableName()));
+           for (ColumnDescriptor column : schema.getColumnDescriptors()) {
+             if (columnPattern != null && !columnPattern.matcher(column.getName()).matches()) {
+-- 
+1.7.0.4
+

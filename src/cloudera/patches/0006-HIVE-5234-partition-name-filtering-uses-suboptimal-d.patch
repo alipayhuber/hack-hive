@@ -1,0 +1,114 @@
+From 0237e186c135f5ff00ec9df5377940651ba8e7f3 Mon Sep 17 00:00:00 2001
+From: Ashutosh Chauhan <hashutosh@apache.org>
+Date: Mon, 9 Sep 2013 15:29:29 +0000
+Subject: [PATCH 006/375] HIVE-5234 : partition name filtering uses suboptimal datastructures (Sergey Shelukhin via Ashutosh Chauhan)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1521158 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../apache/hadoop/hive/metastore/Warehouse.java    |   25 ++++++++++++++++++++
+ .../hive/ql/optimizer/ppr/PartitionPruner.java     |   25 +++++++++++++++----
+ 2 files changed, 44 insertions(+), 6 deletions(-)
+
+diff --git a/src/metastore/src/java/org/apache/hadoop/hive/metastore/Warehouse.java b/src/metastore/src/java/org/apache/hadoop/hive/metastore/Warehouse.java
+index 8ada367..e98db0f 100755
+--- a/src/metastore/src/java/org/apache/hadoop/hive/metastore/Warehouse.java
++++ b/src/metastore/src/java/org/apache/hadoop/hive/metastore/Warehouse.java
+@@ -23,6 +23,7 @@
+ 
+ import java.io.FileNotFoundException;
+ import java.io.IOException;
++import java.util.AbstractList;
+ import java.util.ArrayList;
+ import java.util.LinkedHashMap;
+ import java.util.List;
+@@ -365,6 +366,30 @@ public static String makeDynamicPartName(Map<String, String> spec) {
+ 
+   static final Pattern pat = Pattern.compile("([^/]+)=([^/]+)");
+ 
++  private static final Pattern slash = Pattern.compile("/");
++
++  /**
++   * Extracts values from partition name without the column names.
++   * @param name Partition name.
++   * @param result The result. Must be pre-sized to the expected number of columns.
++   */
++  public static void makeValsFromName(
++      String name, AbstractList<String> result) throws MetaException {
++    assert name != null;
++    String[] parts = slash.split(name, 0);
++    if (parts.length != result.size()) {
++      throw new MetaException(
++          "Expected " + result.size() + " components, got " + parts.length + " (" + name + ")");
++    }
++    for (int i = 0; i < parts.length; ++i) {
++      int eq = parts[i].indexOf('=');
++      if (eq <= 0) {
++        throw new MetaException("Unexpected component " + parts[i]);
++      }
++      result.set(i, unescapePathName(parts[i].substring(eq + 1)));
++    }
++  }
++
+   public static LinkedHashMap<String, String> makeSpecFromName(String name)
+       throws MetaException {
+     if (name == null || name.isEmpty()) {
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/optimizer/ppr/PartitionPruner.java b/src/ql/src/java/org/apache/hadoop/hive/ql/optimizer/ppr/PartitionPruner.java
+index e220922..cd67dd8 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/optimizer/ppr/PartitionPruner.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/optimizer/ppr/PartitionPruner.java
+@@ -18,10 +18,12 @@
+ 
+ package org.apache.hadoop.hive.ql.optimizer.ppr;
+ 
++import java.util.AbstractSequentialList;
+ import java.util.ArrayList;
+ import java.util.Iterator;
+ import java.util.LinkedHashMap;
+ import java.util.LinkedHashSet;
++import java.util.LinkedList;
+ import java.util.List;
+ import java.util.Map;
+ import java.util.Set;
+@@ -348,15 +350,22 @@ public static boolean prunePartitionNames(List<String> columnNames, ExprNodeDesc
+     ObjectPair<PrimitiveObjectInspector, ExprNodeEvaluator> handle =
+         PartExprEvalUtils.prepareExpr(prunerExpr, columnNames);
+ 
+-    // Filter the name list.
+-    List<String> values = new ArrayList<String>(columnNames.size());
++    // Filter the name list. Removing elements one by one can be slow on e.g. ArrayList,
++    // so let's create a new list and copy it if we don't have a linked list
++    boolean inPlace = partNames instanceof AbstractSequentialList<?>;
++    List<String> partNamesSeq = inPlace ? partNames : new LinkedList<String>(partNames);
++
++    // Array for the values to pass to evaluator.
++    ArrayList<String> values = new ArrayList<String>(columnNames.size());
++    for (int i = 0; i < columnNames.size(); ++i) {
++      values.add(null);
++    }
++
+     boolean hasUnknownPartitions = false;
+-    Iterator<String> partIter = partNames.iterator();
++    Iterator<String> partIter = partNamesSeq.iterator();
+     while (partIter.hasNext()) {
+       String partName = partIter.next();
+-      LinkedHashMap<String, String> partSpec = Warehouse.makeSpecFromName(partName);
+-      values.clear();
+-      values.addAll(partSpec.values());
++      Warehouse.makeValsFromName(partName, values);
+ 
+       // Evaluate the expression tree.
+       Boolean isNeeded = (Boolean)PartExprEvalUtils.evaluateExprOnPart(handle, values);
+@@ -375,6 +384,10 @@ public static boolean prunePartitionNames(List<String> columnNames, ExprNodeDesc
+       hasUnknownPartitions |= isUnknown;
+       LOG.debug("retained " + (isUnknown ? "unknown " : "") + "partition: " + partName);
+     }
++    if (!inPlace) {
++      partNames.clear();
++      partNames.addAll(partNamesSeq);
++    }
+     return hasUnknownPartitions;
+   }
+ 
+-- 
+1.7.0.4
+

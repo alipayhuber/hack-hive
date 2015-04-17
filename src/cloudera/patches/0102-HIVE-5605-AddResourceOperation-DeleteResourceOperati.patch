@@ -1,0 +1,28 @@
+From 79c01a066285ee673d66bde3d970f4e535a5e227 Mon Sep 17 00:00:00 2001
+From: Brock Noland <brock@apache.org>
+Date: Wed, 23 Oct 2013 14:57:33 +0000
+Subject: [PATCH 102/375] HIVE-5605 - AddResourceOperation, DeleteResourceOperation, DfsOperation, SetOperation should be removed from org.apache.hive.service.cli.operation (Vaibhav Gumashta via Brock Noland)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1535043 13f79535-47bb-0310-9956-ffa450edef68
+---
+ 0 files changed, 0 insertions(+), 0 deletions(-)
+ delete mode 100644 service/src/java/org/apache/hive/service/cli/operation/AddResourceOperation.java
+ delete mode 100644 service/src/java/org/apache/hive/service/cli/operation/DeleteResourceOperation.java
+ delete mode 100644 service/src/java/org/apache/hive/service/cli/operation/DfsOperation.java
+ delete mode 100644 service/src/java/org/apache/hive/service/cli/operation/SetOperation.java
+
+diff --git a/src/service/src/java/org/apache/hive/service/cli/operation/AddResourceOperation.java b/src/service/src/java/org/apache/hive/service/cli/operation/AddResourceOperation.java
+deleted file mode 100644
+index e69de29..0000000
+diff --git a/src/service/src/java/org/apache/hive/service/cli/operation/DeleteResourceOperation.java b/src/service/src/java/org/apache/hive/service/cli/operation/DeleteResourceOperation.java
+deleted file mode 100644
+index e69de29..0000000
+diff --git a/src/service/src/java/org/apache/hive/service/cli/operation/DfsOperation.java b/src/service/src/java/org/apache/hive/service/cli/operation/DfsOperation.java
+deleted file mode 100644
+index e69de29..0000000
+diff --git a/src/service/src/java/org/apache/hive/service/cli/operation/SetOperation.java b/src/service/src/java/org/apache/hive/service/cli/operation/SetOperation.java
+deleted file mode 100644
+index e69de29..0000000
+-- 
+1.7.0.4
+

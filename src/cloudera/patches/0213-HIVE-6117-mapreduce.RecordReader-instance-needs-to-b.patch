@@ -1,0 +1,29 @@
+From 7ff2da52b06ba61cfb50fb571cd883a73ba58e8f Mon Sep 17 00:00:00 2001
+From: Brock Noland <brock@apache.org>
+Date: Mon, 30 Dec 2013 14:54:02 +0000
+Subject: [PATCH 213/375] HIVE-6117 - mapreduce.RecordReader instance needs to be initialized (Nick Dimiduk via Brock Noland)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1554245 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../hive/hbase/HiveHBaseTableInputFormat.java      |    5 +++++
+ 1 files changed, 5 insertions(+), 0 deletions(-)
+
+diff --git a/src/hbase-handler/src/java/org/apache/hadoop/hive/hbase/HiveHBaseTableInputFormat.java b/src/hbase-handler/src/java/org/apache/hadoop/hive/hbase/HiveHBaseTableInputFormat.java
+index 80315b0..704fcb9 100644
+--- a/src/hbase-handler/src/java/org/apache/hadoop/hive/hbase/HiveHBaseTableInputFormat.java
++++ b/src/hbase-handler/src/java/org/apache/hadoop/hive/hbase/HiveHBaseTableInputFormat.java
+@@ -177,6 +177,11 @@
+ 
+     final org.apache.hadoop.mapreduce.RecordReader<ImmutableBytesWritable, Result>
+     recordReader = createRecordReader(tableSplit, tac);
++    try {
++      recordReader.initialize(tableSplit, tac);
++    } catch (InterruptedException e) {
++      throw new IOException("Failed to initialize RecordReader", e);
++    }
+ 
+     return new RecordReader<ImmutableBytesWritable, ResultWritable>() {
+ 
+-- 
+1.7.0.4
+

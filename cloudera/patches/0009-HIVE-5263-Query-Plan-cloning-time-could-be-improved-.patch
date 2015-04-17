@@ -1,0 +1,1728 @@
+From 60b138a90265857583da371965f4381e6e5210ad Mon Sep 17 00:00:00 2001
+From: Ashutosh Chauhan <hashutosh@apache.org>
+Date: Thu, 12 Sep 2013 12:06:23 +0000
+Subject: [PATCH 009/375] HIVE-5263 : Query Plan  cloning time could be improved by using Kryo (Brock Noland via Ashutosh Chauhan)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1522539 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../org/apache/hadoop/hive/ql/exec/ColumnInfo.java |    2 +-
+ .../org/apache/hadoop/hive/ql/exec/Operator.java   |    2 +-
+ .../org/apache/hadoop/hive/ql/exec/Utilities.java  |  104 ++++++++++----
+ .../apache/hadoop/hive/ql/io/orc/OrcStruct.java    |   18 ++-
+ .../org/apache/hadoop/hive/ql/io/orc/OrcUnion.java |    5 +-
+ .../apache/hadoop/hive/ql/plan/ExprNodeDesc.java   |    2 +-
+ .../org/apache/hadoop/hive/ql/plan/MapWork.java    |    4 +-
+ .../hive/ql/udf/generic/GenericUDFUnion.java       |   12 +-
+ .../org/apache/hadoop/hive/ql/io/TestRCFile.java   |  151 ++++++++++++--------
+ .../CustomNonSettableListObjectInspector1.java     |    5 +-
+ .../CustomNonSettableStructObjectInspector1.java   |   13 ++-
+ .../hadoop/hive/serde2/lazy/LazyPrimitive.java     |   10 +-
+ .../objectinspector/LazyListObjectInspector.java   |   16 ++-
+ .../objectinspector/LazyMapObjectInspector.java    |   20 ++--
+ .../LazySimpleStructObjectInspector.java           |   31 +++--
+ .../objectinspector/LazyUnionObjectInspector.java  |   23 ++--
+ .../AbstractPrimitiveLazyObjectInspector.java      |    3 +
+ .../primitive/LazyBinaryObjectInspector.java       |    2 +-
+ .../primitive/LazyStringObjectInspector.java       |    8 +-
+ .../LazyBinaryListObjectInspector.java             |    3 +
+ .../LazyBinaryMapObjectInspector.java              |    3 +
+ .../LazyBinaryStructObjectInspector.java           |    5 +-
+ .../ColumnarStructObjectInspector.java             |   17 ++-
+ .../DelegatedListObjectInspector.java              |    7 +-
+ .../DelegatedMapObjectInspector.java               |    3 +
+ .../DelegatedStructObjectInspector.java            |    7 +
+ .../DelegatedUnionObjectInspector.java             |    3 +
+ .../MetadataListStructObjectInspector.java         |    7 +-
+ .../ReflectionStructObjectInspector.java           |    4 +
+ .../StandardConstantListObjectInspector.java       |    3 +
+ .../StandardConstantMapObjectInspector.java        |    3 +
+ .../StandardListObjectInspector.java               |    7 +-
+ .../StandardMapObjectInspector.java                |   11 +-
+ .../StandardStructObjectInspector.java             |   17 ++-
+ .../StandardUnionObjectInspector.java              |    5 +-
+ .../UnionStructObjectInspector.java                |   19 ++-
+ .../AbstractPrimitiveJavaObjectInspector.java      |    3 +
+ .../AbstractPrimitiveObjectInspector.java          |    5 +-
+ .../AbstractPrimitiveWritableObjectInspector.java  |    3 +
+ .../primitive/PrimitiveObjectInspectorUtils.java   |    4 +
+ .../WritableConstantBinaryObjectInspector.java     |    6 +-
+ .../WritableConstantBooleanObjectInspector.java    |    3 +
+ .../WritableConstantByteObjectInspector.java       |    3 +
+ .../WritableConstantDateObjectInspector.java       |    3 +
+ .../WritableConstantDoubleObjectInspector.java     |    3 +
+ .../WritableConstantFloatObjectInspector.java      |    3 +
+ ...WritableConstantHiveDecimalObjectInspector.java |    5 +-
+ .../WritableConstantIntObjectInspector.java        |    3 +
+ .../WritableConstantLongObjectInspector.java       |    3 +
+ .../WritableConstantShortObjectInspector.java      |    3 +
+ .../WritableConstantStringObjectInspector.java     |    3 +
+ .../WritableConstantTimestampObjectInspector.java  |    3 +
+ 52 files changed, 425 insertions(+), 186 deletions(-)
+
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/ColumnInfo.java b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/ColumnInfo.java
+index 44065ff..acaca23 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/ColumnInfo.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/ColumnInfo.java
+@@ -54,7 +54,7 @@
+    */
+   private boolean isVirtualCol;
+ 
+-  private transient ObjectInspector objectInspector;
++  private ObjectInspector objectInspector;
+ 
+   private boolean isHiddenVirtualCol;
+ 
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/Operator.java b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/Operator.java
+index fa3ad8f..3b15667 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/Operator.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/Operator.java
+@@ -226,7 +226,7 @@ public RowSchema getSchema() {
+    * optimizer and built during semantic analysis contains only key elements for
+    * reduce sink and group by op
+    */
+-  protected transient Map<String, ExprNodeDesc> colExprMap;
++  protected Map<String, ExprNodeDesc> colExprMap;
+ 
+   public void setId(String id) {
+     this.id = id;
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/Utilities.java b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/Utilities.java
+index 7f7520b..752a047 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/Utilities.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/Utilities.java
+@@ -178,6 +178,7 @@
+ import com.esotericsoftware.kryo.Kryo;
+ import com.esotericsoftware.kryo.io.Input;
+ import com.esotericsoftware.kryo.io.Output;
++import com.esotericsoftware.kryo.serializers.FieldSerializer;
+ 
+ /**
+  * Utilities.
+@@ -646,6 +647,34 @@ public void write(Kryo kryo, Output output, java.sql.Date sqlDate) {
+ 
+   }
+ 
++  private static class CommonTokenSerializer extends com.esotericsoftware.kryo.Serializer<CommonToken> {
++    @Override
++    public CommonToken read(Kryo kryo, Input input, Class<CommonToken> clazz) {
++      return new CommonToken(input.readInt(), input.readString());
++    }
++
++    @Override
++  public void write(Kryo kryo, Output output, CommonToken token) {
++      output.writeInt(token.getType());
++      output.writeString(token.getText());
++    }
++  }
++  private static void serializePlan(Object plan, OutputStream out, Configuration conf, boolean cloningPlan) {
++    PerfLogger perfLogger = PerfLogger.getPerfLogger();
++    perfLogger.PerfLogBegin(LOG, PerfLogger.SERIALIZE_PLAN);
++    String serializationType = conf.get(HiveConf.ConfVars.PLAN_SERIALIZATION.varname, "kryo");
++    LOG.info("Serializing " + plan.getClass().getSimpleName() + " via " + serializationType);
++    if("javaXML".equalsIgnoreCase(serializationType)) {
++      serializeObjectByJavaXML(plan, out);
++    } else {
++      if(cloningPlan) {
++        serializeObjectByKryo(cloningQueryPlanKryo.get(), plan, out);
++      } else {
++        serializeObjectByKryo(runtimeSerializationKryo.get(), plan, out);
++      }
++    }
++    perfLogger.PerfLogEnd(LOG, PerfLogger.SERIALIZE_PLAN);
++  }
+   /**
+    * Serializes the plan.
+    * @param plan The plan, such as QueryPlan, MapredWork, etc.
+@@ -653,16 +682,27 @@ public void write(Kryo kryo, Output output, java.sql.Date sqlDate) {
+    * @param conf to pick which serialization format is desired.
+    */
+   public static void serializePlan(Object plan, OutputStream out, Configuration conf) {
++    serializePlan(plan, out, conf, false);
++  }
++
++  private static <T> T deserializePlan(InputStream in, Class<T> planClass, Configuration conf, boolean cloningPlan) {
+     PerfLogger perfLogger = PerfLogger.getPerfLogger();
+-    perfLogger.PerfLogBegin(LOG, PerfLogger.SERIALIZE_PLAN);
+-    if(conf.get(HiveConf.ConfVars.PLAN_SERIALIZATION.varname, "kryo").equals("javaXML")) {
+-      serializeObjectByJavaXML(plan, out);
++    perfLogger.PerfLogBegin(LOG, PerfLogger.DESERIALIZE_PLAN);
++    T plan;
++    String serializationType = conf.get(HiveConf.ConfVars.PLAN_SERIALIZATION.varname, "kryo");
++    LOG.info("Deserializing " + planClass.getSimpleName() + " via " + serializationType);
++    if("javaXML".equalsIgnoreCase(serializationType)) {
++      plan = deserializeObjectByJavaXML(in);
+     } else {
+-      serializeObjectByKryo(plan, out);
++      if(cloningPlan) {
++        plan = deserializeObjectByKryo(cloningQueryPlanKryo.get(), in, planClass);
++      } else {
++        plan = deserializeObjectByKryo(runtimeSerializationKryo.get(), in, planClass);
++      }
+     }
+-    perfLogger.PerfLogEnd(LOG, PerfLogger.SERIALIZE_PLAN);
++    perfLogger.PerfLogEnd(LOG, PerfLogger.DESERIALIZE_PLAN);
++    return plan;
+   }
+-
+   /**
+    * Deserializes the plan.
+    * @param in The stream to read from.
+@@ -670,16 +710,7 @@ public static void serializePlan(Object plan, OutputStream out, Configuration co
+    * @param To know what serialization format plan is in
+    */
+   public static <T> T deserializePlan(InputStream in, Class<T> planClass, Configuration conf) {
+-    PerfLogger perfLogger = PerfLogger.getPerfLogger();
+-    perfLogger.PerfLogBegin(LOG, PerfLogger.DESERIALIZE_PLAN);
+-    T plan;
+-    if(conf.get(HiveConf.ConfVars.PLAN_SERIALIZATION.varname, "kryo").equals("javaXML")) {
+-      plan = deserializeObjectByJavaXML(in);
+-    } else {
+-      plan = deserializeObjectByKryo(in, planClass);
+-    }
+-    perfLogger.PerfLogEnd(LOG, PerfLogger.DESERIALIZE_PLAN);
+-    return plan;
++    return deserializePlan(in, planClass, conf, false);
+   }
+ 
+   /**
+@@ -691,10 +722,11 @@ public static MapredWork clonePlan(MapredWork plan) {
+     // TODO: need proper clone. Meanwhile, let's at least keep this horror in one place
+     PerfLogger perfLogger = PerfLogger.getPerfLogger();
+     perfLogger.PerfLogBegin(LOG, PerfLogger.CLONE_PLAN);
+-    ByteArrayOutputStream baos = new ByteArrayOutputStream();
+-    Utilities.serializeObjectByJavaXML(plan, baos);
+-    MapredWork newPlan = Utilities.deserializeObjectByJavaXML(
+-      new ByteArrayInputStream(baos.toByteArray()));
++    ByteArrayOutputStream baos = new ByteArrayOutputStream(4096);
++    Configuration conf = new Configuration();
++    serializePlan(plan, baos, conf, true);
++    MapredWork newPlan = deserializePlan(new ByteArrayInputStream(baos.toByteArray()),
++        MapredWork.class, conf, true);
+     perfLogger.PerfLogEnd(LOG, PerfLogger.CLONE_PLAN);
+     return newPlan;
+   }
+@@ -730,9 +762,9 @@ public void exceptionThrown(Exception e) {
+    * @param plan Usually of type MapredWork, MapredLocalWork etc.
+    * @param out stream in which serialized plan is written into
+    */
+-  private static void serializeObjectByKryo(Object plan, OutputStream out) {
++  private static void serializeObjectByKryo(Kryo kryo, Object plan, OutputStream out) {
+     Output output = new Output(out);
+-    kryo.get().writeObject(output, plan);
++    kryo.writeObject(output, plan);
+     output.close();
+   }
+ 
+@@ -753,26 +785,44 @@ private static void serializeObjectByKryo(Object plan, OutputStream out) {
+     }
+   }
+ 
+-  private static <T> T deserializeObjectByKryo(InputStream in, Class<T> clazz ) {
++  private static <T> T deserializeObjectByKryo(Kryo kryo, InputStream in, Class<T> clazz ) {
+     Input inp = new Input(in);
+-    T t = kryo.get().readObject(inp,clazz);
++    T t = kryo.readObject(inp,clazz);
+     inp.close();
+     return t;
+   }
+ 
+   // Kryo is not thread-safe,
+   // Also new Kryo() is expensive, so we want to do it just once.
+-  private static ThreadLocal<Kryo> kryo = new ThreadLocal<Kryo>() {
+-
++  private static ThreadLocal<Kryo> runtimeSerializationKryo = new ThreadLocal<Kryo>() {
+     @Override
+     protected synchronized Kryo initialValue() {
+       Kryo kryo = new Kryo();
+       kryo.setClassLoader(Thread.currentThread().getContextClassLoader());
+       kryo.register(java.sql.Date.class, new SqlDateSerializer());
++      removeField(kryo, Operator.class, "colExprMap");
++      removeField(kryo, ColumnInfo.class, "objectInspector");
++      removeField(kryo, MapWork.class, "opParseCtxMap");
++      removeField(kryo, MapWork.class, "joinTree");
++      return kryo;
++    };
++  };
++  @SuppressWarnings("rawtypes")
++  protected static void removeField(Kryo kryo, Class type, String fieldName) {
++    FieldSerializer fld = new FieldSerializer(kryo, type);
++    fld.removeField(fieldName);
++    kryo.register(type, fld);
++  }
++  private static ThreadLocal<Kryo> cloningQueryPlanKryo = new ThreadLocal<Kryo>() {
++    @Override
++    protected synchronized Kryo initialValue() {
++      Kryo kryo = new Kryo();
++      kryo.setClassLoader(Thread.currentThread().getContextClassLoader());
++      kryo.register(CommonToken.class, new CommonTokenSerializer());
++      kryo.register(java.sql.Date.class, new SqlDateSerializer());
+       return kryo;
+     };
+   };
+-
+ 
+   public static TableDesc defaultTd;
+   static {
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/io/orc/OrcStruct.java b/src/ql/src/java/org/apache/hadoop/hive/ql/io/orc/OrcStruct.java
+index 4fe3798..d1b5d48 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/io/orc/OrcStruct.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/io/orc/OrcStruct.java
+@@ -32,7 +32,6 @@
+ import org.apache.hadoop.hive.serde2.objectinspector.SettableMapObjectInspector;
+ import org.apache.hadoop.hive.serde2.objectinspector.SettableStructObjectInspector;
+ import org.apache.hadoop.hive.serde2.objectinspector.StructField;
+-import org.apache.hadoop.hive.serde2.objectinspector.StructObjectInspector;
+ import org.apache.hadoop.hive.serde2.objectinspector.PrimitiveObjectInspector.PrimitiveCategory;
+ import org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorFactory;
+ import org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorUtils;
+@@ -167,8 +166,11 @@ public String getFieldComment() {
+   }
+ 
+   static class OrcStructInspector extends SettableStructObjectInspector {
+-    private final List<StructField> fields;
++    private List<StructField> fields;
+ 
++    protected OrcStructInspector() {
++      super();
++    }
+     OrcStructInspector(StructTypeInfo info) {
+       ArrayList<String> fieldNames = info.getAllStructFieldNames();
+       ArrayList<TypeInfo> fieldTypes = info.getAllStructFieldTypeInfos();
+@@ -287,9 +289,12 @@ public boolean equals(Object o) {
+ 
+   static class OrcMapObjectInspector
+       implements MapObjectInspector, SettableMapObjectInspector {
+-    private final ObjectInspector key;
+-    private final ObjectInspector value;
++    private ObjectInspector key;
++    private ObjectInspector value;
+ 
++    private OrcMapObjectInspector() {
++      super();
++    }
+     OrcMapObjectInspector(MapTypeInfo info) {
+       key = createObjectInspector(info.getMapKeyTypeInfo());
+       value = createObjectInspector(info.getMapValueTypeInfo());
+@@ -375,8 +380,11 @@ public boolean equals(Object o) {
+ 
+   static class OrcListObjectInspector
+       implements ListObjectInspector, SettableListObjectInspector {
+-    private final ObjectInspector child;
++    private ObjectInspector child;
+ 
++    private OrcListObjectInspector() {
++      super();
++    }
+     OrcListObjectInspector(ListTypeInfo info) {
+       child = createObjectInspector(info.getListElementTypeInfo());
+     }
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/io/orc/OrcUnion.java b/src/ql/src/java/org/apache/hadoop/hive/ql/io/orc/OrcUnion.java
+index 1ada1b8..f3f82dd 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/io/orc/OrcUnion.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/io/orc/OrcUnion.java
+@@ -79,8 +79,11 @@ public String toString() {
+   }
+ 
+   static class OrcUnionObjectInspector implements UnionObjectInspector {
+-    private final List<ObjectInspector> children;
++    private List<ObjectInspector> children;
+ 
++    protected OrcUnionObjectInspector() {
++      super();
++    }
+     OrcUnionObjectInspector(int columnId,
+                             List<OrcProto.Type> types) {
+       OrcProto.Type type = types.get(columnId);
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/plan/ExprNodeDesc.java b/src/ql/src/java/org/apache/hadoop/hive/ql/plan/ExprNodeDesc.java
+index 475c564..909938e 100755
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/plan/ExprNodeDesc.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/plan/ExprNodeDesc.java
+@@ -32,7 +32,7 @@
+  */
+ public abstract class ExprNodeDesc implements Serializable, Node {
+   private static final long serialVersionUID = 1L;
+-  TypeInfo typeInfo;
++  protected TypeInfo typeInfo;
+ 
+   public ExprNodeDesc() {
+   }
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/plan/MapWork.java b/src/ql/src/java/org/apache/hadoop/hive/ql/plan/MapWork.java
+index b2c3b3f..75d2ec9 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/plan/MapWork.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/plan/MapWork.java
+@@ -102,8 +102,8 @@
+   public static final int SAMPLING_ON_START = 2;    // sampling on task running
+ 
+   // the following two are used for join processing
+-  private transient QBJoinTree joinTree;
+-  private transient LinkedHashMap<Operator<? extends OperatorDesc>, OpParseContext> opParseCtxMap;
++  private QBJoinTree joinTree;
++  private LinkedHashMap<Operator<? extends OperatorDesc>, OpParseContext> opParseCtxMap;
+ 
+   private boolean mapperCannotSpanPartns;
+ 
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDFUnion.java b/src/ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDFUnion.java
+index 04eb40b..f47c8bd 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDFUnion.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDFUnion.java
+@@ -18,10 +18,9 @@
+ 
+ package org.apache.hadoop.hive.ql.udf.generic;
+ 
+-import java.util.Arrays;
++import java.util.ArrayList;
++import java.util.List;
+ 
+-import org.apache.commons.logging.Log;
+-import org.apache.commons.logging.LogFactory;
+ import org.apache.hadoop.hive.ql.exec.Description;
+ import org.apache.hadoop.hive.ql.exec.UDFArgumentException;
+ import org.apache.hadoop.hive.ql.metadata.HiveException;
+@@ -41,12 +40,11 @@
+   public ObjectInspector initialize(ObjectInspector[] arguments)
+       throws UDFArgumentException {
+     tagOI = arguments[0];
+-    ObjectInspector[] unionOIs = new ObjectInspector[arguments.length-1];
++    List<ObjectInspector> unionOIs = new ArrayList<ObjectInspector>(arguments.length-1);
+     for (int i = 1; i < arguments.length; i++) {
+-      unionOIs[i-1] = arguments[i];
++      unionOIs.add(arguments[i]);
+     }
+-    return ObjectInspectorFactory.getStandardUnionObjectInspector(
+-        Arrays.asList(unionOIs));
++    return ObjectInspectorFactory.getStandardUnionObjectInspector(unionOIs);
+   }
+ 
+   @Override
+diff --git a/src/ql/src/test/org/apache/hadoop/hive/ql/io/TestRCFile.java b/src/ql/src/test/org/apache/hadoop/hive/ql/io/TestRCFile.java
+index 62f1ab7..dd1276d 100644
+--- a/src/ql/src/test/org/apache/hadoop/hive/ql/io/TestRCFile.java
++++ b/src/ql/src/test/org/apache/hadoop/hive/ql/io/TestRCFile.java
+@@ -28,7 +28,6 @@
+ import java.util.Properties;
+ import java.util.Random;
+ 
+-import junit.framework.TestCase;
+ import static org.junit.Assert.*;
+ 
+ import org.apache.commons.logging.Log;
+@@ -40,6 +39,7 @@
+ import org.apache.hadoop.fs.Path;
+ import org.apache.hadoop.hive.conf.HiveConf;
+ import org.apache.hadoop.hive.serde.serdeConstants;
++import org.apache.hadoop.hive.serde2.AbstractSerDe;
+ import org.apache.hadoop.hive.serde2.ColumnProjectionUtils;
+ import org.apache.hadoop.hive.serde2.SerDeException;
+ import org.apache.hadoop.hive.serde2.columnar.BytesRefArrayWritable;
+@@ -63,55 +63,49 @@
+ import org.apache.hadoop.mapred.RecordReader;
+ import org.apache.hadoop.mapred.Reporter;
+ import org.apache.hadoop.mapred.FileSplit;
++import org.junit.After;
++import org.junit.Before;
++import org.junit.Test;
+ 
+ /**
+  * TestRCFile.
+  *
+  */
+-public class TestRCFile extends TestCase {
++public class TestRCFile {
+ 
+   private static final Log LOG = LogFactory.getLog(TestRCFile.class);
+ 
+-  private static Configuration conf = new Configuration();
+-
+-  private static ColumnarSerDe serDe;
+-
+-  private static Path file;
+-
+-  private static FileSystem fs;
+-
+-  private static Properties tbl;
+-
+-  static {
+-    try {
+-      fs = FileSystem.getLocal(conf);
+-      Path dir = new Path(System.getProperty("test.data.dir", ".") + "/mapred");
+-      file = new Path(dir, "test_rcfile");
+-      fs.delete(dir, true);
+-      // the SerDe part is from TestLazySimpleSerDe
+-      serDe = new ColumnarSerDe();
+-      // Create the SerDe
+-      tbl = createProperties();
+-      serDe.initialize(conf, tbl);
+-    } catch (Exception e) {
+-    }
+-  }
++  private Configuration conf;
++  private ColumnarSerDe serDe;
++  private Path dir, file;
++  private FileSystem fs;
++  private Properties tbl;
+ 
+   // Data
+ 
+-  private static Writable[] expectedFieldsData = {
++  private Writable[] expectedFieldsData = {
+       new ByteWritable((byte) 123), new ShortWritable((short) 456),
+       new IntWritable(789), new LongWritable(1000), new DoubleWritable(5.3),
+       new Text("hive and hadoop"), null, null};
+ 
+-  private static Object[] expectedPartitalFieldsData = {null, null,
++  private Object[] expectedPartitalFieldsData = {null, null,
+       new IntWritable(789), new LongWritable(1000), null, null, null, null};
+-  private static BytesRefArrayWritable patialS = new BytesRefArrayWritable();
+-
+-  private static byte[][] bytesArray = null;
+-
+-  private static BytesRefArrayWritable s = null;
+-  static {
++  private BytesRefArrayWritable patialS = new BytesRefArrayWritable();
++  private byte[][] bytesArray;
++  private BytesRefArrayWritable s;
++
++  @Before
++  public void setup() throws Exception {
++    conf = new Configuration();
++    fs = FileSystem.getLocal(conf);
++    dir = new Path(System.getProperty("test.data.dir", ".") + "/mapred");
++    file = new Path(dir, "test_rcfile");
++    cleanup();
++    // the SerDe part is from TestLazySimpleSerDe
++    serDe = new ColumnarSerDe();
++    // Create the SerDe
++    tbl = createProperties();
++    serDe.initialize(conf, tbl);
+     try {
+       bytesArray = new byte[][] {"123".getBytes("UTF-8"),
+           "456".getBytes("UTF-8"), "789".getBytes("UTF-8"),
+@@ -139,11 +133,27 @@
+       patialS.set(7, new BytesRefWritable("NULL".getBytes("UTF-8")));
+ 
+     } catch (UnsupportedEncodingException e) {
++      throw new RuntimeException(e);
++    }
++  }
++
++  @After
++  public void teardown() throws Exception {
++    cleanup();
++  }
++
++  private void cleanup() throws IOException {
++    if(fs != null && dir != null) {
++      fs.delete(dir, true);
++      if(fs.exists(dir)) {
++        throw new RuntimeException("Could not delete " + dir);
++      }
+     }
+   }
+ 
++  @Test
+   public void testSimpleReadAndWrite() throws IOException, SerDeException {
+-    fs.delete(file, true);
++    cleanup();
+ 
+     byte[][] record_1 = {"123".getBytes("UTF-8"), "456".getBytes("UTF-8"),
+         "789".getBytes("UTF-8"), "1000".getBytes("UTF-8"),
+@@ -222,13 +232,14 @@ public void testSimpleReadAndWrite() throws IOException, SerDeException {
+ 
+     reader.close();
+   }
+-  
++
+   /**
+    * Tests {@link RCFile.Reader#getColumn(int, BytesRefArrayWritable) } method.
+    * @throws IOException
+    */
++  @Test
+   public void testGetColumn() throws IOException {
+-    fs.delete(file, true);
++    cleanup();
+ 
+     RCFileOutputFormat.setColumnNumber(conf, expectedFieldsData.length);
+     RCFile.Writer writer =
+@@ -238,26 +249,26 @@ public void testGetColumn() throws IOException {
+                                               new Text("cat"),
+                                               new Text("dog")),
+                         new DefaultCodec());
+-    
++
+     byte[][] record_1 = {
+-        "123".getBytes("UTF-8"), 
++        "123".getBytes("UTF-8"),
+         "456".getBytes("UTF-8"),
+-        "789".getBytes("UTF-8"), 
++        "789".getBytes("UTF-8"),
+         "1000".getBytes("UTF-8"),
+-        "5.3".getBytes("UTF-8"), 
++        "5.3".getBytes("UTF-8"),
+         "hive and hadoop".getBytes("UTF-8"),
+-        new byte[0], 
++        new byte[0],
+         "NULL".getBytes("UTF-8") };
+     byte[][] record_2 = {
+-        "100".getBytes("UTF-8"), 
++        "100".getBytes("UTF-8"),
+         "200".getBytes("UTF-8"),
+-        "123".getBytes("UTF-8"), 
++        "123".getBytes("UTF-8"),
+         "1000".getBytes("UTF-8"),
+-        "5.3".getBytes("UTF-8"), 
++        "5.3".getBytes("UTF-8"),
+         "hive and hadoop".getBytes("UTF-8"),
+-        new byte[0], 
++        new byte[0],
+         "NULL".getBytes("UTF-8")};
+-    
++
+     BytesRefArrayWritable bytes = new BytesRefArrayWritable(record_1.length);
+     for (int i = 0; i < record_1.length; i++) {
+       BytesRefWritable cu = new BytesRefWritable(record_1[i], 0,
+@@ -275,14 +286,14 @@ public void testGetColumn() throws IOException {
+     writer.close();
+ 
+     RCFile.Reader reader = new RCFile.Reader(fs, file, conf);
+-    
++
+     LongWritable rowID = new LongWritable();
+     assertTrue(reader.next(rowID));
+     assertEquals(rowID.get(), 0L);
+-    
++
+     assertTrue(reader.next(rowID));
+     assertEquals(rowID.get(), 1L);
+-    
++
+     BytesRefArrayWritable result = null;
+     BytesRefWritable brw;
+     for (int col=0; col < 8; col++) {
+@@ -291,10 +302,10 @@ public void testGetColumn() throws IOException {
+         assertNotNull(result2);
+         result = result2;
+       } else {
+-        // #getColumn(2) should return the instance passed in: 
++        // #getColumn(2) should return the instance passed in:
+         assertSame(result2, result);
+       }
+-      // each column has height of 2: 
++      // each column has height of 2:
+       assertEquals(2, result.size());
+       for (int row=0; row<result.size(); row++) {
+         brw = result.get(row);
+@@ -304,15 +315,16 @@ public void testGetColumn() throws IOException {
+         byte[] expectedData = (row == 0) ? record_1[col] : record_2[col];
+         assertArrayEquals("col="+col+" : row="+row,  expectedData, actualData);
+       }
+-      
++
+       result.clear();
+     }
+-    
++
+     reader.close();
+   }
+ 
++  @Test
+   public void testReadCorruptFile() throws IOException, SerDeException {
+-    fs.delete(file, true);
++    cleanup();
+ 
+     byte[][] record = {null, null, null, null, null, null, null, null};
+ 
+@@ -364,6 +376,7 @@ public void testReadCorruptFile() throws IOException, SerDeException {
+     reader.close();
+   }
+ 
++  @Test
+   public void testReadOldFileHeader() throws IOException {
+     String[] row = new String[]{"Tester", "Bart", "333 X St.", "Reno", "NV",
+                                 "USA"};
+@@ -381,11 +394,13 @@ public void testReadOldFileHeader() throws IOException {
+     reader.close();
+   }
+ 
++  @Test
+   public void testWriteAndFullyRead() throws IOException, SerDeException {
+     writeTest(fs, 10000, file, bytesArray);
+     fullyReadTest(fs, 10000, file);
+   }
+ 
++  @Test
+   public void testWriteAndPartialRead() throws IOException, SerDeException {
+     writeTest(fs, 10000, file, bytesArray);
+     partialReadTest(fs, 10000, file);
+@@ -395,6 +410,14 @@ public void testWriteAndPartialRead() throws IOException, SerDeException {
+   public static void main(String[] args) throws Exception {
+     int count = 10000;
+     boolean create = true;
++    Configuration conf = new Configuration();
++    FileSystem fs = FileSystem.getLocal(conf);
++    Path file = null;
++    // the SerDe part is from TestLazySimpleSerDe
++    AbstractSerDe serDe = new ColumnarSerDe();
++    // Create the SerDe
++    Properties tbl = createProperties();
++    serDe.initialize(conf, tbl);
+ 
+     String usage = "Usage: RCFile " + "[-count N]" + " file";
+     if (args.length == 0) {
+@@ -428,7 +451,11 @@ public static void main(String[] args) throws Exception {
+       // test.performanceTest();
+ 
+       test.testSimpleReadAndWrite();
+-
++      byte[][] bytesArray = new byte[][] {"123".getBytes("UTF-8"),
++          "456".getBytes("UTF-8"), "789".getBytes("UTF-8"),
++          "1000".getBytes("UTF-8"), "5.3".getBytes("UTF-8"),
++          "hive and hadoop".getBytes("UTF-8"), new byte[0],
++          "NULL".getBytes("UTF-8")};
+       test.writeTest(fs, count, file, bytesArray);
+       test.fullyReadTest(fs, count, file);
+       test.partialReadTest(fs, count, file);
+@@ -445,7 +472,7 @@ private void writeTest(FileSystem fs, int count, Path file,
+ 
+   private void writeTest(FileSystem fs, int count, Path file,
+       byte[][] fieldsData, Configuration conf) throws IOException, SerDeException {
+-    fs.delete(file, true);
++    cleanup();
+ 
+     RCFileOutputFormat.setColumnNumber(conf, fieldsData.length);
+     RCFile.Writer writer = new RCFile.Writer(fs, conf, file, null,
+@@ -566,6 +593,7 @@ private void partialReadTest(FileSystem fs, int count, Path file)
+     LOG.debug("reading fully costs:" + cost + " milliseconds");
+   }
+ 
++  @Test
+   public void testSynAndSplit() throws IOException {
+     splitBeforeSync();
+     splitRightBeforeSync();
+@@ -574,6 +602,7 @@ public void testSynAndSplit() throws IOException {
+     splitAfterSync();
+   }
+ 
++  @Test
+   public void testSync() throws IOException {
+     Path testDir = new Path(System.getProperty("test.data.dir", ".")
+         + "/mapred/testsync");
+@@ -585,7 +614,7 @@ public void testSync() throws IOException {
+     Configuration cloneConf = new Configuration(conf);
+     RCFileOutputFormat.setColumnNumber(cloneConf, bytesArray.length);
+     cloneConf.setInt(RCFile.RECORD_INTERVAL_CONF_STR, intervalRecordCount);
+-    RCFile.Writer writer = new RCFile.Writer(fs, cloneConf, testFile, null, codec);    
++    RCFile.Writer writer = new RCFile.Writer(fs, cloneConf, testFile, null, codec);
+ 
+     BytesRefArrayWritable bytes = new BytesRefArrayWritable(bytesArray.length);
+     for (int i = 0; i < bytesArray.length; i++) {
+@@ -605,7 +634,7 @@ public void testSync() throws IOException {
+     jobconf.setLong("mapred.min.split.size", fileLen);
+     InputSplit[] splits = inputFormat.getSplits(jobconf, 1);
+     RCFileRecordReader rr = new RCFileRecordReader(jobconf, (FileSplit)splits[0]);
+-    long lastSync = 0; 
++    long lastSync = 0;
+     for(int i = 0; i < 2500; i++) {
+       rr.sync(i);
+       if(rr.getPos() < lastSync) {
+@@ -709,6 +738,7 @@ public boolean isClosed() {
+     }
+   }
+ 
++  @Test
+   public void testCloseForErroneousRCFile() throws IOException {
+     Configuration conf = new Configuration();
+     LocalFileSystem fs = FileSystem.getLocal(conf);
+@@ -740,7 +770,6 @@ protected FSDataInputStream openFile(FileSystem fs, Path file,
+ 
+   public void testRCFileHeader(char[] expected, Configuration conf)
+       throws IOException, SerDeException {
+-
+     writeTest(fs, 10000, file, bytesArray, conf);
+     DataInputStream di = fs.open(file, 10000);
+     byte[] bytes = new byte[3];
+@@ -751,6 +780,7 @@ public void testRCFileHeader(char[] expected, Configuration conf)
+     di.close();
+   }
+ 
++  @Test
+   public void testNonExplicitRCFileHeader() throws IOException, SerDeException {
+     Configuration conf = new Configuration();
+     conf.setBoolean(HiveConf.ConfVars.HIVEUSEEXPLICITRCFILEHEADER.varname, false);
+@@ -758,6 +788,7 @@ public void testNonExplicitRCFileHeader() throws IOException, SerDeException {
+     testRCFileHeader(expected, conf);
+   }
+ 
++  @Test
+   public void testExplicitRCFileHeader() throws IOException, SerDeException {
+     Configuration conf = new Configuration();
+     conf.setBoolean(HiveConf.ConfVars.HIVEUSEEXPLICITRCFILEHEADER.varname, true);
+diff --git a/src/ql/src/test/org/apache/hadoop/hive/serde2/CustomNonSettableListObjectInspector1.java b/src/ql/src/test/org/apache/hadoop/hive/serde2/CustomNonSettableListObjectInspector1.java
+index 867e030..245e4f5 100644
+--- a/src/ql/src/test/org/apache/hadoop/hive/serde2/CustomNonSettableListObjectInspector1.java
++++ b/src/ql/src/test/org/apache/hadoop/hive/serde2/CustomNonSettableListObjectInspector1.java
+@@ -25,8 +25,11 @@
+ 
+ public class CustomNonSettableListObjectInspector1  implements ListObjectInspector {
+ 
+-  ObjectInspector listElementObjectInspector;
++  private ObjectInspector listElementObjectInspector;
+ 
++  protected CustomNonSettableListObjectInspector1() {
++    super();
++  }
+   protected CustomNonSettableListObjectInspector1(
+       ObjectInspector listElementObjectInspector) {
+     this.listElementObjectInspector = listElementObjectInspector;
+diff --git a/src/ql/src/test/org/apache/hadoop/hive/serde2/CustomNonSettableStructObjectInspector1.java b/src/ql/src/test/org/apache/hadoop/hive/serde2/CustomNonSettableStructObjectInspector1.java
+index d85aa04..c09fd61 100644
+--- a/src/ql/src/test/org/apache/hadoop/hive/serde2/CustomNonSettableStructObjectInspector1.java
++++ b/src/ql/src/test/org/apache/hadoop/hive/serde2/CustomNonSettableStructObjectInspector1.java
+@@ -39,6 +39,10 @@
+     protected ObjectInspector fieldObjectInspector;
+     protected String fieldComment;
+ 
++    protected MyField() {
++      super();
++    }
++
+     public MyField(int fieldID, String fieldName,
+         ObjectInspector fieldObjectInspector) {
+       this.fieldID = fieldID;
+@@ -76,10 +80,9 @@ public String toString() {
+ 
+   protected List<MyField> fields;
+ 
+-  public String getTypeName() {
+-    return ObjectInspectorUtils.getStandardStructTypeName(this);
++  protected CustomNonSettableStructObjectInspector1() {
++    super();
+   }
+-
+   /**
+    * Call ObjectInspectorFactory.getNonSettableStructObjectInspector instead.
+    */
+@@ -99,6 +102,10 @@ protected void init(List<String> structFieldNames,
+     }
+   }
+ 
++  public String getTypeName() {
++    return ObjectInspectorUtils.getStandardStructTypeName(this);
++  }
++
+   public final Category getCategory() {
+     return Category.STRUCT;
+   }
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/lazy/LazyPrimitive.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/lazy/LazyPrimitive.java
+index ff277e0..222b9bc 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/lazy/LazyPrimitive.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/lazy/LazyPrimitive.java
+@@ -69,10 +69,12 @@ public int hashCode() {
+ 
+   public void logExceptionMessage(ByteArrayRef bytes, int start, int length, String dataType) {
+     try {
+-      String byteData = Text.decode(bytes.getData(), start, length);
+-      LOG.debug("Data not in the " + dataType
+-          + " data type range so converted to null. Given data is :" +
+-                  byteData);
++      if(LOG.isDebugEnabled()) {
++        String byteData = Text.decode(bytes.getData(), start, length);
++        LOG.debug("Data not in the " + dataType
++            + " data type range so converted to null. Given data is :" +
++                    byteData, new Exception("For debugging purposes"));
++      }
+     } catch (CharacterCodingException e1) {
+       LOG.debug("Data not in the " + dataType + " data type range so converted to null.", e1);
+     }
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/lazy/objectinspector/LazyListObjectInspector.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/lazy/objectinspector/LazyListObjectInspector.java
+index 75beca7..9d66a78 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/lazy/objectinspector/LazyListObjectInspector.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/lazy/objectinspector/LazyListObjectInspector.java
+@@ -29,7 +29,7 @@
+ 
+ /**
+  * LazyListObjectInspector works on array data that is stored in LazyArray.
+- * 
++ *
+  * Always use the ObjectInspectorFactory to create new ObjectInspector objects,
+  * instead of directly creating an instance of this class.
+  */
+@@ -38,13 +38,15 @@
+   public static final Log LOG = LogFactory.getLog(LazyListObjectInspector.class
+       .getName());
+ 
+-  ObjectInspector listElementObjectInspector;
+-
+-  byte separator;
+-  Text nullSequence;
+-  boolean escaped;
+-  byte escapeChar;
++  private ObjectInspector listElementObjectInspector;
++  private byte separator;
++  private Text nullSequence;
++  private boolean escaped;
++  private byte escapeChar;
+ 
++  protected LazyListObjectInspector() {
++    super();
++  }
+   /**
+    * Call ObjectInspectorFactory.getLazySimpleListObjectInspector instead.
+    */
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/lazy/objectinspector/LazyMapObjectInspector.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/lazy/objectinspector/LazyMapObjectInspector.java
+index 7a30b68..ee870f5 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/lazy/objectinspector/LazyMapObjectInspector.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/lazy/objectinspector/LazyMapObjectInspector.java
+@@ -29,7 +29,7 @@
+ 
+ /**
+  * LazyMapObjectInspector works on struct data that is stored in LazyStruct.
+- * 
++ *
+  * Always use the ObjectInspectorFactory to create new ObjectInspector objects,
+  * instead of directly creating an instance of this class.
+  */
+@@ -38,15 +38,17 @@
+   public static final Log LOG = LogFactory.getLog(LazyMapObjectInspector.class
+       .getName());
+ 
+-  ObjectInspector mapKeyObjectInspector;
+-  ObjectInspector mapValueObjectInspector;
+-
+-  byte itemSeparator;
+-  byte keyValueSeparator;
+-  Text nullSequence;
+-  boolean escaped;
+-  byte escapeChar;
++  private ObjectInspector mapKeyObjectInspector;
++  private ObjectInspector mapValueObjectInspector;
++  private byte itemSeparator;
++  private byte keyValueSeparator;
++  private Text nullSequence;
++  private boolean escaped;
++  private byte escapeChar;
+ 
++  protected LazyMapObjectInspector() {
++    super();
++  }
+   /**
+    * Call ObjectInspectorFactory.getStandardListObjectInspector instead.
+    */
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/lazy/objectinspector/LazySimpleStructObjectInspector.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/lazy/objectinspector/LazySimpleStructObjectInspector.java
+index 08400f1..db08282 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/lazy/objectinspector/LazySimpleStructObjectInspector.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/lazy/objectinspector/LazySimpleStructObjectInspector.java
+@@ -33,10 +33,10 @@
+ /**
+  * LazySimpleStructObjectInspector works on struct data that is stored in
+  * LazyStruct.
+- * 
++ *
+  * The names of the struct fields and the internal structure of the struct
+  * fields are specified in the ctor of the LazySimpleStructObjectInspector.
+- * 
++ *
+  * Always use the ObjectInspectorFactory to create new ObjectInspector objects,
+  * instead of directly creating an instance of this class.
+  */
+@@ -51,6 +51,9 @@
+     protected ObjectInspector fieldObjectInspector;
+     protected String fieldComment;
+ 
++    protected MyField() {
++      super();
++    }
+     public MyField(int fieldID, String fieldName,
+         ObjectInspector fieldObjectInspector) {
+       this.fieldID = fieldID;
+@@ -85,19 +88,16 @@ public String toString() {
+     }
+   }
+ 
+-  protected List<MyField> fields;
++  private List<MyField> fields;
++  private byte separator;
++  private Text nullSequence;
++  private boolean lastColumnTakesRest;
++  private boolean escaped;
++  private byte escapeChar;
+ 
+-  @Override
+-  public String getTypeName() {
+-    return ObjectInspectorUtils.getStandardStructTypeName(this);
++  protected LazySimpleStructObjectInspector() {
++    super();
+   }
+-
+-  byte separator;
+-  Text nullSequence;
+-  boolean lastColumnTakesRest;
+-  boolean escaped;
+-  byte escapeChar;
+-
+   /**
+    * Call ObjectInspectorFactory.getLazySimpleStructObjectInspector instead.
+    */
+@@ -158,6 +158,11 @@ protected void init(List<StructField> fields, byte separator,
+   }
+ 
+   @Override
++  public String getTypeName() {
++    return ObjectInspectorUtils.getStandardStructTypeName(this);
++  }
++
++  @Override
+   public final Category getCategory() {
+     return Category.STRUCT;
+   }
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/lazy/objectinspector/LazyUnionObjectInspector.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/lazy/objectinspector/LazyUnionObjectInspector.java
+index 32f8403..792a9a2 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/lazy/objectinspector/LazyUnionObjectInspector.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/lazy/objectinspector/LazyUnionObjectInspector.java
+@@ -41,18 +41,16 @@
+   public static final Log LOG = LogFactory
+       .getLog(LazyUnionObjectInspector.class.getName());
+ 
+-  protected List<ObjectInspector> ois;
+ 
+-  @Override
+-  public String getTypeName() {
+-    return ObjectInspectorUtils.getStandardUnionTypeName(this);
+-  }
+-
+-  byte separator;
+-  Text nullSequence;
+-  boolean escaped;
+-  byte escapeChar;
++  private  List<ObjectInspector> ois;
++  private byte separator;
++  private Text nullSequence;
++  private boolean escaped;
++  private byte escapeChar;
+ 
++  protected LazyUnionObjectInspector() {
++    super();
++  }
+   protected LazyUnionObjectInspector(
+       List<ObjectInspector> ois, byte separator,
+       Text nullSequence, boolean escaped,
+@@ -61,6 +59,11 @@ protected LazyUnionObjectInspector(
+         nullSequence, escaped, escapeChar);
+   }
+ 
++  @Override
++  public String getTypeName() {
++    return ObjectInspectorUtils.getStandardUnionTypeName(this);
++  }
++
+   protected void init(
+       List<ObjectInspector> ois, byte separator,
+       Text nullSequence, boolean escaped,
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/lazy/objectinspector/primitive/AbstractPrimitiveLazyObjectInspector.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/lazy/objectinspector/primitive/AbstractPrimitiveLazyObjectInspector.java
+index eef9c99..29c8528 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/lazy/objectinspector/primitive/AbstractPrimitiveLazyObjectInspector.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/lazy/objectinspector/primitive/AbstractPrimitiveLazyObjectInspector.java
+@@ -28,6 +28,9 @@
+ public abstract class AbstractPrimitiveLazyObjectInspector<T extends Writable>
+     extends AbstractPrimitiveObjectInspector {
+ 
++  protected AbstractPrimitiveLazyObjectInspector() {
++    super();
++  }
+   protected AbstractPrimitiveLazyObjectInspector(PrimitiveTypeEntry typeEntry) {
+     super(typeEntry);
+   }
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/lazy/objectinspector/primitive/LazyBinaryObjectInspector.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/lazy/objectinspector/primitive/LazyBinaryObjectInspector.java
+index a68a1a1..dbd60f7 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/lazy/objectinspector/primitive/LazyBinaryObjectInspector.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/lazy/objectinspector/primitive/LazyBinaryObjectInspector.java
+@@ -28,7 +28,7 @@
+   AbstractPrimitiveLazyObjectInspector<BytesWritable> implements
+     BinaryObjectInspector {
+ 
+-  protected LazyBinaryObjectInspector() {
++  public LazyBinaryObjectInspector() {
+     super(PrimitiveObjectInspectorUtils.binaryTypeEntry);
+   }
+ 
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/lazy/objectinspector/primitive/LazyStringObjectInspector.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/lazy/objectinspector/primitive/LazyStringObjectInspector.java
+index 25ab025..2f31d18 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/lazy/objectinspector/primitive/LazyStringObjectInspector.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/lazy/objectinspector/primitive/LazyStringObjectInspector.java
+@@ -28,8 +28,12 @@
+ public class LazyStringObjectInspector extends
+     AbstractPrimitiveLazyObjectInspector<Text> implements StringObjectInspector {
+ 
+-  boolean escaped;
+-  byte escapeChar;
++  private boolean escaped;
++  private byte escapeChar;
++
++  protected LazyStringObjectInspector() {
++    super();
++  }
+ 
+   LazyStringObjectInspector(boolean escaped, byte escapeChar) {
+     super(PrimitiveObjectInspectorUtils.stringTypeEntry);
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/lazybinary/objectinspector/LazyBinaryListObjectInspector.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/lazybinary/objectinspector/LazyBinaryListObjectInspector.java
+index 89bc722..5d643bc 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/lazybinary/objectinspector/LazyBinaryListObjectInspector.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/lazybinary/objectinspector/LazyBinaryListObjectInspector.java
+@@ -28,6 +28,9 @@
+  */
+ public class LazyBinaryListObjectInspector extends StandardListObjectInspector {
+ 
++  protected LazyBinaryListObjectInspector() {
++    super();
++  }
+   protected LazyBinaryListObjectInspector(
+       ObjectInspector listElementObjectInspector) {
+     super(listElementObjectInspector);
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/lazybinary/objectinspector/LazyBinaryMapObjectInspector.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/lazybinary/objectinspector/LazyBinaryMapObjectInspector.java
+index 1cd4218..4ee9586 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/lazybinary/objectinspector/LazyBinaryMapObjectInspector.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/lazybinary/objectinspector/LazyBinaryMapObjectInspector.java
+@@ -30,6 +30,9 @@
+  */
+ public class LazyBinaryMapObjectInspector extends StandardMapObjectInspector {
+ 
++  protected LazyBinaryMapObjectInspector() {
++    super();
++  }
+   protected LazyBinaryMapObjectInspector(ObjectInspector mapKeyObjectInspector,
+       ObjectInspector mapValueObjectInspector) {
+     super(mapKeyObjectInspector, mapValueObjectInspector);
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/lazybinary/objectinspector/LazyBinaryStructObjectInspector.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/lazybinary/objectinspector/LazyBinaryStructObjectInspector.java
+index 7141aac..e5ea452 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/lazybinary/objectinspector/LazyBinaryStructObjectInspector.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/lazybinary/objectinspector/LazyBinaryStructObjectInspector.java
+@@ -26,12 +26,15 @@
+ 
+ /**
+  * ObjectInspector for LazyBinaryStruct.
+- * 
++ *
+  * @see LazyBinaryStruct
+  */
+ public class LazyBinaryStructObjectInspector extends
+     StandardStructObjectInspector {
+ 
++  protected LazyBinaryStructObjectInspector() {
++    super();
++  }
+   protected LazyBinaryStructObjectInspector(List<String> structFieldNames,
+       List<ObjectInspector> structFieldObjectInspectors) {
+     super(structFieldNames, structFieldObjectInspectors);
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/ColumnarStructObjectInspector.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/ColumnarStructObjectInspector.java
+index 57ef071..7d0d91c 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/ColumnarStructObjectInspector.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/ColumnarStructObjectInspector.java
+@@ -46,6 +46,10 @@
+     protected ObjectInspector fieldObjectInspector;
+     protected String fieldComment;
+ 
++    protected MyField() {
++      super();
++    }
++
+     public MyField(int fieldID, String fieldName,
+         ObjectInspector fieldObjectInspector) {
+       this.fieldID = fieldID;
+@@ -80,13 +84,11 @@ public String toString() {
+     }
+   }
+ 
+-  protected List<MyField> fields;
++  private List<MyField> fields;
+ 
+-  @Override
+-  public String getTypeName() {
+-    return ObjectInspectorUtils.getStandardStructTypeName(this);
++  protected ColumnarStructObjectInspector() {
++    super();
+   }
+-
+   /**
+    * Call ObjectInspectorFactory.getLazySimpleStructObjectInspector instead.
+    */
+@@ -129,6 +131,11 @@ protected void init(List<StructField> fields) {
+   }
+ 
+   @Override
++  public String getTypeName() {
++    return ObjectInspectorUtils.getStandardStructTypeName(this);
++  }
++
++  @Override
+   public final Category getCategory() {
+     return Category.STRUCT;
+   }
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/DelegatedListObjectInspector.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/DelegatedListObjectInspector.java
+index 6283326..6a9215b 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/DelegatedListObjectInspector.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/DelegatedListObjectInspector.java
+@@ -22,9 +22,12 @@
+ 
+ public class DelegatedListObjectInspector implements ListObjectInspector {
+ 
+-  ListObjectInspector delegate;
+-  ObjectInspector element;
++  private ListObjectInspector delegate;
++  private ObjectInspector element;
+ 
++  protected DelegatedListObjectInspector() {
++    super();
++  }
+   public DelegatedListObjectInspector(ListObjectInspector delegate) {
+     this.delegate = delegate;
+   }
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/DelegatedMapObjectInspector.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/DelegatedMapObjectInspector.java
+index cce7fde..975d5cd 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/DelegatedMapObjectInspector.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/DelegatedMapObjectInspector.java
+@@ -26,6 +26,9 @@
+   private ObjectInspector key;
+   private ObjectInspector value;
+ 
++  protected DelegatedMapObjectInspector() {
++    super();
++  }
+   public DelegatedMapObjectInspector(MapObjectInspector delegate) {
+     this.delegate = delegate;
+   }
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/DelegatedStructObjectInspector.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/DelegatedStructObjectInspector.java
+index 26f2511..5e1a369 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/DelegatedStructObjectInspector.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/DelegatedStructObjectInspector.java
+@@ -26,6 +26,9 @@
+   private StructObjectInspector delegate;
+   private List<DelegatedStructField> fields;
+ 
++  protected DelegatedStructObjectInspector() {
++    super();
++  }
+   public DelegatedStructObjectInspector(StructObjectInspector delegate) {
+     this.delegate = delegate;
+   }
+@@ -58,6 +61,7 @@ public String getFieldComment() {
+     }
+   }
+ 
++  @Override
+   public List<? extends StructField> getAllStructFieldRefs() {
+     if (fields != null || delegate.getAllStructFieldRefs() == null) {
+       return fields;
+@@ -70,15 +74,18 @@ public String getFieldComment() {
+     return this.fields = delegate;
+   }
+ 
++  @Override
+   public StructField getStructFieldRef(String fieldName) {
+     StructField field = delegate.getStructFieldRef(fieldName);
+     return field == null ? null : new DelegatedStructField(field);
+   }
+ 
++  @Override
+   public Object getStructFieldData(Object data, StructField fieldRef) {
+     return delegate.getStructFieldData(data, ((DelegatedStructField) fieldRef).field);
+   }
+ 
++  @Override
+   public List<Object> getStructFieldsDataAsList(Object data) {
+     return delegate.getStructFieldsDataAsList(data);
+   }
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/DelegatedUnionObjectInspector.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/DelegatedUnionObjectInspector.java
+index ecef3c7..521fdd6 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/DelegatedUnionObjectInspector.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/DelegatedUnionObjectInspector.java
+@@ -26,6 +26,9 @@
+   private UnionObjectInspector delegate;
+   private List<ObjectInspector> children;
+ 
++  protected DelegatedUnionObjectInspector() {
++    super();
++  }
+   public DelegatedUnionObjectInspector(UnionObjectInspector delegate) {
+     this.delegate = delegate;
+   }
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/MetadataListStructObjectInspector.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/MetadataListStructObjectInspector.java
+index b8d3421..76f5d09 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/MetadataListStructObjectInspector.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/MetadataListStructObjectInspector.java
+@@ -31,10 +31,10 @@
+  * StructObjectInspector works on struct data that is stored as a Java List or
+  * Java Array object. Basically, the fields are stored sequentially in the List
+  * object.
+- * 
++ *
+  * The names of the struct fields and the internal structure of the struct
+  * fields are specified in the ctor of the StructObjectInspector.
+- * 
++ *
+  */
+ public class MetadataListStructObjectInspector extends
+     StandardStructObjectInspector {
+@@ -79,6 +79,9 @@ public static MetadataListStructObjectInspector getInstance(
+     return r;
+   }
+ 
++  protected MetadataListStructObjectInspector() {
++    super();
++  }
+   MetadataListStructObjectInspector(List<String> columnNames) {
+     super(columnNames, getFieldObjectInspectors(columnNames.size()));
+   }
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/ReflectionStructObjectInspector.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/ReflectionStructObjectInspector.java
+index 4689dc4..bd3cdd4 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/ReflectionStructObjectInspector.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/ReflectionStructObjectInspector.java
+@@ -45,6 +45,10 @@
+     protected Field field;
+     protected ObjectInspector fieldObjectInspector;
+ 
++    protected MyField() {
++      super();
++    }
++
+     public MyField(Field field, ObjectInspector fieldObjectInspector) {
+       this.field = field;
+       this.fieldObjectInspector = fieldObjectInspector;
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/StandardConstantListObjectInspector.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/StandardConstantListObjectInspector.java
+index 5aad51f..b86ed75 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/StandardConstantListObjectInspector.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/StandardConstantListObjectInspector.java
+@@ -32,6 +32,9 @@
+ 
+   private List<?> value;
+ 
++  protected StandardConstantListObjectInspector() {
++    super();
++  }
+   /**
+    * Call ObjectInspectorFactory.getStandardListObjectInspector instead.
+    */
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/StandardConstantMapObjectInspector.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/StandardConstantMapObjectInspector.java
+index ff190af..a4dc1e0 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/StandardConstantMapObjectInspector.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/StandardConstantMapObjectInspector.java
+@@ -32,6 +32,9 @@
+ 
+   private Map<?, ?> value;
+ 
++  protected StandardConstantMapObjectInspector() {
++    super();
++  }
+   /**
+    * Call ObjectInspectorFactory.getStandardMapObjectInspector instead.
+    */
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/StandardListObjectInspector.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/StandardListObjectInspector.java
+index af14663..6eb8803 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/StandardListObjectInspector.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/StandardListObjectInspector.java
+@@ -24,14 +24,17 @@
+ /**
+  * DefaultListObjectInspector works on list data that is stored as a Java List
+  * or Java Array object.
+- * 
++ *
+  * Always use the ObjectInspectorFactory to create new ObjectInspector objects,
+  * instead of directly creating an instance of this class.
+  */
+ public class StandardListObjectInspector implements SettableListObjectInspector {
+ 
+-  ObjectInspector listElementObjectInspector;
++  private ObjectInspector listElementObjectInspector;
+ 
++  protected StandardListObjectInspector() {
++    super();
++  }
+   /**
+    * Call ObjectInspectorFactory.getStandardListObjectInspector instead.
+    */
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/StandardMapObjectInspector.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/StandardMapObjectInspector.java
+index 2f5c1d9..2f3c7ce 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/StandardMapObjectInspector.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/StandardMapObjectInspector.java
+@@ -25,20 +25,23 @@
+  * StandardMapObjectInspector works on map data that is stored as a Java Map
+  * object. Note: the key object of the map must support equals and hashCode by
+  * itself.
+- * 
++ *
+  * We also plan to have a GeneralMapObjectInspector which can work on map with
+  * key objects that does not support equals and hashCode. That will require us
+  * to store InspectableObject as the key, which will have overridden equals and
+  * hashCode methods.
+- * 
++ *
+  * Always use the ObjectInspectorFactory to create new ObjectInspector objects,
+  * instead of directly creating an instance of this class.
+  */
+ public class StandardMapObjectInspector implements SettableMapObjectInspector {
+ 
+-  ObjectInspector mapKeyObjectInspector;
+-  ObjectInspector mapValueObjectInspector;
++  private ObjectInspector mapKeyObjectInspector;
++  private ObjectInspector mapValueObjectInspector;
+ 
++  protected StandardMapObjectInspector() {
++    super();
++  }
+   /**
+    * Call ObjectInspectorFactory.getStandardMapObjectInspector instead.
+    */
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/StandardStructObjectInspector.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/StandardStructObjectInspector.java
+index e89163c..077c371 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/StandardStructObjectInspector.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/StandardStructObjectInspector.java
+@@ -29,10 +29,10 @@
+  * ListStructObjectInspector works on struct data that is stored as a Java List
+  * or Java Array object. Basically, the fields are stored sequentially in the
+  * List object.
+- * 
++ *
+  * The names of the struct fields and the internal structure of the struct
+  * fields are specified in the ctor of the StructObjectInspector.
+- * 
++ *
+  * Always use the ObjectInspectorFactory to create new ObjectInspector objects,
+  * instead of directly creating an instance of this class.
+  */
+@@ -48,6 +48,10 @@
+     protected ObjectInspector fieldObjectInspector;
+     protected String fieldComment;
+ 
++    protected MyField() {
++      super();
++    }
++    
+     public MyField(int fieldID, String fieldName,
+         ObjectInspector fieldObjectInspector) {
+       this.fieldID = fieldID;
+@@ -85,10 +89,9 @@ public String toString() {
+ 
+   protected List<MyField> fields;
+ 
+-  public String getTypeName() {
+-    return ObjectInspectorUtils.getStandardStructTypeName(this);
++  protected StandardStructObjectInspector() {
++    super();
+   }
+-
+   /**
+    * Call ObjectInspectorFactory.getStandardListObjectInspector instead.
+    */
+@@ -133,6 +136,10 @@ protected void init(List<StructField> fields) {
+     }
+   }
+ 
++  public String getTypeName() {
++    return ObjectInspectorUtils.getStandardStructTypeName(this);
++  }
++
+   public final Category getCategory() {
+     return Category.STRUCT;
+   }
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/StandardUnionObjectInspector.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/StandardUnionObjectInspector.java
+index 21fa2f7..7bfc542 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/StandardUnionObjectInspector.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/StandardUnionObjectInspector.java
+@@ -31,8 +31,11 @@
+  * objects, instead of directly creating an instance of this class.
+  */
+ public class StandardUnionObjectInspector implements UnionObjectInspector {
+-  List<ObjectInspector> ois;
++  private List<ObjectInspector> ois;
+ 
++  protected StandardUnionObjectInspector() {
++    super();
++  }
+   public StandardUnionObjectInspector(List<ObjectInspector> ois) {
+     this.ois = ois;
+   }
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/UnionStructObjectInspector.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/UnionStructObjectInspector.java
+index 6e3dfea..60e55ec 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/UnionStructObjectInspector.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/UnionStructObjectInspector.java
+@@ -25,11 +25,11 @@
+  * UnionStructObjectInspector unions several struct data into a single struct.
+  * Basically, the fields of these structs are put together sequentially into a
+  * single struct.
+- * 
++ *
+  * The object that can be acceptable by this ObjectInspector is a List of
+  * objects, each of which can be inspected by the ObjectInspector provided in
+  * the ctor of UnionStructObjectInspector.
+- * 
++ *
+  * Always use the ObjectInspectorFactory to create new ObjectInspector objects,
+  * instead of directly creating an instance of this class.
+  */
+@@ -40,9 +40,13 @@
+    *
+    */
+   public static class MyField implements StructField {
+-    public int structID;
+-    StructField structField;
++    protected int structID;
++    protected StructField structField;
+ 
++    protected MyField() {
++      super();
++    }
++    
+     public MyField(int structID, StructField structField) {
+       this.structID = structID;
+       this.structField = structField;
+@@ -61,9 +65,12 @@ public String getFieldComment() {
+     }
+   }
+ 
+-  List<StructObjectInspector> unionObjectInspectors;
+-  List<MyField> fields;
++  private List<StructObjectInspector> unionObjectInspectors;
++  private List<MyField> fields;
+ 
++  protected UnionStructObjectInspector() {
++    super();
++  }
+   protected UnionStructObjectInspector(
+       List<StructObjectInspector> unionObjectInspectors) {
+     init(unionObjectInspectors);
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/AbstractPrimitiveJavaObjectInspector.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/AbstractPrimitiveJavaObjectInspector.java
+index 59cb6ad..b2ae767 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/AbstractPrimitiveJavaObjectInspector.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/AbstractPrimitiveJavaObjectInspector.java
+@@ -25,6 +25,9 @@
+ public abstract class AbstractPrimitiveJavaObjectInspector extends
+     AbstractPrimitiveObjectInspector {
+ 
++  protected AbstractPrimitiveJavaObjectInspector() {
++    super();
++  }
+   protected AbstractPrimitiveJavaObjectInspector(PrimitiveTypeEntry typeEntry) {
+     super(typeEntry);
+   }
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/AbstractPrimitiveObjectInspector.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/AbstractPrimitiveObjectInspector.java
+index 1a6921f..482b92e 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/AbstractPrimitiveObjectInspector.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/AbstractPrimitiveObjectInspector.java
+@@ -28,9 +28,12 @@
+ public abstract class AbstractPrimitiveObjectInspector implements
+     PrimitiveObjectInspector {
+ 
+-  transient PrimitiveTypeEntry typeEntry;
++  protected PrimitiveTypeEntry typeEntry;
+   protected BaseTypeParams typeParams;
+ 
++  protected AbstractPrimitiveObjectInspector() {
++    super();
++  }
+   /**
+    * Construct a AbstractPrimitiveObjectInspector.
+    */
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/AbstractPrimitiveWritableObjectInspector.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/AbstractPrimitiveWritableObjectInspector.java
+index 1e11875..16daf8f 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/AbstractPrimitiveWritableObjectInspector.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/AbstractPrimitiveWritableObjectInspector.java
+@@ -25,6 +25,9 @@
+ public abstract class AbstractPrimitiveWritableObjectInspector extends
+     AbstractPrimitiveObjectInspector {
+ 
++  protected AbstractPrimitiveWritableObjectInspector() {
++    super();
++  }
+   protected AbstractPrimitiveWritableObjectInspector(
+       PrimitiveTypeEntry typeEntry) {
+     super(typeEntry);
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/PrimitiveObjectInspectorUtils.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/PrimitiveObjectInspectorUtils.java
+index 2eb6f9e..f6fe169 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/PrimitiveObjectInspectorUtils.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/PrimitiveObjectInspectorUtils.java
+@@ -99,6 +99,10 @@
+     public Class<?> typeParamsClass;
+     public BaseTypeParams typeParams;
+ 
++    protected PrimitiveTypeEntry() {
++      super();
++    }
++    
+     PrimitiveTypeEntry(
+         PrimitiveObjectInspector.PrimitiveCategory primitiveCategory,
+         String typeName, Class<?> primitiveType, Class<?> javaClass,
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantBinaryObjectInspector.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantBinaryObjectInspector.java
+index fe91a82..1e7df6b 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantBinaryObjectInspector.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantBinaryObjectInspector.java
+@@ -28,8 +28,12 @@
+     WritableBinaryObjectInspector implements
+     ConstantObjectInspector {
+ 
+-  private final BytesWritable value;
++  private BytesWritable value;
+ 
++  protected WritableConstantBinaryObjectInspector() {
++    super();
++  }
++  
+   public WritableConstantBinaryObjectInspector(BytesWritable value) {
+     super();
+     this.value = value;
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantBooleanObjectInspector.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantBooleanObjectInspector.java
+index 03a92e8..62e39f3 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantBooleanObjectInspector.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantBooleanObjectInspector.java
+@@ -31,6 +31,9 @@
+ 
+   private BooleanWritable value;
+ 
++  protected WritableConstantBooleanObjectInspector() {
++    super();
++  }
+   WritableConstantBooleanObjectInspector(BooleanWritable value) {
+     super();
+     this.value = value;
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantByteObjectInspector.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantByteObjectInspector.java
+index 808f8e4..0915562 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantByteObjectInspector.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantByteObjectInspector.java
+@@ -31,6 +31,9 @@
+ 
+   private ByteWritable value;
+ 
++  protected WritableConstantByteObjectInspector() {
++    super();
++  }
+   WritableConstantByteObjectInspector(ByteWritable value) {
+     super();
+     this.value = value;
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantDateObjectInspector.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantDateObjectInspector.java
+index 3bd87e9..52cb92c 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantDateObjectInspector.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantDateObjectInspector.java
+@@ -31,6 +31,9 @@
+ 
+   private DateWritable value;
+ 
++  protected WritableConstantDateObjectInspector() {
++    super();
++  }
+   WritableConstantDateObjectInspector(DateWritable value) {
+     super();
+     this.value = value;
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantDoubleObjectInspector.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantDoubleObjectInspector.java
+index 4fe1639..fe6f55f 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantDoubleObjectInspector.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantDoubleObjectInspector.java
+@@ -31,6 +31,9 @@
+ 
+   private DoubleWritable value;
+ 
++  protected WritableConstantDoubleObjectInspector() {
++    super();
++  }
+   WritableConstantDoubleObjectInspector(DoubleWritable value) {
+     super();
+     this.value = value;
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantFloatObjectInspector.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantFloatObjectInspector.java
+index d40bdc7..a1f2e46 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantFloatObjectInspector.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantFloatObjectInspector.java
+@@ -31,6 +31,9 @@
+ 
+   private FloatWritable value;
+ 
++  protected WritableConstantFloatObjectInspector() {
++    super();
++  }
+   WritableConstantFloatObjectInspector(FloatWritable value) {
+     super();
+     this.value = value;
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantHiveDecimalObjectInspector.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantHiveDecimalObjectInspector.java
+index c0413e2..b6cb744 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantHiveDecimalObjectInspector.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantHiveDecimalObjectInspector.java
+@@ -27,8 +27,11 @@
+ public class WritableConstantHiveDecimalObjectInspector extends WritableHiveDecimalObjectInspector
+     implements ConstantObjectInspector {
+ 
+-  private final HiveDecimalWritable value;
++  private HiveDecimalWritable value;
+ 
++  protected WritableConstantHiveDecimalObjectInspector() {
++    super();
++  }
+   WritableConstantHiveDecimalObjectInspector(HiveDecimalWritable value) {
+     this.value = value;
+   }
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantIntObjectInspector.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantIntObjectInspector.java
+index 8cb8c1c..942a178 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantIntObjectInspector.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantIntObjectInspector.java
+@@ -31,6 +31,9 @@
+ 
+   private IntWritable value;
+ 
++  protected WritableConstantIntObjectInspector() {
++    super();
++  }
+   WritableConstantIntObjectInspector(IntWritable value) {
+     super();
+     this.value = value;
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantLongObjectInspector.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantLongObjectInspector.java
+index 42f9eed..ad3a063 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantLongObjectInspector.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantLongObjectInspector.java
+@@ -31,6 +31,9 @@
+ 
+   private LongWritable value;
+ 
++  protected WritableConstantLongObjectInspector() {
++    super();
++  }
+   WritableConstantLongObjectInspector(LongWritable value) {
+     super();
+     this.value = value;
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantShortObjectInspector.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantShortObjectInspector.java
+index a476fa0..6b67dac 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantShortObjectInspector.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantShortObjectInspector.java
+@@ -31,6 +31,9 @@
+ 
+   private ShortWritable value;
+ 
++  protected WritableConstantShortObjectInspector() {
++    super();
++  }
+   WritableConstantShortObjectInspector(ShortWritable value) {
+     super();
+     this.value = value;
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantStringObjectInspector.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantStringObjectInspector.java
+index 802357b..bbbf2c6 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantStringObjectInspector.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantStringObjectInspector.java
+@@ -31,6 +31,9 @@
+ 
+   private Text value;
+ 
++  protected WritableConstantStringObjectInspector() {
++    super();
++  }
+   WritableConstantStringObjectInspector(Text value) {
+     super();
+     this.value = value;
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantTimestampObjectInspector.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantTimestampObjectInspector.java
+index 2ddd3c3..b875cf1 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantTimestampObjectInspector.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/primitive/WritableConstantTimestampObjectInspector.java
+@@ -31,6 +31,9 @@
+ 
+   private TimestampWritable value;
+ 
++  protected WritableConstantTimestampObjectInspector() {
++    super();
++  }
+   WritableConstantTimestampObjectInspector(TimestampWritable value) {
+     super();
+     this.value = value;
+-- 
+1.7.0.4
+

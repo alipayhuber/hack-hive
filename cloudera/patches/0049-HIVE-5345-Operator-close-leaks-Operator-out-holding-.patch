@@ -1,0 +1,26 @@
+From 9133091ae7f2771b8a237ff4944971e7903a4161 Mon Sep 17 00:00:00 2001
+From: Ashutosh Chauhan <hashutosh@apache.org>
+Date: Wed, 25 Sep 2013 03:40:08 +0000
+Subject: [PATCH 049/375] HIVE-5345 : Operator::close() leaks Operator::out, holding reference to buffers (Gopal V via Ashutosh Chauhan)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1526100 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../org/apache/hadoop/hive/ql/exec/Operator.java   |    2 ++
+ 1 files changed, 2 insertions(+), 0 deletions(-)
+
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/Operator.java b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/Operator.java
+index 3b15667..8c74645 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/Operator.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/Operator.java
+@@ -613,6 +613,8 @@ public void close(boolean abort) throws HiveException {
+         op.close(abort);
+       }
+ 
++      out = null;
++
+       LOG.info(id + " Close done");
+     } catch (HiveException e) {
+       e.printStackTrace();
+-- 
+1.7.0.4
+

@@ -1,0 +1,117 @@
+From 639016a2c60517c2ce0c3c77038450993c15d59f Mon Sep 17 00:00:00 2001
+From: Ashutosh Chauhan <hashutosh@apache.org>
+Date: Thu, 31 Oct 2013 00:51:09 +0000
+Subject: [PATCH 135/375] HIVE-5670 : annoying ZK exceptions are annoying (Sergey Shelukhin via Ashutosh Chauhan)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1537361 13f79535-47bb-0310-9956-ffa450edef68
+---
+ common/src/java/conf/hive-log4j.properties         |    4 ++++
+ .../test/resources/hive-exec-log4j-test.properties |    4 ++++
+ .../src/test/resources/hive-log4j-test.properties  |    4 ++++
+ data/conf/hive-log4j.properties                    |    4 ++++
+ ql/src/java/conf/hive-exec-log4j.properties        |    4 ++++
+ .../test/org/apache/hadoop/hive/ql/QTestUtil.java  |    8 +++++++-
+ .../ptest2/src/main/resources/log4j.properties     |    4 ++++
+ 7 files changed, 31 insertions(+), 1 deletions(-)
+
+diff --git a/src/common/src/java/conf/hive-log4j.properties b/src/common/src/java/conf/hive-log4j.properties
+index 41dffa9..936fc86 100644
+--- a/src/common/src/java/conf/hive-log4j.properties
++++ b/src/common/src/java/conf/hive-log4j.properties
+@@ -82,3 +82,7 @@ log4j.category.JPOX.Query=ERROR,DRFA
+ log4j.category.JPOX.General=ERROR,DRFA
+ log4j.category.JPOX.Enhancer=ERROR,DRFA
+ 
++
++# Silence useless ZK logs
++log4j.logger.org.apache.zookeeper.server.NIOServerCnxn=WARN,DRFA
++log4j.logger.org.apache.zookeeper.ClientCnxnSocketNIO=WARN,DRFA
+diff --git a/src/common/src/test/resources/hive-exec-log4j-test.properties b/src/common/src/test/resources/hive-exec-log4j-test.properties
+index 29eceb2..839a9ca 100644
+--- a/src/common/src/test/resources/hive-exec-log4j-test.properties
++++ b/src/common/src/test/resources/hive-exec-log4j-test.properties
+@@ -53,3 +53,7 @@ log4j.category.JPOX.Query=ERROR,FA
+ log4j.category.JPOX.General=ERROR,FA
+ log4j.category.JPOX.Enhancer=ERROR,FA
+ 
++
++# Silence useless ZK logs
++log4j.logger.org.apache.zookeeper.server.NIOServerCnxn=WARN,FA
++log4j.logger.org.apache.zookeeper.ClientCnxnSocketNIO=WARN,FA
+diff --git a/src/common/src/test/resources/hive-log4j-test.properties b/src/common/src/test/resources/hive-log4j-test.properties
+index c6f7cc8..51acda2 100644
+--- a/src/common/src/test/resources/hive-log4j-test.properties
++++ b/src/common/src/test/resources/hive-log4j-test.properties
+@@ -65,3 +65,7 @@ log4j.category.JPOX.Query=ERROR,DRFA
+ log4j.category.JPOX.General=ERROR,DRFA
+ log4j.category.JPOX.Enhancer=ERROR,DRFA
+ 
++
++# Silence useless ZK logs
++log4j.logger.org.apache.zookeeper.server.NIOServerCnxn=WARN,DRFA
++log4j.logger.org.apache.zookeeper.ClientCnxnSocketNIO=WARN,DRFA
+diff --git a/src/data/conf/hive-log4j.properties b/src/data/conf/hive-log4j.properties
+index 885c86f..ec6951a 100644
+--- a/src/data/conf/hive-log4j.properties
++++ b/src/data/conf/hive-log4j.properties
+@@ -76,3 +76,7 @@ log4j.category.JPOX.General=ERROR,DRFA
+ log4j.category.JPOX.Enhancer=ERROR,DRFA
+ log4j.logger.org.apache.hadoop.conf.Configuration=ERROR,DRFA
+ 
++
++# Silence useless ZK logs
++log4j.logger.org.apache.zookeeper.server.NIOServerCnxn=WARN,DRFA
++log4j.logger.org.apache.zookeeper.ClientCnxnSocketNIO=WARN,DRFA
+diff --git a/src/ql/src/java/conf/hive-exec-log4j.properties b/src/ql/src/java/conf/hive-exec-log4j.properties
+index 74d62d5..37f330c 100644
+--- a/src/ql/src/java/conf/hive-exec-log4j.properties
++++ b/src/ql/src/java/conf/hive-exec-log4j.properties
+@@ -71,3 +71,7 @@ log4j.category.JPOX.Query=ERROR,FA
+ log4j.category.JPOX.General=ERROR,FA
+ log4j.category.JPOX.Enhancer=ERROR,FA
+ 
++
++# Silence useless ZK logs
++log4j.logger.org.apache.zookeeper.server.NIOServerCnxn=WARN,FA
++log4j.logger.org.apache.zookeeper.ClientCnxnSocketNIO=WARN,FA
+diff --git a/src/ql/src/test/org/apache/hadoop/hive/ql/QTestUtil.java b/src/ql/src/test/org/apache/hadoop/hive/ql/QTestUtil.java
+index 96223eb..3888ca6 100644
+--- a/src/ql/src/test/org/apache/hadoop/hive/ql/QTestUtil.java
++++ b/src/ql/src/test/org/apache/hadoop/hive/ql/QTestUtil.java
+@@ -86,6 +86,8 @@
+ import org.apache.hadoop.mapred.TextInputFormat;
+ import org.apache.hadoop.util.Shell;
+ import org.apache.thrift.protocol.TBinaryProtocol;
++import org.apache.zookeeper.WatchedEvent;
++import org.apache.zookeeper.Watcher;
+ import org.apache.zookeeper.ZooKeeper;
+ 
+ /**
+@@ -1343,7 +1345,11 @@ public void preTest(HiveConf conf) throws Exception {
+       }
+ 
+       int sessionTimeout = conf.getIntVar(HiveConf.ConfVars.HIVE_ZOOKEEPER_SESSION_TIMEOUT);
+-      zooKeeper = new ZooKeeper("localhost:" + zkPort, sessionTimeout, null);
++      zooKeeper = new ZooKeeper("localhost:" + zkPort, sessionTimeout, new Watcher() {
++        @Override
++        public void process(WatchedEvent arg0) {
++        }
++      });
+ 
+       String zkServer = "localhost";
+       conf.set("hive.zookeeper.quorum", zkServer);
+diff --git a/src/testutils/ptest2/src/main/resources/log4j.properties b/src/testutils/ptest2/src/main/resources/log4j.properties
+index b8a0f51..edb9696 100644
+--- a/src/testutils/ptest2/src/main/resources/log4j.properties
++++ b/src/testutils/ptest2/src/main/resources/log4j.properties
+@@ -31,3 +31,7 @@ log4j.logger.org.jclouds=INFO
+ log4j.logger.jclouds=INFO
+ log4j.logger.org.apache.hive=DEBUG
+ log4j.logger.org.apache.http=TRACE
++
++# Silence useless ZK logs
++log4j.logger.org.apache.zookeeper.server.NIOServerCnxn=WARN
++log4j.logger.org.apache.zookeeper.ClientCnxnSocketNIO=WARN
+-- 
+1.7.0.4
+

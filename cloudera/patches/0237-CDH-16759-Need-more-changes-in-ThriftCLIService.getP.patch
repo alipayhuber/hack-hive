@@ -1,0 +1,25 @@
+From 4dc0a3c06f15dc562a28a0ffffa2024a4939dd3a Mon Sep 17 00:00:00 2001
+From: Prasad Mujumdar <prasadm@cloudera.com>
+Date: Thu, 16 Jan 2014 16:24:34 -0800
+Subject: [PATCH 237/375] CDH-16759: Need more changes in ThriftCLIService.getProxyUser
+
+---
+ .../hive/service/cli/thrift/ThriftCLIService.java  |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+
+diff --git a/src/service/src/java/org/apache/hive/service/cli/thrift/ThriftCLIService.java b/src/service/src/java/org/apache/hive/service/cli/thrift/ThriftCLIService.java
+index 64b916e..9c2995b 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/thrift/ThriftCLIService.java
++++ b/src/service/src/java/org/apache/hive/service/cli/thrift/ThriftCLIService.java
+@@ -537,7 +537,7 @@ private String getProxyUser(String realUser, Map<String, String> sessionConf,
+     // Verify proxy user privilege of the realUser for the proxyUser
+     try {
+       UserGroupInformation sessionUgi;
+-      if (!ShimLoader.getHadoopShims().isSecurityEnabled()) {
++      if (ShimLoader.getHadoopShims().isSecurityEnabled()) {
+         sessionUgi = ShimLoader.getHadoopShims().createProxyUser(realUser);
+       } else {
+         sessionUgi = ShimLoader.getHadoopShims().createRemoteUser(realUser, null);
+-- 
+1.7.0.4
+

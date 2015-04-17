@@ -1,0 +1,80 @@
+From 3a261a9387b6b0c04f9330875c5df17e06e0667d Mon Sep 17 00:00:00 2001
+From: Xuefu Zhang <xzhang@xzlt.(none)>
+Date: Tue, 1 Apr 2014 09:26:31 -0700
+Subject: [PATCH 319/375] CDH-18294: Backport HIVE-6793: DDLSemanticAnalyzer.analyzeShowRoles does not use HiveAuthorizationTaskFactory
+
+---
+ .../hadoop/hive/ql/parse/DDLSemanticAnalyzer.java  |   15 ++++++++-------
+ .../HiveAuthorizationTaskFactory.java              |    5 +++++
+ .../HiveAuthorizationTaskFactoryImpl.java          |   10 ++++++++++
+ 3 files changed, 23 insertions(+), 7 deletions(-)
+
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/DDLSemanticAnalyzer.java b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/DDLSemanticAnalyzer.java
+index 1cda1e4..ab5778c 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/DDLSemanticAnalyzer.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/DDLSemanticAnalyzer.java
+@@ -529,13 +529,14 @@ private void analyzeShowRoleGrant(ASTNode ast) throws SemanticException {
+     }
+   }
+ 
+-  private void analyzeShowRoles(ASTNode ast) {
+-    RoleDDLDesc showRolesDesc = new RoleDDLDesc(null, null,
+-        RoleDDLDesc.RoleOperation.SHOW_ROLES, null);
+-    showRolesDesc.setResFile(ctx.getResFile().toString());
+-    rootTasks.add(TaskFactory.get(new DDLWork(getInputs(), getOutputs(),
+-        showRolesDesc), conf));
+-    setFetchTask(createFetchTask(RoleDDLDesc.getSchema()));
++  private void analyzeShowRoles(ASTNode ast) throws SemanticException {
++    Task<DDLWork> roleDDLTask = (Task<DDLWork>) hiveAuthorizationTaskFactory
++        .createShowRolesTask(ast, ctx.getResFile(), getInputs(), getOutputs());
++
++    if (roleDDLTask != null) {
++      rootTasks.add(roleDDLTask);
++      setFetchTask(createFetchTask(RoleDDLDesc.getSchema()));
++    }
+   }
+ 
+   private void analyzeAlterDatabase(ASTNode ast) throws SemanticException {
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/authorization/HiveAuthorizationTaskFactory.java b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/authorization/HiveAuthorizationTaskFactory.java
+index bd6ef24..b64b34e 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/authorization/HiveAuthorizationTaskFactory.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/authorization/HiveAuthorizationTaskFactory.java
+@@ -26,6 +26,7 @@
+ import org.apache.hadoop.hive.ql.hooks.WriteEntity;
+ import org.apache.hadoop.hive.ql.parse.ASTNode;
+ import org.apache.hadoop.hive.ql.parse.SemanticException;
++import org.apache.hadoop.hive.ql.plan.DDLWork;
+ 
+ /**
+  * HiveAuthorizationTaskFactory creates DDL authorization related
+@@ -62,4 +63,8 @@
+ 
+   public Task<? extends Serializable> createShowCurrentRoleTask(HashSet<ReadEntity> inputs,
+       HashSet<WriteEntity> outputs, Path resFile) throws SemanticException;
++
++  public Task<? extends Serializable> createShowRolesTask(ASTNode ast, Path resFile,
++      HashSet<ReadEntity> inputs, HashSet<WriteEntity> outputs) throws SemanticException;
++
+ }
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/authorization/HiveAuthorizationTaskFactoryImpl.java b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/authorization/HiveAuthorizationTaskFactoryImpl.java
+index c336435..1ebaf7d 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/authorization/HiveAuthorizationTaskFactoryImpl.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/authorization/HiveAuthorizationTaskFactoryImpl.java
+@@ -342,4 +342,14 @@ private String toMessage(ErrorMsg message, Object detail) {
+       throws SemanticException {
+     throw new SemanticException("SHOW CURRENT ROLES is only supported by Sentry. Please enable Sentry.");
+   }
++
++  @Override
++  public Task<? extends Serializable> createShowRolesTask(ASTNode ast, Path resFile,
++      HashSet<ReadEntity> inputs, HashSet<WriteEntity> outputs) throws SemanticException {
++    RoleDDLDesc showRolesDesc = new RoleDDLDesc(null, null, RoleDDLDesc.RoleOperation.SHOW_ROLES,
++        null);
++    showRolesDesc.setResFile(resFile.toString());
++    return TaskFactory.get(new DDLWork(inputs, outputs, showRolesDesc), conf);
++  }
++
+ }
+-- 
+1.7.0.4
+

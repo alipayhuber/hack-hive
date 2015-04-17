@@ -1,0 +1,43 @@
+From d5db8421fc781c704cfd8ae54156c67c0478ada9 Mon Sep 17 00:00:00 2001
+From: Jianyong Dai <daijy@apache.org>
+Date: Mon, 14 Oct 2013 18:38:29 +0000
+Subject: [PATCH 087/375] HIVE-5448: webhcat duplicate test TestMapReduce_2 should be removed (Thejas M Nair via Daniel Dai)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1532018 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../test/e2e/templeton/tests/jobsubmission.conf    |   18 +-----------------
+ 1 files changed, 1 insertions(+), 17 deletions(-)
+
+diff --git a/src/hcatalog/src/test/e2e/templeton/tests/jobsubmission.conf b/src/hcatalog/src/test/e2e/templeton/tests/jobsubmission.conf
+index 82b4271..2e0d537 100644
+--- a/src/hcatalog/src/test/e2e/templeton/tests/jobsubmission.conf
++++ b/src/hcatalog/src/test/e2e/templeton/tests/jobsubmission.conf
+@@ -77,24 +77,8 @@ $cfg =
+      'check_call_back' => 1,
+     },
+     {
+-         
+-     'num' => 2,
+-     'method' => 'POST',
+-     'url' => ':TEMPLETON_URL:/templeton/v1/mapreduce/jar',
+-     'post_options' => ['user.name=:UNAME:','arg=-mt', 'arg=660000', 
+-                        'jar=:INPDIR_HDFS:/hexamples.jar', 'class=sleep', ],
+-     'json_field_substr_match' => { 'id' => '\d+'},
+-                                #results
+-     'status_code' => 200,
+-     'check_job_created' => 1,
+-     'check_job_complete' => 'SUCCESS',
+-     'check_job_exit_value' => 0,
+-     'check_call_back' => 1,
+-     'timeout' => 840, #increase timeout as this test takes long
+-    },
+-    {
+      # with log enabled 
+-     'num' => 3,
++     'num' => 2,
+      'method' => 'POST',
+      'url' => ':TEMPLETON_URL:/templeton/v1/mapreduce/jar',
+      'post_options' => ['user.name=:UNAME:','arg=:INPDIR_HDFS:/nums.txt', 'arg= :OUTDIR:/wc.txt', 
+-- 
+1.7.0.4
+

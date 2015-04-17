@@ -1,0 +1,24 @@
+From 0c45f8352eb4ba1046021642a6e17a7f1b9f0944 Mon Sep 17 00:00:00 2001
+From: Prasad Mujumdar <prasadm@cloudera.com>
+Date: Thu, 27 Feb 2014 23:32:29 -0800
+Subject: [PATCH 297/375] CLOUDERA-BUILD: CDH-17743: Remove hadoop-yarn jars getting pulled into hive distribution
+
+---
+ shims/0.23/pom.xml |    1 +
+ 1 files changed, 1 insertions(+), 0 deletions(-)
+
+diff --git a/src/shims/0.23/pom.xml b/src/shims/0.23/pom.xml
+index 1276558..15de6dd 100644
+--- a/src/shims/0.23/pom.xml
++++ b/src/shims/0.23/pom.xml
+@@ -67,6 +67,7 @@
+       <groupId>org.apache.hadoop</groupId>
+       <artifactId>hadoop-yarn-server-resourcemanager</artifactId>
+       <version>${hadoop-23.version}</version>
++      <optional>true</optional>
+     </dependency>
+     <dependency>
+       <groupId>org.apache.hadoop</groupId>
+-- 
+1.7.0.4
+

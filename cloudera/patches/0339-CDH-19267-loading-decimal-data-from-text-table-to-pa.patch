@@ -1,0 +1,34 @@
+From 7b3504ed42156ef7803337c623564c1d4156dd40 Mon Sep 17 00:00:00 2001
+From: Xuefu Zhang <xzhang@xzlt.(none)>
+Date: Tue, 20 May 2014 08:53:43 -0700
+Subject: [PATCH 339/375] CDH-19267: loading decimal data from text table to parquet messes up scale and precision
+
+---
+ .../hive/ql/io/parquet/serde/ParquetHiveSerDe.java |    4 +++-
+ 1 files changed, 3 insertions(+), 1 deletions(-)
+
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/io/parquet/serde/ParquetHiveSerDe.java b/src/ql/src/java/org/apache/hadoop/hive/ql/io/parquet/serde/ParquetHiveSerDe.java
+index 6291574..6b23fbe 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/io/parquet/serde/ParquetHiveSerDe.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/io/parquet/serde/ParquetHiveSerDe.java
+@@ -46,6 +46,7 @@
+ import org.apache.hadoop.hive.serde2.objectinspector.primitive.LongObjectInspector;
+ import org.apache.hadoop.hive.serde2.objectinspector.primitive.ShortObjectInspector;
+ import org.apache.hadoop.hive.serde2.objectinspector.primitive.StringObjectInspector;
++import org.apache.hadoop.hive.serde2.typeinfo.DecimalTypeInfo;
+ import org.apache.hadoop.hive.serde2.typeinfo.StructTypeInfo;
+ import org.apache.hadoop.hive.serde2.typeinfo.TypeInfo;
+ import org.apache.hadoop.hive.serde2.typeinfo.TypeInfoFactory;
+@@ -244,7 +245,8 @@ private Writable createPrimitive(final Object obj, final PrimitiveObjectInspecto
+       return new BinaryWritable(Binary.fromString(((StringObjectInspector) inspector).getPrimitiveJavaObject(obj)));
+     case DECIMAL:
+       HiveDecimal hd = (HiveDecimal)inspector.getPrimitiveJavaObject(obj);
+-      return new BinaryWritable(Binary.fromByteArray(hd.unscaledValue().toByteArray()));
++      DecimalTypeInfo decTypeInfo = (DecimalTypeInfo) inspector.getTypeInfo();
++      return new BinaryWritable(Binary.fromByteArray(hd.setScale(decTypeInfo.scale()).unscaledValue().toByteArray()));
+     default:
+       throw new SerDeException("Unknown primitive : " + inspector.getPrimitiveCategory());
+     }
+-- 
+1.7.0.4
+

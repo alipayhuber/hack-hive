@@ -1,0 +1,488 @@
+From 9ab658986c8c9b6af244d5bb7c53e9e11a76e723 Mon Sep 17 00:00:00 2001
+From: Prasad Mujumdar <prasadm@cloudera.com>
+Date: Tue, 21 Jan 2014 15:32:44 -0800
+Subject: [PATCH 243/375] CLOUDERA-BUILD CDH-16866: Update MR1 tests
+
+---
+ .../infer_bucket_sort_reducers_power_two.q         |    1 +
+ .../infer_bucket_sort_reducers_power_two_20.q      |   47 +++
+ .../infer_bucket_sort_reducers_power_two_20.q.out  |  401 ++++++++++++++++++++
+ 3 files changed, 449 insertions(+), 0 deletions(-)
+ create mode 100644 ql/src/test/queries/clientpositive/infer_bucket_sort_reducers_power_two_20.q
+ create mode 100644 ql/src/test/results/clientpositive/infer_bucket_sort_reducers_power_two_20.q.out
+
+diff --git a/src/ql/src/test/queries/clientpositive/infer_bucket_sort_reducers_power_two.q b/src/ql/src/test/queries/clientpositive/infer_bucket_sort_reducers_power_two.q
+index 090f04f..4d220a4 100644
+--- a/src/ql/src/test/queries/clientpositive/infer_bucket_sort_reducers_power_two.q
++++ b/src/ql/src/test/queries/clientpositive/infer_bucket_sort_reducers_power_two.q
+@@ -2,6 +2,7 @@ set hive.exec.infer.bucket.sort=true;
+ set hive.exec.infer.bucket.sort.num.buckets.power.two=true;
+ set hive.exec.reducers.bytes.per.reducer=2500;
+ 
++-- INCLUDE_HADOOP_MAJOR_VERSIONS(0.23)
+ -- This tests inferring how data is bucketed/sorted from the operators in the reducer
+ -- and populating that information in partitions' metadata, it also verifies that the
+ -- number of reducers chosen will be a power of two
+diff --git a/src/ql/src/test/queries/clientpositive/infer_bucket_sort_reducers_power_two_20.q b/src/ql/src/test/queries/clientpositive/infer_bucket_sort_reducers_power_two_20.q
+new file mode 100644
+index 0000000..4ee3c81
+--- /dev/null
++++ b/src/ql/src/test/queries/clientpositive/infer_bucket_sort_reducers_power_two_20.q
+@@ -0,0 +1,47 @@
++set hive.exec.infer.bucket.sort=true;
++set hive.exec.infer.bucket.sort.num.buckets.power.two=true;
++set hive.exec.reducers.bytes.per.reducer=2500;
++
++-- INCLUDE_HADOOP_MAJOR_VERSIONS(0.20, 0.20S)
++-- This tests inferring how data is bucketed/sorted from the operators in the reducer
++-- and populating that information in partitions' metadata, it also verifies that the
++-- number of reducers chosen will be a power of two
++
++CREATE TABLE test_table (key STRING, value STRING) PARTITIONED BY (part STRING);
++
++-- Test group by, should be bucketed and sorted by group by key
++INSERT OVERWRITE TABLE test_table PARTITION (part = '1') 
++SELECT key, count(*) FROM src GROUP BY key;
++
++DESCRIBE FORMATTED test_table PARTITION (part = '1');
++
++-- Test join, should be bucketed and sorted by join key
++INSERT OVERWRITE TABLE test_table PARTITION (part = '1') 
++SELECT a.key, a.value FROM src a JOIN src b ON a.key = b.key;
++
++DESCRIBE FORMATTED test_table PARTITION (part = '1');
++
++-- Test join with two keys, should be bucketed and sorted by join keys
++INSERT OVERWRITE TABLE test_table PARTITION (part = '1') 
++SELECT a.key, a.value FROM src a JOIN src b ON a.key = b.key AND a.value = b.value;
++
++DESCRIBE FORMATTED test_table PARTITION (part = '1');
++
++-- Test join on three tables on same key, should be bucketed and sorted by join key
++INSERT OVERWRITE TABLE test_table PARTITION (part = '1') 
++SELECT a.key, c.value FROM src a JOIN src b ON (a.key = b.key) JOIN src c ON (b.key = c.key);
++
++DESCRIBE FORMATTED test_table PARTITION (part = '1');
++
++-- Test join on three tables on different keys, should be bucketed and sorted by latter key
++INSERT OVERWRITE TABLE test_table PARTITION (part = '1') 
++SELECT a.key, c.value FROM src a JOIN src b ON (a.key = b.key) JOIN src c ON (b.value = c.value);
++
++DESCRIBE FORMATTED test_table PARTITION (part = '1');
++
++-- Test group by in subquery with another group by outside, should be bucketed and sorted by the
++-- key of the outer group by
++INSERT OVERWRITE TABLE test_table PARTITION (part = '1')
++SELECT count(1), value FROM (SELECT key, count(1) as value FROM src group by key) a group by value;
++
++DESCRIBE FORMATTED test_table PARTITION (part = '1');
+diff --git a/src/ql/src/test/results/clientpositive/infer_bucket_sort_reducers_power_two_20.q.out b/src/ql/src/test/results/clientpositive/infer_bucket_sort_reducers_power_two_20.q.out
+new file mode 100644
+index 0000000..a1008e3
+--- /dev/null
++++ b/src/ql/src/test/results/clientpositive/infer_bucket_sort_reducers_power_two_20.q.out
+@@ -0,0 +1,401 @@
++PREHOOK: query: -- INCLUDE_HADOOP_MAJOR_VERSIONS(0.20, 0.20S)
++-- This tests inferring how data is bucketed/sorted from the operators in the reducer
++-- and populating that information in partitions' metadata, it also verifies that the
++-- number of reducers chosen will be a power of two
++
++CREATE TABLE test_table (key STRING, value STRING) PARTITIONED BY (part STRING)
++PREHOOK: type: CREATETABLE
++POSTHOOK: query: -- INCLUDE_HADOOP_MAJOR_VERSIONS(0.20, 0.20S)
++-- This tests inferring how data is bucketed/sorted from the operators in the reducer
++-- and populating that information in partitions' metadata, it also verifies that the
++-- number of reducers chosen will be a power of two
++
++CREATE TABLE test_table (key STRING, value STRING) PARTITIONED BY (part STRING)
++POSTHOOK: type: CREATETABLE
++POSTHOOK: Output: default@test_table
++PREHOOK: query: -- Test group by, should be bucketed and sorted by group by key
++INSERT OVERWRITE TABLE test_table PARTITION (part = '1') 
++SELECT key, count(*) FROM src GROUP BY key
++PREHOOK: type: QUERY
++PREHOOK: Input: default@src
++PREHOOK: Output: default@test_table@part=1
++POSTHOOK: query: -- Test group by, should be bucketed and sorted by group by key
++INSERT OVERWRITE TABLE test_table PARTITION (part = '1') 
++SELECT key, count(*) FROM src GROUP BY key
++POSTHOOK: type: QUERY
++POSTHOOK: Input: default@src
++POSTHOOK: Output: default@test_table@part=1
++POSTHOOK: Lineage: test_table PARTITION(part=1).key SIMPLE [(src)src.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).value EXPRESSION [(src)src.null, ]
++PREHOOK: query: DESCRIBE FORMATTED test_table PARTITION (part = '1')
++PREHOOK: type: DESCTABLE
++POSTHOOK: query: DESCRIBE FORMATTED test_table PARTITION (part = '1')
++POSTHOOK: type: DESCTABLE
++POSTHOOK: Lineage: test_table PARTITION(part=1).key SIMPLE [(src)src.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).value EXPRESSION [(src)src.null, ]
++# col_name            	data_type           	comment             
++	 	 
++key                 	string              	None                
++value               	string              	None                
++	 	 
++# Partition Information	 	 
++# col_name            	data_type           	comment             
++	 	 
++part                	string              	None                
++	 	 
++# Detailed Partition Information	 	 
++Partition Value:    	[1]                 	 
++Database:           	default             	 
++Table:              	test_table          	 
++#### A masked pattern was here ####
++Protect Mode:       	None                	 
++#### A masked pattern was here ####
++Partition Parameters:	 	 
++	numFiles            	1                   
++	numRows             	309                 
++	rawDataSize         	1482                
++	totalSize           	1791                
++#### A masked pattern was here ####
++	 	 
++# Storage Information	 	 
++SerDe Library:      	org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe	 
++InputFormat:        	org.apache.hadoop.mapred.TextInputFormat	 
++OutputFormat:       	org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat	 
++Compressed:         	No                  	 
++Num Buckets:        	-1                  	 
++Bucket Columns:     	[]                  	 
++Sort Columns:       	[Order(col:key, order:1)]	 
++Storage Desc Params:	 	 
++	serialization.format	1                   
++PREHOOK: query: -- Test join, should be bucketed and sorted by join key
++INSERT OVERWRITE TABLE test_table PARTITION (part = '1') 
++SELECT a.key, a.value FROM src a JOIN src b ON a.key = b.key
++PREHOOK: type: QUERY
++PREHOOK: Input: default@src
++PREHOOK: Output: default@test_table@part=1
++POSTHOOK: query: -- Test join, should be bucketed and sorted by join key
++INSERT OVERWRITE TABLE test_table PARTITION (part = '1') 
++SELECT a.key, a.value FROM src a JOIN src b ON a.key = b.key
++POSTHOOK: type: QUERY
++POSTHOOK: Input: default@src
++POSTHOOK: Output: default@test_table@part=1
++POSTHOOK: Lineage: test_table PARTITION(part=1).key SIMPLE [(src)a.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).value SIMPLE [(src)a.FieldSchema(name:value, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).key SIMPLE [(src)src.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).value EXPRESSION [(src)src.null, ]
++PREHOOK: query: DESCRIBE FORMATTED test_table PARTITION (part = '1')
++PREHOOK: type: DESCTABLE
++POSTHOOK: query: DESCRIBE FORMATTED test_table PARTITION (part = '1')
++POSTHOOK: type: DESCTABLE
++POSTHOOK: Lineage: test_table PARTITION(part=1).key SIMPLE [(src)a.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).value SIMPLE [(src)a.FieldSchema(name:value, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).key SIMPLE [(src)src.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).value EXPRESSION [(src)src.null, ]
++# col_name            	data_type           	comment             
++	 	 
++key                 	string              	None                
++value               	string              	None                
++	 	 
++# Partition Information	 	 
++# col_name            	data_type           	comment             
++	 	 
++part                	string              	None                
++	 	 
++# Detailed Partition Information	 	 
++Partition Value:    	[1]                 	 
++Database:           	default             	 
++Table:              	test_table          	 
++#### A masked pattern was here ####
++Protect Mode:       	None                	 
++#### A masked pattern was here ####
++Partition Parameters:	 	 
++	numFiles            	1                   
++	numRows             	1028                
++	rawDataSize         	10968               
++	totalSize           	11996               
++#### A masked pattern was here ####
++	 	 
++# Storage Information	 	 
++SerDe Library:      	org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe	 
++InputFormat:        	org.apache.hadoop.mapred.TextInputFormat	 
++OutputFormat:       	org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat	 
++Compressed:         	No                  	 
++Num Buckets:        	-1                  	 
++Bucket Columns:     	[]                  	 
++Sort Columns:       	[Order(col:key, order:1)]	 
++Storage Desc Params:	 	 
++	serialization.format	1                   
++PREHOOK: query: -- Test join with two keys, should be bucketed and sorted by join keys
++INSERT OVERWRITE TABLE test_table PARTITION (part = '1') 
++SELECT a.key, a.value FROM src a JOIN src b ON a.key = b.key AND a.value = b.value
++PREHOOK: type: QUERY
++PREHOOK: Input: default@src
++PREHOOK: Output: default@test_table@part=1
++POSTHOOK: query: -- Test join with two keys, should be bucketed and sorted by join keys
++INSERT OVERWRITE TABLE test_table PARTITION (part = '1') 
++SELECT a.key, a.value FROM src a JOIN src b ON a.key = b.key AND a.value = b.value
++POSTHOOK: type: QUERY
++POSTHOOK: Input: default@src
++POSTHOOK: Output: default@test_table@part=1
++POSTHOOK: Lineage: test_table PARTITION(part=1).key SIMPLE [(src)a.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).value SIMPLE [(src)a.FieldSchema(name:value, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).key SIMPLE [(src)a.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).value SIMPLE [(src)a.FieldSchema(name:value, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).key SIMPLE [(src)src.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).value EXPRESSION [(src)src.null, ]
++PREHOOK: query: DESCRIBE FORMATTED test_table PARTITION (part = '1')
++PREHOOK: type: DESCTABLE
++POSTHOOK: query: DESCRIBE FORMATTED test_table PARTITION (part = '1')
++POSTHOOK: type: DESCTABLE
++POSTHOOK: Lineage: test_table PARTITION(part=1).key SIMPLE [(src)a.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).value SIMPLE [(src)a.FieldSchema(name:value, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).key SIMPLE [(src)a.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).value SIMPLE [(src)a.FieldSchema(name:value, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).key SIMPLE [(src)src.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).value EXPRESSION [(src)src.null, ]
++# col_name            	data_type           	comment             
++	 	 
++key                 	string              	None                
++value               	string              	None                
++	 	 
++# Partition Information	 	 
++# col_name            	data_type           	comment             
++	 	 
++part                	string              	None                
++	 	 
++# Detailed Partition Information	 	 
++Partition Value:    	[1]                 	 
++Database:           	default             	 
++Table:              	test_table          	 
++#### A masked pattern was here ####
++Protect Mode:       	None                	 
++#### A masked pattern was here ####
++Partition Parameters:	 	 
++	numFiles            	1                   
++	numRows             	1028                
++	rawDataSize         	10968               
++	totalSize           	11996               
++#### A masked pattern was here ####
++	 	 
++# Storage Information	 	 
++SerDe Library:      	org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe	 
++InputFormat:        	org.apache.hadoop.mapred.TextInputFormat	 
++OutputFormat:       	org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat	 
++Compressed:         	No                  	 
++Num Buckets:        	-1                  	 
++Bucket Columns:     	[]                  	 
++Sort Columns:       	[Order(col:key, order:1), Order(col:value, order:1)]	 
++Storage Desc Params:	 	 
++	serialization.format	1                   
++PREHOOK: query: -- Test join on three tables on same key, should be bucketed and sorted by join key
++INSERT OVERWRITE TABLE test_table PARTITION (part = '1') 
++SELECT a.key, c.value FROM src a JOIN src b ON (a.key = b.key) JOIN src c ON (b.key = c.key)
++PREHOOK: type: QUERY
++PREHOOK: Input: default@src
++PREHOOK: Output: default@test_table@part=1
++POSTHOOK: query: -- Test join on three tables on same key, should be bucketed and sorted by join key
++INSERT OVERWRITE TABLE test_table PARTITION (part = '1') 
++SELECT a.key, c.value FROM src a JOIN src b ON (a.key = b.key) JOIN src c ON (b.key = c.key)
++POSTHOOK: type: QUERY
++POSTHOOK: Input: default@src
++POSTHOOK: Output: default@test_table@part=1
++POSTHOOK: Lineage: test_table PARTITION(part=1).key SIMPLE [(src)a.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).value SIMPLE [(src)a.FieldSchema(name:value, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).key SIMPLE [(src)a.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).value SIMPLE [(src)a.FieldSchema(name:value, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).key SIMPLE [(src)a.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).value SIMPLE [(src)c.FieldSchema(name:value, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).key SIMPLE [(src)src.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).value EXPRESSION [(src)src.null, ]
++PREHOOK: query: DESCRIBE FORMATTED test_table PARTITION (part = '1')
++PREHOOK: type: DESCTABLE
++POSTHOOK: query: DESCRIBE FORMATTED test_table PARTITION (part = '1')
++POSTHOOK: type: DESCTABLE
++POSTHOOK: Lineage: test_table PARTITION(part=1).key SIMPLE [(src)a.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).value SIMPLE [(src)a.FieldSchema(name:value, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).key SIMPLE [(src)a.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).value SIMPLE [(src)a.FieldSchema(name:value, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).key SIMPLE [(src)a.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).value SIMPLE [(src)c.FieldSchema(name:value, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).key SIMPLE [(src)src.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).value EXPRESSION [(src)src.null, ]
++# col_name            	data_type           	comment             
++	 	 
++key                 	string              	None                
++value               	string              	None                
++	 	 
++# Partition Information	 	 
++# col_name            	data_type           	comment             
++	 	 
++part                	string              	None                
++	 	 
++# Detailed Partition Information	 	 
++Partition Value:    	[1]                 	 
++Database:           	default             	 
++Table:              	test_table          	 
++#### A masked pattern was here ####
++Protect Mode:       	None                	 
++#### A masked pattern was here ####
++Partition Parameters:	 	 
++	numFiles            	1                   
++	numRows             	2654                
++	rawDataSize         	28466               
++	totalSize           	31120               
++#### A masked pattern was here ####
++	 	 
++# Storage Information	 	 
++SerDe Library:      	org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe	 
++InputFormat:        	org.apache.hadoop.mapred.TextInputFormat	 
++OutputFormat:       	org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat	 
++Compressed:         	No                  	 
++Num Buckets:        	-1                  	 
++Bucket Columns:     	[]                  	 
++Sort Columns:       	[Order(col:key, order:1)]	 
++Storage Desc Params:	 	 
++	serialization.format	1                   
++PREHOOK: query: -- Test join on three tables on different keys, should be bucketed and sorted by latter key
++INSERT OVERWRITE TABLE test_table PARTITION (part = '1') 
++SELECT a.key, c.value FROM src a JOIN src b ON (a.key = b.key) JOIN src c ON (b.value = c.value)
++PREHOOK: type: QUERY
++PREHOOK: Input: default@src
++PREHOOK: Output: default@test_table@part=1
++POSTHOOK: query: -- Test join on three tables on different keys, should be bucketed and sorted by latter key
++INSERT OVERWRITE TABLE test_table PARTITION (part = '1') 
++SELECT a.key, c.value FROM src a JOIN src b ON (a.key = b.key) JOIN src c ON (b.value = c.value)
++POSTHOOK: type: QUERY
++POSTHOOK: Input: default@src
++POSTHOOK: Output: default@test_table@part=1
++POSTHOOK: Lineage: test_table PARTITION(part=1).key SIMPLE [(src)a.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).value SIMPLE [(src)a.FieldSchema(name:value, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).key SIMPLE [(src)a.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).value SIMPLE [(src)a.FieldSchema(name:value, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).key SIMPLE [(src)a.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).value SIMPLE [(src)c.FieldSchema(name:value, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).key SIMPLE [(src)src.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).value EXPRESSION [(src)src.null, ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).key SIMPLE [(src)a.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).value SIMPLE [(src)c.FieldSchema(name:value, type:string, comment:default), ]
++PREHOOK: query: DESCRIBE FORMATTED test_table PARTITION (part = '1')
++PREHOOK: type: DESCTABLE
++POSTHOOK: query: DESCRIBE FORMATTED test_table PARTITION (part = '1')
++POSTHOOK: type: DESCTABLE
++POSTHOOK: Lineage: test_table PARTITION(part=1).key SIMPLE [(src)a.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).value SIMPLE [(src)a.FieldSchema(name:value, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).key SIMPLE [(src)a.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).value SIMPLE [(src)a.FieldSchema(name:value, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).key SIMPLE [(src)a.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).value SIMPLE [(src)c.FieldSchema(name:value, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).key SIMPLE [(src)src.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).value EXPRESSION [(src)src.null, ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).key SIMPLE [(src)a.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).value SIMPLE [(src)c.FieldSchema(name:value, type:string, comment:default), ]
++# col_name            	data_type           	comment             
++	 	 
++key                 	string              	None                
++value               	string              	None                
++	 	 
++# Partition Information	 	 
++# col_name            	data_type           	comment             
++	 	 
++part                	string              	None                
++	 	 
++# Detailed Partition Information	 	 
++Partition Value:    	[1]                 	 
++Database:           	default             	 
++Table:              	test_table          	 
++#### A masked pattern was here ####
++Protect Mode:       	None                	 
++#### A masked pattern was here ####
++Partition Parameters:	 	 
++	numFiles            	1                   
++	numRows             	2654                
++	rawDataSize         	28466               
++	totalSize           	31120               
++#### A masked pattern was here ####
++	 	 
++# Storage Information	 	 
++SerDe Library:      	org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe	 
++InputFormat:        	org.apache.hadoop.mapred.TextInputFormat	 
++OutputFormat:       	org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat	 
++Compressed:         	No                  	 
++Num Buckets:        	-1                  	 
++Bucket Columns:     	[]                  	 
++Sort Columns:       	[Order(col:value, order:1)]	 
++Storage Desc Params:	 	 
++	serialization.format	1                   
++PREHOOK: query: -- Test group by in subquery with another group by outside, should be bucketed and sorted by the
++-- key of the outer group by
++INSERT OVERWRITE TABLE test_table PARTITION (part = '1')
++SELECT count(1), value FROM (SELECT key, count(1) as value FROM src group by key) a group by value
++PREHOOK: type: QUERY
++PREHOOK: Input: default@src
++PREHOOK: Output: default@test_table@part=1
++POSTHOOK: query: -- Test group by in subquery with another group by outside, should be bucketed and sorted by the
++-- key of the outer group by
++INSERT OVERWRITE TABLE test_table PARTITION (part = '1')
++SELECT count(1), value FROM (SELECT key, count(1) as value FROM src group by key) a group by value
++POSTHOOK: type: QUERY
++POSTHOOK: Input: default@src
++POSTHOOK: Output: default@test_table@part=1
++POSTHOOK: Lineage: test_table PARTITION(part=1).key SIMPLE [(src)a.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).value SIMPLE [(src)a.FieldSchema(name:value, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).key SIMPLE [(src)a.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).value SIMPLE [(src)a.FieldSchema(name:value, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).key SIMPLE [(src)a.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).value SIMPLE [(src)c.FieldSchema(name:value, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).key SIMPLE [(src)src.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).value EXPRESSION [(src)src.null, ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).key SIMPLE [(src)a.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).value SIMPLE [(src)c.FieldSchema(name:value, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).key EXPRESSION [(src)src.null, ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).value EXPRESSION [(src)src.null, ]
++PREHOOK: query: DESCRIBE FORMATTED test_table PARTITION (part = '1')
++PREHOOK: type: DESCTABLE
++POSTHOOK: query: DESCRIBE FORMATTED test_table PARTITION (part = '1')
++POSTHOOK: type: DESCTABLE
++POSTHOOK: Lineage: test_table PARTITION(part=1).key SIMPLE [(src)a.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).value SIMPLE [(src)a.FieldSchema(name:value, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).key SIMPLE [(src)a.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).value SIMPLE [(src)a.FieldSchema(name:value, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).key SIMPLE [(src)a.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).value SIMPLE [(src)c.FieldSchema(name:value, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).key SIMPLE [(src)src.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).value EXPRESSION [(src)src.null, ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).key SIMPLE [(src)a.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).value SIMPLE [(src)c.FieldSchema(name:value, type:string, comment:default), ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).key EXPRESSION [(src)src.null, ]
++POSTHOOK: Lineage: test_table PARTITION(part=1).value EXPRESSION [(src)src.null, ]
++# col_name            	data_type           	comment             
++	 	 
++key                 	string              	None                
++value               	string              	None                
++	 	 
++# Partition Information	 	 
++# col_name            	data_type           	comment             
++	 	 
++part                	string              	None                
++	 	 
++# Detailed Partition Information	 	 
++Partition Value:    	[1]                 	 
++Database:           	default             	 
++Table:              	test_table          	 
++#### A masked pattern was here ####
++Protect Mode:       	None                	 
++#### A masked pattern was here ####
++Partition Parameters:	 	 
++	numFiles            	1                   
++	numRows             	5                   
++	rawDataSize         	19                  
++	totalSize           	24                  
++#### A masked pattern was here ####
++	 	 
++# Storage Information	 	 
++SerDe Library:      	org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe	 
++InputFormat:        	org.apache.hadoop.mapred.TextInputFormat	 
++OutputFormat:       	org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat	 
++Compressed:         	No                  	 
++Num Buckets:        	1                   	 
++Bucket Columns:     	[value]             	 
++Sort Columns:       	[Order(col:value, order:1)]	 
++Storage Desc Params:	 	 
++	serialization.format	1                   
+-- 
+1.7.0.4
+

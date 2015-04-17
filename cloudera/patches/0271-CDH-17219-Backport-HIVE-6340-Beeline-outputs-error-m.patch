@@ -1,0 +1,25 @@
+From cd4e29bd7b713b6092d274e40e5ef0219640c5ee Mon Sep 17 00:00:00 2001
+From: Xuefu Zhang <xzhang@xzlt.(none)>
+Date: Wed, 5 Feb 2014 14:39:46 -0800
+Subject: [PATCH 271/375] CDH-17219: Backport HIVE-6340: Beeline outputs error message when HIVE_AUX_JARS_PATH is set
+
+---
+ bin/hive |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+
+diff --git a/src/bin/hive b/src/bin/hive
+index 4579b07..0035b59 100755
+--- a/src/bin/hive
++++ b/src/bin/hive
+@@ -197,7 +197,7 @@ if [ "$hadoop_major_ver" -lt "1" -a  "$hadoop_minor_ver$hadoop_patch_ver" -lt "2
+ fi
+ 
+ if [ "${AUX_PARAM}" != "" ]; then
+-  HIVE_OPTS="$HIVE_OPTS -hiveconf hive.aux.jars.path=${AUX_PARAM}"
++  HIVE_OPTS="$HIVE_OPTS --hiveconf hive.aux.jars.path=${AUX_PARAM}"
+   AUX_JARS_CMD_LINE="-libjars ${AUX_PARAM}"
+ fi
+ 
+-- 
+1.7.0.4
+

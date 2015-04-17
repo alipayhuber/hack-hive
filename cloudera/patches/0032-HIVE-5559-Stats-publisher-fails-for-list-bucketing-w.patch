@@ -1,0 +1,663 @@
+From c05d7769df1d2e1b2fbc4471b908e0945d049bd1 Mon Sep 17 00:00:00 2001
+From: Ashutosh Chauhan <hashutosh@apache.org>
+Date: Mon, 21 Oct 2013 05:03:12 +0000
+Subject: [PATCH 032/375] HIVE-5559 : Stats publisher fails for list bucketing when IDs are too long (Jason Dere via Ashutosh Chauhan)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1534024 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../java/org/apache/hadoop/hive/conf/HiveConf.java |    2 +-
+ .../hadoop/hive/ql/exec/FileSinkOperator.java      |    2 +-
+ .../hadoop/hive/ql/exec/TableScanOperator.java     |    2 +-
+ .../org/apache/hadoop/hive/ql/exec/Utilities.java  |   11 +-
+ .../queries/clientpositive/stats_list_bucket.q     |   45 +++++
+ .../results/clientpositive/stats_list_bucket.q.out |  199 ++++++++++++++++++++
+ .../results/compiler/plan/case_sensitivity.q.xml   |    2 +-
+ ql/src/test/results/compiler/plan/groupby1.q.xml   |    2 +-
+ ql/src/test/results/compiler/plan/input1.q.xml     |    2 +-
+ ql/src/test/results/compiler/plan/input2.q.xml     |    6 +-
+ ql/src/test/results/compiler/plan/input3.q.xml     |    6 +-
+ ql/src/test/results/compiler/plan/input4.q.xml     |    2 +-
+ ql/src/test/results/compiler/plan/input5.q.xml     |    2 +-
+ ql/src/test/results/compiler/plan/input6.q.xml     |    2 +-
+ ql/src/test/results/compiler/plan/input7.q.xml     |    2 +-
+ ql/src/test/results/compiler/plan/input9.q.xml     |    2 +-
+ .../compiler/plan/input_testsequencefile.q.xml     |    2 +-
+ ql/src/test/results/compiler/plan/join1.q.xml      |    2 +-
+ ql/src/test/results/compiler/plan/join2.q.xml      |    2 +-
+ ql/src/test/results/compiler/plan/join3.q.xml      |    2 +-
+ ql/src/test/results/compiler/plan/sample2.q.xml    |    2 +-
+ ql/src/test/results/compiler/plan/sample3.q.xml    |    2 +-
+ ql/src/test/results/compiler/plan/sample4.q.xml    |    2 +-
+ ql/src/test/results/compiler/plan/sample5.q.xml    |    2 +-
+ ql/src/test/results/compiler/plan/sample6.q.xml    |    2 +-
+ ql/src/test/results/compiler/plan/sample7.q.xml    |    2 +-
+ 26 files changed, 280 insertions(+), 29 deletions(-)
+ create mode 100644 ql/src/test/queries/clientpositive/stats_list_bucket.q
+ create mode 100644 ql/src/test/results/clientpositive/stats_list_bucket.q.out
+
+diff --git a/src/common/src/java/org/apache/hadoop/hive/conf/HiveConf.java b/src/common/src/java/org/apache/hadoop/hive/conf/HiveConf.java
+index d0d286e..c99ec78 100644
+--- a/src/common/src/java/org/apache/hadoop/hive/conf/HiveConf.java
++++ b/src/common/src/java/org/apache/hadoop/hive/conf/HiveConf.java
+@@ -634,7 +634,7 @@
+     // standard error allowed for ndv estimates. A lower value indicates higher accuracy and a
+     // higher compute cost.
+     HIVE_STATS_NDV_ERROR("hive.stats.ndv.error", (float)20.0),
+-    HIVE_STATS_KEY_PREFIX_MAX_LENGTH("hive.stats.key.prefix.max.length", 200),
++    HIVE_STATS_KEY_PREFIX_MAX_LENGTH("hive.stats.key.prefix.max.length", 150),
+     HIVE_STATS_KEY_PREFIX("hive.stats.key.prefix", ""), // internal usage only
+ 
+     // Concurrency
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/FileSinkOperator.java b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/FileSinkOperator.java
+index bcee201..eae22fe 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/FileSinkOperator.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/FileSinkOperator.java
+@@ -1076,7 +1076,7 @@ private String createKeyForStatsPublisher(String taskID, String spSpec, String f
+       }
+     }
+     String keyPrefix = Utilities.getHashedStatsPrefix(
+-        conf.getStatsAggPrefix() + spSpec + newFspKey + Path.SEPARATOR,
++        conf.getStatsAggPrefix() + spSpec + newFspKey,
+         conf.getMaxStatsKeyPrefixLength());
+     key = keyPrefix + storedAsDirPostFix + taskID;
+     return key;
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/TableScanOperator.java b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/TableScanOperator.java
+index a5a8943..ab2de9d 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/TableScanOperator.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/TableScanOperator.java
+@@ -295,7 +295,7 @@ private void publishStats() throws HiveException {
+         // In case of a partition, the key for temp storage is
+         // "tableName + partitionSpecs + taskID"
+         String keyPrefix = Utilities.getHashedStatsPrefix(
+-            conf.getStatsAggPrefix() + pspecs + Path.SEPARATOR, conf.getMaxStatsKeyPrefixLength());
++            conf.getStatsAggPrefix() + pspecs, conf.getMaxStatsKeyPrefixLength());
+         key = keyPrefix + taskID;
+       }
+       for(String statType : stats.get(pspecs).getStoredStats()) {
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/Utilities.java b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/Utilities.java
+index 752a047..e69b7e4 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/Utilities.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/Utilities.java
+@@ -2249,11 +2249,11 @@ public static StatsPublisher getStatsPublisher(JobConf jc) {
+    * @return
+    */
+   public static String getHashedStatsPrefix(String statsPrefix, int maxPrefixLength) {
+-    String ret = statsPrefix;
++    String ret = appendPathSeparator(statsPrefix);
+     if (maxPrefixLength >= 0 && statsPrefix.length() > maxPrefixLength) {
+       try {
+         MessageDigest digester = MessageDigest.getInstance("MD5");
+-        digester.update(statsPrefix.getBytes());
++        digester.update(ret.getBytes());
+         ret = new String(digester.digest()) + Path.SEPARATOR;
+       } catch (NoSuchAlgorithmException e) {
+         throw new RuntimeException(e);
+@@ -2262,6 +2262,13 @@ public static String getHashedStatsPrefix(String statsPrefix, int maxPrefixLengt
+     return ret;
+   }
+ 
++  private static String appendPathSeparator(String path) {
++    if (!path.endsWith(Path.SEPARATOR)) {
++      path = path + Path.SEPARATOR;
++    }
++    return path;
++  }
++
+   public static void setColumnNameList(JobConf jobConf, Operator op) {
+     RowSchema rowSchema = op.getSchema();
+     if (rowSchema == null) {
+diff --git a/src/ql/src/test/queries/clientpositive/stats_list_bucket.q b/src/ql/src/test/queries/clientpositive/stats_list_bucket.q
+new file mode 100644
+index 0000000..5982643
+--- /dev/null
++++ b/src/ql/src/test/queries/clientpositive/stats_list_bucket.q
+@@ -0,0 +1,45 @@
++
++set hive.mapred.supports.subdirectories=true;
++
++-- INCLUDE_HADOOP_MAJOR_VERSIONS(0.23)
++
++drop table stats_list_bucket;
++drop table stats_list_bucket_1;
++
++create table stats_list_bucket (
++  c1 string,
++  c2 string
++) partitioned by (ds string, hr string)
++skewed by (c1, c2) on  (('466','val_466'),('287','val_287'),('82','val_82'))
++stored as directories
++stored as rcfile;
++
++set hive.stats.key.prefix.max.length=1;
++
++-- Make sure we use hashed IDs during stats publishing.
++-- Try partitioned table with list bucketing.
++-- The stats should show 500 rows loaded, as many rows as the src table has.
++
++insert overwrite table stats_list_bucket partition (ds = '2008-04-08',  hr = '11')
++  select key, value from src;
++
++desc formatted stats_list_bucket partition (ds = '2008-04-08',  hr = '11');
++
++-- Also try non-partitioned table with list bucketing.
++-- Stats should show the same number of rows.
++
++create table stats_list_bucket_1 (
++  c1 string,
++  c2 string
++)
++skewed by (c1, c2) on  (('466','val_466'),('287','val_287'),('82','val_82'))
++stored as directories
++stored as rcfile;
++
++insert overwrite table stats_list_bucket_1
++  select key, value from src;
++
++desc formatted stats_list_bucket_1;
++
++drop table stats_list_bucket;
++drop table stats_list_bucket_1;
+diff --git a/src/ql/src/test/results/clientpositive/stats_list_bucket.q.out b/src/ql/src/test/results/clientpositive/stats_list_bucket.q.out
+new file mode 100644
+index 0000000..6a319a0
+--- /dev/null
++++ b/src/ql/src/test/results/clientpositive/stats_list_bucket.q.out
+@@ -0,0 +1,199 @@
++PREHOOK: query: -- INCLUDE_HADOOP_MAJOR_VERSIONS(0.23)
++
++drop table stats_list_bucket
++PREHOOK: type: DROPTABLE
++POSTHOOK: query: -- INCLUDE_HADOOP_MAJOR_VERSIONS(0.23)
++
++drop table stats_list_bucket
++POSTHOOK: type: DROPTABLE
++PREHOOK: query: drop table stats_list_bucket_1
++PREHOOK: type: DROPTABLE
++POSTHOOK: query: drop table stats_list_bucket_1
++POSTHOOK: type: DROPTABLE
++PREHOOK: query: create table stats_list_bucket (
++  c1 string,
++  c2 string
++) partitioned by (ds string, hr string)
++skewed by (c1, c2) on  (('466','val_466'),('287','val_287'),('82','val_82'))
++stored as directories
++stored as rcfile
++PREHOOK: type: CREATETABLE
++POSTHOOK: query: create table stats_list_bucket (
++  c1 string,
++  c2 string
++) partitioned by (ds string, hr string)
++skewed by (c1, c2) on  (('466','val_466'),('287','val_287'),('82','val_82'))
++stored as directories
++stored as rcfile
++POSTHOOK: type: CREATETABLE
++POSTHOOK: Output: default@stats_list_bucket
++PREHOOK: query: -- Make sure we use hashed IDs during stats publishing.
++-- Try partitioned table with list bucketing.
++-- The stats should show 500 rows loaded, as many rows as the src table has.
++
++insert overwrite table stats_list_bucket partition (ds = '2008-04-08',  hr = '11')
++  select key, value from src
++PREHOOK: type: QUERY
++PREHOOK: Input: default@src
++PREHOOK: Output: default@stats_list_bucket@ds=2008-04-08/hr=11
++POSTHOOK: query: -- Make sure we use hashed IDs during stats publishing.
++-- Try partitioned table with list bucketing.
++-- The stats should show 500 rows loaded, as many rows as the src table has.
++
++insert overwrite table stats_list_bucket partition (ds = '2008-04-08',  hr = '11')
++  select key, value from src
++POSTHOOK: type: QUERY
++POSTHOOK: Input: default@src
++POSTHOOK: Output: default@stats_list_bucket@ds=2008-04-08/hr=11
++POSTHOOK: Lineage: stats_list_bucket PARTITION(ds=2008-04-08,hr=11).c1 SIMPLE [(src)src.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: stats_list_bucket PARTITION(ds=2008-04-08,hr=11).c2 SIMPLE [(src)src.FieldSchema(name:value, type:string, comment:default), ]
++PREHOOK: query: desc formatted stats_list_bucket partition (ds = '2008-04-08',  hr = '11')
++PREHOOK: type: DESCTABLE
++POSTHOOK: query: desc formatted stats_list_bucket partition (ds = '2008-04-08',  hr = '11')
++POSTHOOK: type: DESCTABLE
++POSTHOOK: Lineage: stats_list_bucket PARTITION(ds=2008-04-08,hr=11).c1 SIMPLE [(src)src.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: stats_list_bucket PARTITION(ds=2008-04-08,hr=11).c2 SIMPLE [(src)src.FieldSchema(name:value, type:string, comment:default), ]
++# col_name            	data_type           	comment             
++	 	 
++c1                  	string              	None                
++c2                  	string              	None                
++	 	 
++# Partition Information	 	 
++# col_name            	data_type           	comment             
++	 	 
++ds                  	string              	None                
++hr                  	string              	None                
++	 	 
++# Detailed Partition Information	 	 
++Partition Value:    	[2008-04-08, 11]    	 
++Database:           	default             	 
++Table:              	stats_list_bucket   	 
++#### A masked pattern was here ####
++Protect Mode:       	None                	 
++#### A masked pattern was here ####
++Partition Parameters:	 	 
++	numFiles            	4                   
++	numRows             	500                 
++	rawDataSize         	4812                
++	totalSize           	5522                
++#### A masked pattern was here ####
++	 	 
++# Storage Information	 	 
++SerDe Library:      	org.apache.hadoop.hive.serde2.columnar.ColumnarSerDe	 
++InputFormat:        	org.apache.hadoop.hive.ql.io.RCFileInputFormat	 
++OutputFormat:       	org.apache.hadoop.hive.ql.io.RCFileOutputFormat	 
++Compressed:         	No                  	 
++Num Buckets:        	-1                  	 
++Bucket Columns:     	[]                  	 
++Sort Columns:       	[]                  	 
++Stored As SubDirectories:	Yes                 	 
++Skewed Columns:     	[c1, c2]            	 
++Skewed Values:      	[[466, val_466], [287, val_287], [82, val_82]]	 
++#### A masked pattern was here ####
++Skewed Value to Truncated Path:	{[82, val_82]=/stats_list_bucket/ds=2008-04-08/hr=11/c1=82/c2=val_82, [466, val_466]=/stats_list_bucket/ds=2008-04-08/hr=11/c1=466/c2=val_466, [287, val_287]=/stats_list_bucket/ds=2008-04-08/hr=11/c1=287/c2=val_287}	 
++Storage Desc Params:	 	 
++	serialization.format	1                   
++PREHOOK: query: -- Also try non-partitioned table with list bucketing.
++-- Stats should show the same number of rows.
++
++create table stats_list_bucket_1 (
++  c1 string,
++  c2 string
++)
++skewed by (c1, c2) on  (('466','val_466'),('287','val_287'),('82','val_82'))
++stored as directories
++stored as rcfile
++PREHOOK: type: CREATETABLE
++POSTHOOK: query: -- Also try non-partitioned table with list bucketing.
++-- Stats should show the same number of rows.
++
++create table stats_list_bucket_1 (
++  c1 string,
++  c2 string
++)
++skewed by (c1, c2) on  (('466','val_466'),('287','val_287'),('82','val_82'))
++stored as directories
++stored as rcfile
++POSTHOOK: type: CREATETABLE
++POSTHOOK: Output: default@stats_list_bucket_1
++POSTHOOK: Lineage: stats_list_bucket PARTITION(ds=2008-04-08,hr=11).c1 SIMPLE [(src)src.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: stats_list_bucket PARTITION(ds=2008-04-08,hr=11).c2 SIMPLE [(src)src.FieldSchema(name:value, type:string, comment:default), ]
++PREHOOK: query: insert overwrite table stats_list_bucket_1
++  select key, value from src
++PREHOOK: type: QUERY
++PREHOOK: Input: default@src
++PREHOOK: Output: default@stats_list_bucket_1
++POSTHOOK: query: insert overwrite table stats_list_bucket_1
++  select key, value from src
++POSTHOOK: type: QUERY
++POSTHOOK: Input: default@src
++POSTHOOK: Output: default@stats_list_bucket_1
++POSTHOOK: Lineage: stats_list_bucket PARTITION(ds=2008-04-08,hr=11).c1 SIMPLE [(src)src.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: stats_list_bucket PARTITION(ds=2008-04-08,hr=11).c2 SIMPLE [(src)src.FieldSchema(name:value, type:string, comment:default), ]
++POSTHOOK: Lineage: stats_list_bucket_1.c1 SIMPLE [(src)src.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: stats_list_bucket_1.c2 SIMPLE [(src)src.FieldSchema(name:value, type:string, comment:default), ]
++PREHOOK: query: desc formatted stats_list_bucket_1
++PREHOOK: type: DESCTABLE
++POSTHOOK: query: desc formatted stats_list_bucket_1
++POSTHOOK: type: DESCTABLE
++POSTHOOK: Lineage: stats_list_bucket PARTITION(ds=2008-04-08,hr=11).c1 SIMPLE [(src)src.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: stats_list_bucket PARTITION(ds=2008-04-08,hr=11).c2 SIMPLE [(src)src.FieldSchema(name:value, type:string, comment:default), ]
++POSTHOOK: Lineage: stats_list_bucket_1.c1 SIMPLE [(src)src.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: stats_list_bucket_1.c2 SIMPLE [(src)src.FieldSchema(name:value, type:string, comment:default), ]
++# col_name            	data_type           	comment             
++	 	 
++c1                  	string              	None                
++c2                  	string              	None                
++	 	 
++# Detailed Table Information	 	 
++Database:           	default             	 
++#### A masked pattern was here ####
++Protect Mode:       	None                	 
++Retention:          	0                   	 
++#### A masked pattern was here ####
++Table Type:         	MANAGED_TABLE       	 
++Table Parameters:	 	 
++	numFiles            	4                   
++	numPartitions       	0                   
++	numRows             	500                 
++	rawDataSize         	4812                
++	totalSize           	5522                
++#### A masked pattern was here ####
++	 	 
++# Storage Information	 	 
++SerDe Library:      	org.apache.hadoop.hive.serde2.columnar.ColumnarSerDe	 
++InputFormat:        	org.apache.hadoop.hive.ql.io.RCFileInputFormat	 
++OutputFormat:       	org.apache.hadoop.hive.ql.io.RCFileOutputFormat	 
++Compressed:         	No                  	 
++Num Buckets:        	-1                  	 
++Bucket Columns:     	[]                  	 
++Sort Columns:       	[]                  	 
++Stored As SubDirectories:	Yes                 	 
++Skewed Columns:     	[c1, c2]            	 
++Skewed Values:      	[[466, val_466], [287, val_287], [82, val_82]]	 
++Storage Desc Params:	 	 
++	serialization.format	1                   
++PREHOOK: query: drop table stats_list_bucket
++PREHOOK: type: DROPTABLE
++PREHOOK: Input: default@stats_list_bucket
++PREHOOK: Output: default@stats_list_bucket
++POSTHOOK: query: drop table stats_list_bucket
++POSTHOOK: type: DROPTABLE
++POSTHOOK: Input: default@stats_list_bucket
++POSTHOOK: Output: default@stats_list_bucket
++POSTHOOK: Lineage: stats_list_bucket PARTITION(ds=2008-04-08,hr=11).c1 SIMPLE [(src)src.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: stats_list_bucket PARTITION(ds=2008-04-08,hr=11).c2 SIMPLE [(src)src.FieldSchema(name:value, type:string, comment:default), ]
++POSTHOOK: Lineage: stats_list_bucket_1.c1 SIMPLE [(src)src.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: stats_list_bucket_1.c2 SIMPLE [(src)src.FieldSchema(name:value, type:string, comment:default), ]
++PREHOOK: query: drop table stats_list_bucket_1
++PREHOOK: type: DROPTABLE
++PREHOOK: Input: default@stats_list_bucket_1
++PREHOOK: Output: default@stats_list_bucket_1
++POSTHOOK: query: drop table stats_list_bucket_1
++POSTHOOK: type: DROPTABLE
++POSTHOOK: Input: default@stats_list_bucket_1
++POSTHOOK: Output: default@stats_list_bucket_1
++POSTHOOK: Lineage: stats_list_bucket PARTITION(ds=2008-04-08,hr=11).c1 SIMPLE [(src)src.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: stats_list_bucket PARTITION(ds=2008-04-08,hr=11).c2 SIMPLE [(src)src.FieldSchema(name:value, type:string, comment:default), ]
++POSTHOOK: Lineage: stats_list_bucket_1.c1 SIMPLE [(src)src.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: stats_list_bucket_1.c2 SIMPLE [(src)src.FieldSchema(name:value, type:string, comment:default), ]
+diff --git a/src/ql/src/test/results/compiler/plan/case_sensitivity.q.xml b/src/ql/src/test/results/compiler/plan/case_sensitivity.q.xml
+index 54863b1..f704ccb 100644
+--- a/src/ql/src/test/results/compiler/plan/case_sensitivity.q.xml
++++ b/src/ql/src/test/results/compiler/plan/case_sensitivity.q.xml
+@@ -720,7 +720,7 @@
+                        <object idref="ListBucketingCtx0"/> 
+                       </void> 
+                       <void property="maxStatsKeyPrefixLength"> 
+-                       <int>200</int> 
++                       <int>150</int> 
+                       </void> 
+                       <void property="numFiles"> 
+                        <int>1</int> 
+diff --git a/src/ql/src/test/results/compiler/plan/groupby1.q.xml b/src/ql/src/test/results/compiler/plan/groupby1.q.xml
+index 2e35d98..ef4f61e 100755
+--- a/src/ql/src/test/results/compiler/plan/groupby1.q.xml
++++ b/src/ql/src/test/results/compiler/plan/groupby1.q.xml
+@@ -1256,7 +1256,7 @@
+                    <object idref="ListBucketingCtx0"/> 
+                   </void> 
+                   <void property="maxStatsKeyPrefixLength"> 
+-                   <int>200</int> 
++                   <int>150</int> 
+                   </void> 
+                   <void property="numFiles"> 
+                    <int>1</int> 
+diff --git a/src/ql/src/test/results/compiler/plan/input1.q.xml b/src/ql/src/test/results/compiler/plan/input1.q.xml
+index 4d0c0e8..8d2c607 100755
+--- a/src/ql/src/test/results/compiler/plan/input1.q.xml
++++ b/src/ql/src/test/results/compiler/plan/input1.q.xml
+@@ -712,7 +712,7 @@
+                        <object idref="ListBucketingCtx0"/> 
+                       </void> 
+                       <void property="maxStatsKeyPrefixLength"> 
+-                       <int>200</int> 
++                       <int>150</int> 
+                       </void> 
+                       <void property="numFiles"> 
+                        <int>1</int> 
+diff --git a/src/ql/src/test/results/compiler/plan/input2.q.xml b/src/ql/src/test/results/compiler/plan/input2.q.xml
+index 619b6e5..a5895a8 100755
+--- a/src/ql/src/test/results/compiler/plan/input2.q.xml
++++ b/src/ql/src/test/results/compiler/plan/input2.q.xml
+@@ -1751,7 +1751,7 @@
+                        <object idref="ListBucketingCtx0"/> 
+                       </void> 
+                       <void property="maxStatsKeyPrefixLength"> 
+-                       <int>200</int> 
++                       <int>150</int> 
+                       </void> 
+                       <void property="numFiles"> 
+                        <int>1</int> 
+@@ -2074,7 +2074,7 @@
+                        <object idref="ListBucketingCtx1"/> 
+                       </void> 
+                       <void property="maxStatsKeyPrefixLength"> 
+-                       <int>200</int> 
++                       <int>150</int> 
+                       </void> 
+                       <void property="numFiles"> 
+                        <int>1</int> 
+@@ -2411,7 +2411,7 @@
+                        <object idref="ListBucketingCtx2"/> 
+                       </void> 
+                       <void property="maxStatsKeyPrefixLength"> 
+-                       <int>200</int> 
++                       <int>150</int> 
+                       </void> 
+                       <void property="numFiles"> 
+                        <int>1</int> 
+diff --git a/src/ql/src/test/results/compiler/plan/input3.q.xml b/src/ql/src/test/results/compiler/plan/input3.q.xml
+index fb8b6f4..dc9dbef 100755
+--- a/src/ql/src/test/results/compiler/plan/input3.q.xml
++++ b/src/ql/src/test/results/compiler/plan/input3.q.xml
+@@ -2121,7 +2121,7 @@
+                        <object idref="ListBucketingCtx0"/> 
+                       </void> 
+                       <void property="maxStatsKeyPrefixLength"> 
+-                       <int>200</int> 
++                       <int>150</int> 
+                       </void> 
+                       <void property="numFiles"> 
+                        <int>1</int> 
+@@ -2444,7 +2444,7 @@
+                        <object idref="ListBucketingCtx1"/> 
+                       </void> 
+                       <void property="maxStatsKeyPrefixLength"> 
+-                       <int>200</int> 
++                       <int>150</int> 
+                       </void> 
+                       <void property="numFiles"> 
+                        <int>1</int> 
+@@ -2781,7 +2781,7 @@
+                        <object idref="ListBucketingCtx2"/> 
+                       </void> 
+                       <void property="maxStatsKeyPrefixLength"> 
+-                       <int>200</int> 
++                       <int>150</int> 
+                       </void> 
+                       <void property="numFiles"> 
+                        <int>1</int> 
+diff --git a/src/ql/src/test/results/compiler/plan/input4.q.xml b/src/ql/src/test/results/compiler/plan/input4.q.xml
+index 2879f0d..1b36c62 100755
+--- a/src/ql/src/test/results/compiler/plan/input4.q.xml
++++ b/src/ql/src/test/results/compiler/plan/input4.q.xml
+@@ -1267,7 +1267,7 @@
+                    <object idref="ListBucketingCtx0"/> 
+                   </void> 
+                   <void property="maxStatsKeyPrefixLength"> 
+-                   <int>200</int> 
++                   <int>150</int> 
+                   </void> 
+                   <void property="numFiles"> 
+                    <int>1</int> 
+diff --git a/src/ql/src/test/results/compiler/plan/input5.q.xml b/src/ql/src/test/results/compiler/plan/input5.q.xml
+index 8802146..c9ecafe 100644
+--- a/src/ql/src/test/results/compiler/plan/input5.q.xml
++++ b/src/ql/src/test/results/compiler/plan/input5.q.xml
+@@ -1317,7 +1317,7 @@
+                    <object idref="ListBucketingCtx0"/> 
+                   </void> 
+                   <void property="maxStatsKeyPrefixLength"> 
+-                   <int>200</int> 
++                   <int>150</int> 
+                   </void> 
+                   <void property="numFiles"> 
+                    <int>1</int> 
+diff --git a/src/ql/src/test/results/compiler/plan/input6.q.xml b/src/ql/src/test/results/compiler/plan/input6.q.xml
+index 6a5dbdf..7303d1e 100644
+--- a/src/ql/src/test/results/compiler/plan/input6.q.xml
++++ b/src/ql/src/test/results/compiler/plan/input6.q.xml
+@@ -712,7 +712,7 @@
+                        <object idref="ListBucketingCtx0"/> 
+                       </void> 
+                       <void property="maxStatsKeyPrefixLength"> 
+-                       <int>200</int> 
++                       <int>150</int> 
+                       </void> 
+                       <void property="numFiles"> 
+                        <int>1</int> 
+diff --git a/src/ql/src/test/results/compiler/plan/input7.q.xml b/src/ql/src/test/results/compiler/plan/input7.q.xml
+index ac1ca96..b9ea690 100644
+--- a/src/ql/src/test/results/compiler/plan/input7.q.xml
++++ b/src/ql/src/test/results/compiler/plan/input7.q.xml
+@@ -708,7 +708,7 @@
+                    <object idref="ListBucketingCtx0"/> 
+                   </void> 
+                   <void property="maxStatsKeyPrefixLength"> 
+-                   <int>200</int> 
++                   <int>150</int> 
+                   </void> 
+                   <void property="numFiles"> 
+                    <int>1</int> 
+diff --git a/src/ql/src/test/results/compiler/plan/input9.q.xml b/src/ql/src/test/results/compiler/plan/input9.q.xml
+index a461aab..d248634 100644
+--- a/src/ql/src/test/results/compiler/plan/input9.q.xml
++++ b/src/ql/src/test/results/compiler/plan/input9.q.xml
+@@ -712,7 +712,7 @@
+                        <object idref="ListBucketingCtx0"/> 
+                       </void> 
+                       <void property="maxStatsKeyPrefixLength"> 
+-                       <int>200</int> 
++                       <int>150</int> 
+                       </void> 
+                       <void property="numFiles"> 
+                        <int>1</int> 
+diff --git a/src/ql/src/test/results/compiler/plan/input_testsequencefile.q.xml b/src/ql/src/test/results/compiler/plan/input_testsequencefile.q.xml
+index 9296ec9..1de829e 100644
+--- a/src/ql/src/test/results/compiler/plan/input_testsequencefile.q.xml
++++ b/src/ql/src/test/results/compiler/plan/input_testsequencefile.q.xml
+@@ -708,7 +708,7 @@
+                    <object idref="ListBucketingCtx0"/> 
+                   </void> 
+                   <void property="maxStatsKeyPrefixLength"> 
+-                   <int>200</int> 
++                   <int>150</int> 
+                   </void> 
+                   <void property="numFiles"> 
+                    <int>1</int> 
+diff --git a/src/ql/src/test/results/compiler/plan/join1.q.xml b/src/ql/src/test/results/compiler/plan/join1.q.xml
+index cca7398..0eacae5 100644
+--- a/src/ql/src/test/results/compiler/plan/join1.q.xml
++++ b/src/ql/src/test/results/compiler/plan/join1.q.xml
+@@ -1377,7 +1377,7 @@
+                    <object idref="ListBucketingCtx0"/> 
+                   </void> 
+                   <void property="maxStatsKeyPrefixLength"> 
+-                   <int>200</int> 
++                   <int>150</int> 
+                   </void> 
+                   <void property="numFiles"> 
+                    <int>1</int> 
+diff --git a/src/ql/src/test/results/compiler/plan/join2.q.xml b/src/ql/src/test/results/compiler/plan/join2.q.xml
+index 4e027ce..2c7b597 100644
+--- a/src/ql/src/test/results/compiler/plan/join2.q.xml
++++ b/src/ql/src/test/results/compiler/plan/join2.q.xml
+@@ -1261,7 +1261,7 @@
+                        <object idref="ListBucketingCtx0"/> 
+                       </void> 
+                       <void property="maxStatsKeyPrefixLength"> 
+-                       <int>200</int> 
++                       <int>150</int> 
+                       </void> 
+                       <void property="numFiles"> 
+                        <int>1</int> 
+diff --git a/src/ql/src/test/results/compiler/plan/join3.q.xml b/src/ql/src/test/results/compiler/plan/join3.q.xml
+index 36fa4cf..73b96fb 100644
+--- a/src/ql/src/test/results/compiler/plan/join3.q.xml
++++ b/src/ql/src/test/results/compiler/plan/join3.q.xml
+@@ -1840,7 +1840,7 @@
+                    <object idref="ListBucketingCtx0"/> 
+                   </void> 
+                   <void property="maxStatsKeyPrefixLength"> 
+-                   <int>200</int> 
++                   <int>150</int> 
+                   </void> 
+                   <void property="numFiles"> 
+                    <int>1</int> 
+diff --git a/src/ql/src/test/results/compiler/plan/sample2.q.xml b/src/ql/src/test/results/compiler/plan/sample2.q.xml
+index 68a7e24..d31196a 100644
+--- a/src/ql/src/test/results/compiler/plan/sample2.q.xml
++++ b/src/ql/src/test/results/compiler/plan/sample2.q.xml
+@@ -720,7 +720,7 @@
+                        <object idref="ListBucketingCtx0"/> 
+                       </void> 
+                       <void property="maxStatsKeyPrefixLength"> 
+-                       <int>200</int> 
++                       <int>150</int> 
+                       </void> 
+                       <void property="numFiles"> 
+                        <int>1</int> 
+diff --git a/src/ql/src/test/results/compiler/plan/sample3.q.xml b/src/ql/src/test/results/compiler/plan/sample3.q.xml
+index ef80238..b032f8f 100644
+--- a/src/ql/src/test/results/compiler/plan/sample3.q.xml
++++ b/src/ql/src/test/results/compiler/plan/sample3.q.xml
+@@ -720,7 +720,7 @@
+                        <object idref="ListBucketingCtx0"/> 
+                       </void> 
+                       <void property="maxStatsKeyPrefixLength"> 
+-                       <int>200</int> 
++                       <int>150</int> 
+                       </void> 
+                       <void property="numFiles"> 
+                        <int>1</int> 
+diff --git a/src/ql/src/test/results/compiler/plan/sample4.q.xml b/src/ql/src/test/results/compiler/plan/sample4.q.xml
+index 68a7e24..d31196a 100644
+--- a/src/ql/src/test/results/compiler/plan/sample4.q.xml
++++ b/src/ql/src/test/results/compiler/plan/sample4.q.xml
+@@ -720,7 +720,7 @@
+                        <object idref="ListBucketingCtx0"/> 
+                       </void> 
+                       <void property="maxStatsKeyPrefixLength"> 
+-                       <int>200</int> 
++                       <int>150</int> 
+                       </void> 
+                       <void property="numFiles"> 
+                        <int>1</int> 
+diff --git a/src/ql/src/test/results/compiler/plan/sample5.q.xml b/src/ql/src/test/results/compiler/plan/sample5.q.xml
+index 03a5ef0..0d5b9be 100644
+--- a/src/ql/src/test/results/compiler/plan/sample5.q.xml
++++ b/src/ql/src/test/results/compiler/plan/sample5.q.xml
+@@ -720,7 +720,7 @@
+                        <object idref="ListBucketingCtx0"/> 
+                       </void> 
+                       <void property="maxStatsKeyPrefixLength"> 
+-                       <int>200</int> 
++                       <int>150</int> 
+                       </void> 
+                       <void property="numFiles"> 
+                        <int>1</int> 
+diff --git a/src/ql/src/test/results/compiler/plan/sample6.q.xml b/src/ql/src/test/results/compiler/plan/sample6.q.xml
+index 8c8782a..7c805b9 100644
+--- a/src/ql/src/test/results/compiler/plan/sample6.q.xml
++++ b/src/ql/src/test/results/compiler/plan/sample6.q.xml
+@@ -720,7 +720,7 @@
+                        <object idref="ListBucketingCtx0"/> 
+                       </void> 
+                       <void property="maxStatsKeyPrefixLength"> 
+-                       <int>200</int> 
++                       <int>150</int> 
+                       </void> 
+                       <void property="numFiles"> 
+                        <int>1</int> 
+diff --git a/src/ql/src/test/results/compiler/plan/sample7.q.xml b/src/ql/src/test/results/compiler/plan/sample7.q.xml
+index 25e4414..8d0b281 100644
+--- a/src/ql/src/test/results/compiler/plan/sample7.q.xml
++++ b/src/ql/src/test/results/compiler/plan/sample7.q.xml
+@@ -720,7 +720,7 @@
+                        <object idref="ListBucketingCtx0"/> 
+                       </void> 
+                       <void property="maxStatsKeyPrefixLength"> 
+-                       <int>200</int> 
++                       <int>150</int> 
+                       </void> 
+                       <void property="numFiles"> 
+                        <int>1</int> 
+-- 
+1.7.0.4
+

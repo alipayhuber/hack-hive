@@ -1,0 +1,74 @@
+From 671c3504c3c57f8893f88fd98a50fc6cc735f057 Mon Sep 17 00:00:00 2001
+From: Szehon Ho <szehon@cloudera.com>
+Date: Mon, 24 Feb 2014 16:03:58 -0800
+Subject: [PATCH 284/375] CDH-17604: Unit test failures analysis- Part2
+
+Fix for hcatalog tests
+---
+ hcatalog/storage-handlers/hbase/pom.xml |   30 ++++++++++++++++++++++++++++++
+ 1 files changed, 30 insertions(+), 0 deletions(-)
+
+diff --git a/src/hcatalog/storage-handlers/hbase/pom.xml b/src/hcatalog/storage-handlers/hbase/pom.xml
+index 599cec0..3494c58 100644
+--- a/src/hcatalog/storage-handlers/hbase/pom.xml
++++ b/src/hcatalog/storage-handlers/hbase/pom.xml
+@@ -178,26 +178,56 @@
+           <groupId>org.apache.hbase</groupId>
+           <artifactId>hbase-client</artifactId>
+           <version>${hbase.hadoop2.version}</version>
++          <exclusions>
++            <exclusion>
++              <groupId>org.apache.hadoop</groupId>
++              <artifactId>hadoop-core</artifactId>
++            </exclusion>
++          </exclusions>
+         </dependency>
+         <dependency>
+           <groupId>org.apache.hbase</groupId>
+           <artifactId>hbase-server</artifactId>
+           <version>${hbase.hadoop2.version}</version>
++          <exclusions>
++            <exclusion>
++              <groupId>org.apache.hadoop</groupId>
++              <artifactId>hadoop-core</artifactId>
++            </exclusion>
++          </exclusions>
+         </dependency>
+         <dependency>
+           <groupId>org.apache.hbase</groupId>
+           <artifactId>hbase-common</artifactId>
+           <version>${hbase.hadoop2.version}</version>
++          <exclusions>
++            <exclusion>
++              <groupId>org.apache.hadoop</groupId>
++              <artifactId>hadoop-core</artifactId>
++            </exclusion>
++          </exclusions>
+         </dependency>
+         <dependency>
+           <groupId>org.apache.hbase</groupId>
+           <artifactId>hbase-hadoop-compat</artifactId>
+           <version>${hbase.hadoop2.version}</version>
++          <exclusions>
++            <exclusion>
++              <groupId>org.apache.hadoop</groupId>
++              <artifactId>hadoop-core</artifactId>
++            </exclusion>
++          </exclusions>
+         </dependency>
+         <dependency>
+           <groupId>org.apache.hbase</groupId>
+           <artifactId>hbase-hadoop2-compat</artifactId>
+           <version>${hbase.hadoop2.version}</version>
++          <exclusions>
++            <exclusion>
++              <groupId>org.apache.hadoop</groupId>
++              <artifactId>hadoop-core</artifactId>
++            </exclusion>
++          </exclusions>
+         </dependency>
+         <!-- test -->
+         <dependency>
+-- 
+1.7.0.4
+

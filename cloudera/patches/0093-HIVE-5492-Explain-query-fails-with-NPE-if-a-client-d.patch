@@ -1,0 +1,25 @@
+From 1062406d49efcd90d926f06da2fc02315a26de80 Mon Sep 17 00:00:00 2001
+From: Brock Noland <brock@apache.org>
+Date: Tue, 15 Oct 2013 18:24:44 +0000
+Subject: [PATCH 093/375] HIVE-5492 - Explain query fails with NPE if a client doesn't call getResultSetSchema() (Xuefu Zhang via Brock Noland)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1532472 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../hive/service/cli/operation/SQLOperation.java   |    1 +
+ 1 files changed, 1 insertions(+), 0 deletions(-)
+
+diff --git a/src/service/src/java/org/apache/hive/service/cli/operation/SQLOperation.java b/src/service/src/java/org/apache/hive/service/cli/operation/SQLOperation.java
+index fc66ca7..f6adf92 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/operation/SQLOperation.java
++++ b/src/service/src/java/org/apache/hive/service/cli/operation/SQLOperation.java
+@@ -124,6 +124,7 @@ private void runInternal() throws HiveSQLException {
+       // TODO explain should use a FetchTask for reading
+       for (Task<? extends Serializable> task: driver.getPlan().getRootTasks()) {
+         if (task.getClass() == ExplainTask.class) {
++          resultSchema = new TableSchema(mResultSchema);
+           setHasResultSet(true);
+           break;
+         }
+-- 
+1.7.0.4
+

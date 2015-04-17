@@ -1,0 +1,39 @@
+From fb91c79ebef27da3765aa228b218bb6debfa653b Mon Sep 17 00:00:00 2001
+From: Brock Noland <brock@apache.org>
+Date: Tue, 5 Feb 2013 15:59:14 -0600
+Subject: [PATCH 119/375] CDH-10280: Change default value for hive-site.xml in CDH to set 'hive.warehouse.subdir.inherit.perms=true'
+
+---
+ .../java/org/apache/hadoop/hive/conf/HiveConf.java |    2 +-
+ conf/hive-default.xml.template                     |    2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/src/common/src/java/org/apache/hadoop/hive/conf/HiveConf.java b/src/common/src/java/org/apache/hadoop/hive/conf/HiveConf.java
+index 0658d47..1860542 100644
+--- a/src/common/src/java/org/apache/hadoop/hive/conf/HiveConf.java
++++ b/src/common/src/java/org/apache/hadoop/hive/conf/HiveConf.java
+@@ -731,7 +731,7 @@
+     // Whether to delete the scratchdir while startup
+     HIVE_START_CLEANUP_SCRATCHDIR("hive.start.cleanup.scratchdir", false),
+     HIVE_INSERT_INTO_MULTILEVEL_DIRS("hive.insert.into.multilevel.dirs", false),
+-    HIVE_WAREHOUSE_SUBDIR_INHERIT_PERMS("hive.warehouse.subdir.inherit.perms", false),
++    HIVE_WAREHOUSE_SUBDIR_INHERIT_PERMS("hive.warehouse.subdir.inherit.perms", true),
+     // whether insert into external tables is allowed
+     HIVE_INSERT_INTO_EXTERNAL_TABLES("hive.insert.into.external.tables", true),
+ 
+diff --git a/src/conf/hive-default.xml.template b/src/conf/hive-default.xml.template
+index e9e0189..2a188c5 100644
+--- a/src/conf/hive-default.xml.template
++++ b/src/conf/hive-default.xml.template
+@@ -1696,7 +1696,7 @@
+ 
+ <property>
+   <name>hive.warehouse.subdir.inherit.perms</name>
+-  <value>false</value>
++  <value>true</value>
+   <description>Set this to true if the the table directories should inherit the
+     permission of the warehouse or database directory instead of being created
+     with the permissions derived from dfs umask</description>
+-- 
+1.7.0.4
+

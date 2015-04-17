@@ -1,0 +1,26 @@
+From 00e7e5ec60df9e5dfec4f64db4ea3351bfd19a99 Mon Sep 17 00:00:00 2001
+From: Thejas Madhavan Nair <thejas@apache.org>
+Date: Mon, 14 Oct 2013 19:02:22 +0000
+Subject: [PATCH 089/375] HIVE-5509 : [WebHCat] TestDriverCurl to use string comparison for jobid (Daniel Dai via Thejas Nair)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1532026 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../test/e2e/templeton/drivers/TestDriverCurl.pm   |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+
+diff --git a/src/hcatalog/src/test/e2e/templeton/drivers/TestDriverCurl.pm b/src/hcatalog/src/test/e2e/templeton/drivers/TestDriverCurl.pm
+index 08dbd2a..b4ee4bf 100644
+--- a/src/hcatalog/src/test/e2e/templeton/drivers/TestDriverCurl.pm
++++ b/src/hcatalog/src/test/e2e/templeton/drivers/TestDriverCurl.pm
+@@ -631,7 +631,7 @@ sub compare
+ 	        # in the tests, we run this case with jobName = "PigLatin:loadstore.pig"
+ 	        # filter $body to leave only records with this jobName
+ 	        my @filtered_body = grep {($_->{detail}{profile}{jobName} eq "PigLatin:loadstore.pig")}  @$body;
+-			my @sorted_filtered_body = sort { $a->{id} <=> $b->{id} } @filtered_body;
++			my @sorted_filtered_body = sort { $a->{id} cmp $b->{id} } @filtered_body;
+         	$value = $path->value(\@sorted_filtered_body);
+         } else {
+         	$value = $path->value($testResult->{'body'});
+-- 
+1.7.0.4
+

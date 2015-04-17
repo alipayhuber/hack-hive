@@ -1,0 +1,25 @@
+From eb8d02ba46a017cac2bf0c8584a4f21773096532 Mon Sep 17 00:00:00 2001
+From: Ashutosh Chauhan <hashutosh@apache.org>
+Date: Tue, 10 Sep 2013 16:59:43 +0000
+Subject: [PATCH 007/375] HIVE-5257 : Add kryo into eclipse template (Yin Huai via Ashutosh Chauhan)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1521551 13f79535-47bb-0310-9956-ffa450edef68
+---
+ eclipse-templates/.classpath |    1 +
+ 1 files changed, 1 insertions(+), 0 deletions(-)
+
+diff --git a/src/eclipse-templates/.classpath b/src/eclipse-templates/.classpath
+index 384dc99..0a58a92 100644
+--- a/src/eclipse-templates/.classpath
++++ b/src/eclipse-templates/.classpath
+@@ -67,6 +67,7 @@
+   <classpathentry kind="lib" path="build/ivy/lib/default/antlr-runtime-@antlr-runtime.version@.jar"/>
+   <classpathentry kind="lib" path="build/ivy/lib/default/junit-@junit.version@.jar"/>
+   <classpathentry kind="lib" path="build/ivy/lib/default/jdo-api-@jdo-api.version@.jar"/>
++  <classpathentry kind="lib" path="build/ivy/lib/default/kryo-@kryo.version@.jar"/>
+   <classpathentry kind="lib" path="build/ivy/lib/default/datanucleus-api-jdo-@datanucleus-api-jdo.version@.jar"/>
+   <classpathentry kind="lib" path="build/ivy/lib/default/datanucleus-core-@datanucleus-core.version@.jar"/>
+   <classpathentry kind="lib" path="build/ivy/lib/default/datanucleus-rdbms-@datanucleus-rdbms.version@.jar"/>
+-- 
+1.7.0.4
+

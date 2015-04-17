@@ -1,0 +1,245 @@
+From 641f887634790435b83b13a4b69cb42e1a85d745 Mon Sep 17 00:00:00 2001
+From: Brock Noland <brock@apache.org>
+Date: Thu, 10 Oct 2013 17:11:30 +0000
+Subject: [PATCH 080/375] HIVE-5445 - PTest2 should use testonly target
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1531049 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../org/apache/hive/ptest/execution/PTest.java     |    8 ++++++-
+ .../ptest/execution/conf/TestConfiguration.java    |   22 ++++++++++++++-----
+ testutils/ptest2/src/main/resources/batch-exec.vm  |   21 +++++++++++++++---
+ .../apache/hive/ptest/execution/TestScripts.java   |    1 +
+ ...TestScripts.testAlternativeTestJVM.approved.txt |   21 +++++++++++++++---
+ .../execution/TestScripts.testBatch.approved.txt   |   21 +++++++++++++++---
+ 6 files changed, 75 insertions(+), 19 deletions(-)
+
+diff --git a/src/testutils/ptest2/src/main/java/org/apache/hive/ptest/execution/PTest.java b/src/testutils/ptest2/src/main/java/org/apache/hive/ptest/execution/PTest.java
+index ed434e2..8b2e458 100644
+--- a/src/testutils/ptest2/src/main/java/org/apache/hive/ptest/execution/PTest.java
++++ b/src/testutils/ptest2/src/main/java/org/apache/hive/ptest/execution/PTest.java
+@@ -112,7 +112,8 @@ public PTest(final TestConfiguration configuration, final ExecutionContext execu
+     put("logDir", logDir.getAbsolutePath()).
+     put("javaHome", configuration.getJavaHome()).
+     put("javaHomeForTests", configuration.getJavaHomeForTests()).
+-    put("antEnvOpts", configuration.getAntEnvOpts());
++    put("antEnvOpts", configuration.getAntEnvOpts()).
++    put("antTestTarget", configuration.getAntTestTarget());
+     final ImmutableMap<String, String> templateDefaults = templateDefaultsBuilder.build();
+     TestParser testParser = new TestParser(configuration.getContext(),
+         new File(mExecutionContext.getLocalWorkingDirectory(), configuration.getRepositoryName() + "-source"),
+@@ -231,6 +232,7 @@ public PTest build(TestConfiguration configuration, ExecutionContext executionCo
+   private static final String JAVA_HOME_TEST = TestConfiguration.JAVA_HOME_TEST;
+   private static final String ANT_TEST_ARGS = TestConfiguration.ANT_TEST_ARGS;
+   private static final String ANT_ENV_OPTS = TestConfiguration.ANT_ENV_OPTS;
++  private static final String ANT_TEST_TARGET = TestConfiguration.ANT_TEST_TARGET;
+   /**
+    * All args override properties file settings except
+    * for this one which is additive.
+@@ -300,6 +302,10 @@ public static void main(String[] args) throws Exception {
+         if(!antEnvOpts.isEmpty()) {
+           conf.setAntEnvOpts(antEnvOpts);
+         }
++        String antTestTarget = Strings.nullToEmpty(commandLine.getOptionValue(ANT_TEST_TARGET)).trim();
++        if(!antTestTarget.isEmpty()) {
++          conf.setAntTestTarget(antTestTarget);
++        }
+         String[] supplementalAntArgs = commandLine.getOptionValues(ANT_ARG);
+         if(supplementalAntArgs != null && supplementalAntArgs.length > 0) {
+           String antArgs = Strings.nullToEmpty(conf.getAntArgs());
+diff --git a/src/testutils/ptest2/src/main/java/org/apache/hive/ptest/execution/conf/TestConfiguration.java b/src/testutils/ptest2/src/main/java/org/apache/hive/ptest/execution/conf/TestConfiguration.java
+index 5c693de..e4a0a20 100644
+--- a/src/testutils/ptest2/src/main/java/org/apache/hive/ptest/execution/conf/TestConfiguration.java
++++ b/src/testutils/ptest2/src/main/java/org/apache/hive/ptest/execution/conf/TestConfiguration.java
+@@ -39,6 +39,7 @@
+   public static final String JAVA_HOME_TEST = "javaHomeForTests";
+   public static final String ANT_ENV_OPTS = "antEnvOpts";
+   public static final String ANT_TEST_ARGS = "antTestArgs";
++  public static final String ANT_TEST_TARGET = "antTestTarget";
+   
+   private static final String REPOSITORY_TYPE = "repositoryType";
+   private static final String GIT = "git";
+@@ -53,6 +54,7 @@
+   private String antArgs;
+   private String antTestArgs;
+   private String antEnvOpts;
++  private String antTestTarget;
+   private String repositoryType;
+   private String repository;
+   private String repositoryName;
+@@ -84,6 +86,7 @@ public TestConfiguration(Context context, Logger logger)
+     antArgs =  Preconditions.checkNotNull(context.getString(ANT_ARGS), ANT_ARGS).trim();
+     antTestArgs =  context.getString(ANT_TEST_ARGS, "").trim();
+     antEnvOpts =  context.getString(ANT_ENV_OPTS, "").trim();
++    antTestTarget = context.getString(ANT_TEST_TARGET, "test").trim();
+     javaHome =  context.getString(JAVA_HOME, "").trim();
+     javaHomeForTests = context.getString(JAVA_HOME_TEST, "").trim();
+     patch = Strings.nullToEmpty(null);
+@@ -142,6 +145,9 @@ public String getAntTestArgs() {
+   public String getAntEnvOpts() {
+     return antEnvOpts;
+   }
++  public String getAntTestTarget() {
++    return antTestTarget;
++  }
+   public String getJavaHome() {
+     return javaHome;
+   }
+@@ -178,16 +184,20 @@ public void setAntTestArgs(String antTestArgs) {
+   public void setAntEnvOpts(String antEnvOpts) {
+     this.antEnvOpts = Strings.nullToEmpty(antEnvOpts);
+   }
++  public void setAntTestTarget(String antTestTarget) {
++    this.antTestTarget = Strings.nullToEmpty(antTestTarget);
++  }
+   @Override
+   public String toString() {
+-    return "TestConfiguration [antArgs=" + antArgs + ", antEnvOpts="
+-        + antEnvOpts + ", repositoryType=" + repositoryType + ", repository="
+-        + repository + ", repositoryName=" + repositoryName + ", patch="
+-        + patch + ", javaHome=" + javaHome + ", javaHomeForTests="
++    return "TestConfiguration [antArgs=" + antArgs + ", antTestArgs="
++        + antTestArgs + ", antEnvOpts=" + antEnvOpts + ", antTestTarget="
++        + antTestTarget + ", repositoryType=" + repositoryType
++        + ", repository=" + repository + ", repositoryName=" + repositoryName
++        + ", patch=" + patch + ", javaHome=" + javaHome + ", javaHomeForTests="
+         + javaHomeForTests + ", branch=" + branch + ", jenkinsURL="
+         + jenkinsURL + ", jiraUrl=" + jiraUrl + ", jiraUser=" + jiraUser
+-        + ", jiraName=" + jiraName + ", clearLibraryCache=" + clearLibraryCache
+-        + "]";
++        + ", jiraPassword=" + jiraPassword + ", jiraName=" + jiraName
++        + ", clearLibraryCache=" + clearLibraryCache + "]";
+   }
+   public static TestConfiguration fromInputStream(InputStream inputStream, Logger logger)
+       throws IOException {
+diff --git a/src/testutils/ptest2/src/main/resources/batch-exec.vm b/src/testutils/ptest2/src/main/resources/batch-exec.vm
+index 69d7530..86f5c44 100644
+--- a/src/testutils/ptest2/src/main/resources/batch-exec.vm
++++ b/src/testutils/ptest2/src/main/resources/batch-exec.vm
+@@ -17,8 +17,8 @@
+ ##### Remember, this is a velocity template 
+ set -x
+ umask 0022
+-find $localDir/$instanceName/${repositoryName}-source/build -name 'TEST-*.xml' -delete
+-find $localDir/$instanceName/${repositoryName}-source/build -name 'hive.log' -delete
++echo $$
++ps fauxww
+ chmod -R u+w $logDir
+ rm -rf $logDir
+ # makes $logDir and $logDir/tmp
+@@ -35,8 +35,21 @@ fi
+ export ANT_OPTS="-Xmx1g -XX:MaxPermSize=256m -Djava.io.tmpdir=$logDir/tmp ${antEnvOpts}"
+ export HADOOP_ROOT_LOGGER=INFO,console
+ export HADOOP_OPTS="-Dhive.log.dir=$logDir -Dhive.query.id=hadoop -Djava.io.tmpdir=$logDir/tmp"
+-cd $localDir/$instanceName/${repositoryName}-source && \
+-  timeout 2h ant test -Dtest.junit.output.format=xml $antArgs \
++cd $localDir/$instanceName/${repositoryName}-source || exit 1
++find ./build -name 'TEST-*.xml' -delete
++find ./build -name 'hive.log' -delete
++find ./ -name junit_metastore_db | xargs -r rm -rf 
++if [[ -s batch.pid ]]
++then
++  pid="`<batch.pid`"
++  if kill -9 -$pid 2>/dev/null
++  then
++    echo "Killed process group $pid"
++    sleep 1
++  fi
++fi
++echo "$$" > batch.pid
++timeout 2h ant ${antTestTarget} -Dtest.junit.output.format=xml \
+    -Divy.default.ivy.user.dir=$localDir/$instanceName/ivy \
+    -Divy.default.always.check.exact.revision=false \
+    -Divy.cache.ttl.default=eternal -Divy.checkmodified=false \
+diff --git a/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/TestScripts.java b/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/TestScripts.java
+index 8eb157a..82e940f 100644
+--- a/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/TestScripts.java
++++ b/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/TestScripts.java
+@@ -74,6 +74,7 @@ public void testBatch() throws Throwable {
+     templateVariables.put("javaHome", "/usr/java/jdk1.7");
+     templateVariables.put("antEnvOpts", "-Dhttp.proxyHost=somehost -Dhttp.proxyPort=3128");
+     templateVariables.put("antTestArgs", "-DgrammarBuild.notRequired=true -Dskip.javadoc=true");
++    templateVariables.put("antTestTarget", "testonly");
+     String template = readResource("batch-exec.vm");
+     String actual = getTemplateResult(template, templateVariables);
+     Approvals.verify(actual);
+diff --git a/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/TestScripts.testAlternativeTestJVM.approved.txt b/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/TestScripts.testAlternativeTestJVM.approved.txt
+index d73c3e9..4ff81b1 100644
+--- a/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/TestScripts.testAlternativeTestJVM.approved.txt
++++ b/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/TestScripts.testAlternativeTestJVM.approved.txt
+@@ -16,8 +16,8 @@
+ 
+ set -x
+ umask 0022
+-find /some/local/dir/instance-1/apache-source/build -name 'TEST-*.xml' -delete
+-find /some/local/dir/instance-1/apache-source/build -name 'hive.log' -delete
++echo $$
++ps fauxww
+ chmod -R u+w /some/log/dir
+ rm -rf /some/log/dir
+ # makes /some/log/dir and /some/log/dir/tmp
+@@ -34,8 +34,21 @@ fi
+ export ANT_OPTS="-Xmx1g -XX:MaxPermSize=256m -Djava.io.tmpdir=/some/log/dir/tmp -Dhttp.proxyHost=somehost -Dhttp.proxyPort=3128"
+ export HADOOP_ROOT_LOGGER=INFO,console
+ export HADOOP_OPTS="-Dhive.log.dir=/some/log/dir -Dhive.query.id=hadoop -Djava.io.tmpdir=/some/log/dir/tmp"
+-cd /some/local/dir/instance-1/apache-source && \
+-  timeout 2h ant test -Dtest.junit.output.format=xml -Dant=arg1 \
++cd /some/local/dir/instance-1/apache-source || exit 1
++find ./build -name 'TEST-*.xml' -delete
++find ./build -name 'hive.log' -delete
++find ./ -name junit_metastore_db | xargs -r rm -rf 
++if [[ -s batch.pid ]]
++then
++  pid="`<batch.pid`"
++  if kill -9 -$pid 2>/dev/null
++  then
++    echo "Killed process group $pid"
++    sleep 1
++  fi
++fi
++echo "$$" > batch.pid
++timeout 2h ant ${antTestTarget} -Dtest.junit.output.format=xml \
+    -Divy.default.ivy.user.dir=/some/local/dir/instance-1/ivy \
+    -Divy.default.always.check.exact.revision=false \
+    -Divy.cache.ttl.default=eternal -Divy.checkmodified=false \
+diff --git a/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/TestScripts.testBatch.approved.txt b/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/TestScripts.testBatch.approved.txt
+index 3e5e7ec..a567ca5 100644
+--- a/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/TestScripts.testBatch.approved.txt
++++ b/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/TestScripts.testBatch.approved.txt
+@@ -16,8 +16,8 @@
+ 
+ set -x
+ umask 0022
+-find /some/local/dir/instance-1/apache-source/build -name 'TEST-*.xml' -delete
+-find /some/local/dir/instance-1/apache-source/build -name 'hive.log' -delete
++echo $$
++ps fauxww
+ chmod -R u+w /some/log/dir
+ rm -rf /some/log/dir
+ # makes /some/log/dir and /some/log/dir/tmp
+@@ -34,8 +34,21 @@ fi
+ export ANT_OPTS="-Xmx1g -XX:MaxPermSize=256m -Djava.io.tmpdir=/some/log/dir/tmp -Dhttp.proxyHost=somehost -Dhttp.proxyPort=3128"
+ export HADOOP_ROOT_LOGGER=INFO,console
+ export HADOOP_OPTS="-Dhive.log.dir=/some/log/dir -Dhive.query.id=hadoop -Djava.io.tmpdir=/some/log/dir/tmp"
+-cd /some/local/dir/instance-1/apache-source && \
+-  timeout 2h ant test -Dtest.junit.output.format=xml -Dant=arg1 \
++cd /some/local/dir/instance-1/apache-source || exit 1
++find ./build -name 'TEST-*.xml' -delete
++find ./build -name 'hive.log' -delete
++find ./ -name junit_metastore_db | xargs -r rm -rf 
++if [[ -s batch.pid ]]
++then
++  pid="`<batch.pid`"
++  if kill -9 -$pid 2>/dev/null
++  then
++    echo "Killed process group $pid"
++    sleep 1
++  fi
++fi
++echo "$$" > batch.pid
++timeout 2h ant testonly -Dtest.junit.output.format=xml \
+    -Divy.default.ivy.user.dir=/some/local/dir/instance-1/ivy \
+    -Divy.default.always.check.exact.revision=false \
+    -Divy.cache.ttl.default=eternal -Divy.checkmodified=false \
+-- 
+1.7.0.4
+

@@ -1,0 +1,36 @@
+From eafa9d1c615747a0a070fad6d3bd0c9510769c0e Mon Sep 17 00:00:00 2001
+From: Ashutosh Chauhan <hashutosh@apache.org>
+Date: Thu, 12 Sep 2013 22:11:28 +0000
+Subject: [PATCH 019/375] HIVE-5282 : Some tests don't use  for mkdir (Brock Noland via Ashutosh Chauhan)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1522741 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../load_hdfs_file_with_space_in_the_name.q        |    2 +-
+ .../test/queries/clientpositive/schemeAuthority2.q |    4 ++--
+ 2 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/src/ql/src/test/queries/clientpositive/load_hdfs_file_with_space_in_the_name.q b/src/ql/src/test/queries/clientpositive/load_hdfs_file_with_space_in_the_name.q
+index cce297c..31dbc41 100644
+--- a/src/ql/src/test/queries/clientpositive/load_hdfs_file_with_space_in_the_name.q
++++ b/src/ql/src/test/queries/clientpositive/load_hdfs_file_with_space_in_the_name.q
+@@ -1,4 +1,4 @@
+-dfs -mkdir hdfs:///tmp/test/;
++dfs ${system:test.dfs.mkdir} hdfs:///tmp/test/;
+ 
+ dfs -copyFromLocal ../data/files hdfs:///tmp/test/.;
+ 
+diff --git a/src/ql/src/test/queries/clientpositive/schemeAuthority2.q b/src/ql/src/test/queries/clientpositive/schemeAuthority2.q
+index ecd4d13..b3c38bf 100644
+--- a/src/ql/src/test/queries/clientpositive/schemeAuthority2.q
++++ b/src/ql/src/test/queries/clientpositive/schemeAuthority2.q
+@@ -1,5 +1,5 @@
+-dfs -mkdir file:///tmp/test;
+-dfs -mkdir hdfs:///tmp/test;
++dfs ${system:test.dfs.mkdir} file:///tmp/test;
++dfs ${system:test.dfs.mkdir} hdfs:///tmp/test;
+ 
+ create external table dynPart (key string) partitioned by (value string, value2 string) row format delimited fields terminated by '\\t' stored as textfile;
+ insert overwrite local directory "/tmp/test" select key from src where (key = 10) order by key;
+-- 
+1.7.0.4
+

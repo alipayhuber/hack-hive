@@ -1,0 +1,39 @@
+From e572ec86992a40efa117e6e9090f3c2c19a24891 Mon Sep 17 00:00:00 2001
+From: Brock Noland <brock@cloudera.com>
+Date: Wed, 23 Oct 2013 14:21:23 -0500
+Subject: [PATCH 110/375] PROPOSED: CDH-15280: HIVE-5629: Fix two javadoc failures in HCatalog
+
+---
+ .../hive/hcatalog/mapreduce/InputJobInfo.java      |    2 +-
+ .../hive/hcatalog/templeton/PigDelegator.java      |    2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/src/hcatalog/core/src/main/java/org/apache/hive/hcatalog/mapreduce/InputJobInfo.java b/src/hcatalog/core/src/main/java/org/apache/hive/hcatalog/mapreduce/InputJobInfo.java
+index 9cfb1be..3aa7bd8 100644
+--- a/src/hcatalog/core/src/main/java/org/apache/hive/hcatalog/mapreduce/InputJobInfo.java
++++ b/src/hcatalog/core/src/main/java/org/apache/hive/hcatalog/mapreduce/InputJobInfo.java
+@@ -36,7 +36,7 @@
+  * Container for metadata read from the metadata server.
+  * Prior to release 0.5, InputJobInfo was a key part of the public API, exposed directly
+  * to end-users as an argument to
+- * {@link HCatInputFormat#setInput(org.apache.hadoop.mapreduce.Job, InputJobInfo)}.
++ * HCatInputFormat#setInput(org.apache.hadoop.mapreduce.Job, InputJobInfo).
+  * Going forward, we plan on treating InputJobInfo as an implementation detail and no longer
+  * expose to end-users. Should you have a need to use InputJobInfo outside HCatalog itself,
+  * please contact the developer mailing list before depending on this class.
+diff --git a/src/hcatalog/webhcat/svr/src/main/java/org/apache/hive/hcatalog/templeton/PigDelegator.java b/src/hcatalog/webhcat/svr/src/main/java/org/apache/hive/hcatalog/templeton/PigDelegator.java
+index 9adb1d9..12cb0d4 100644
+--- a/src/hcatalog/webhcat/svr/src/main/java/org/apache/hive/hcatalog/templeton/PigDelegator.java
++++ b/src/hcatalog/webhcat/svr/src/main/java/org/apache/hive/hcatalog/templeton/PigDelegator.java
+@@ -67,7 +67,7 @@ public EnqueueBean run(String user, Map<String, Object> userArgs,
+    * @param usehcatalog whether the command uses hcatalog/needs to connect
+    *         to hive metastore server
+    * @param completedUrl call back url
+-   * @return
++   * @return list of arguments
+    * @throws BadParam
+    * @throws IOException
+    * @throws InterruptedException
+-- 
+1.7.0.4
+

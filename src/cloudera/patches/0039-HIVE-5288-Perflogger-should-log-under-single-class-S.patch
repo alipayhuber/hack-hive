@@ -1,0 +1,535 @@
+From 51ddc9f212ba04ac975c16d277525d3e32b82cd0 Mon Sep 17 00:00:00 2001
+From: Ashutosh Chauhan <hashutosh@apache.org>
+Date: Wed, 18 Sep 2013 02:32:52 +0000
+Subject: [PATCH 039/375] HIVE-5288 : Perflogger should log under single class (Sergey Shelukhin via Ashutosh Chauhan)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1524278 13f79535-47bb-0310-9956-ffa450edef68
+---
+ ql/src/java/org/apache/hadoop/hive/ql/Driver.java  |   67 ++++++++++----------
+ .../org/apache/hadoop/hive/ql/exec/Utilities.java  |   20 +++---
+ .../hadoop/hive/ql/io/CombineHiveInputFormat.java  |   16 +++---
+ .../apache/hadoop/hive/ql/io/HiveInputFormat.java  |    8 +-
+ .../org/apache/hadoop/hive/ql/log/PerfLogger.java  |   10 ++--
+ .../hive/ql/optimizer/ppr/PartitionPruner.java     |   12 ++--
+ 6 files changed, 68 insertions(+), 65 deletions(-)
+
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/Driver.java b/src/ql/src/java/org/apache/hadoop/hive/ql/Driver.java
+index d17b265..31a52ba 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/Driver.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/Driver.java
+@@ -112,7 +112,8 @@
+ 
+ public class Driver implements CommandProcessor {
+ 
+-  static final private Log LOG = LogFactory.getLog(Driver.class.getName());
++  static final private String CLASS_NAME = Driver.class.getName();
++  static final private Log LOG = LogFactory.getLog(CLASS_NAME);
+   static final private LogHelper console = new LogHelper(LOG);
+ 
+   private static final Object compileMonitor = new Object();
+@@ -397,7 +398,7 @@ public void restoreSession(QueryState qs) {
+    */
+   public int compile(String command, boolean resetTaskIds) {
+     PerfLogger perfLogger = PerfLogger.getPerfLogger();
+-    perfLogger.PerfLogBegin(LOG, PerfLogger.COMPILE);
++    perfLogger.PerfLogBegin(CLASS_NAME, PerfLogger.COMPILE);
+ 
+     //holder for parent command type/string when executing reentrant queries
+     QueryState queryState = new QueryState();
+@@ -419,13 +420,13 @@ public int compile(String command, boolean resetTaskIds) {
+       ctx.setCmd(command);
+       ctx.setHDFSCleanup(true);
+ 
+-      perfLogger.PerfLogBegin(LOG, PerfLogger.PARSE);
++      perfLogger.PerfLogBegin(CLASS_NAME, PerfLogger.PARSE);
+       ParseDriver pd = new ParseDriver();
+       ASTNode tree = pd.parse(command, ctx);
+       tree = ParseUtils.findRootNonNullToken(tree);
+-      perfLogger.PerfLogEnd(LOG, PerfLogger.PARSE);
++      perfLogger.PerfLogEnd(CLASS_NAME, PerfLogger.PARSE);
+ 
+-      perfLogger.PerfLogBegin(LOG, PerfLogger.ANALYZE);
++      perfLogger.PerfLogBegin(CLASS_NAME, PerfLogger.ANALYZE);
+       BaseSemanticAnalyzer sem = SemanticAnalyzerFactory.get(conf, tree);
+       List<HiveSemanticAnalyzerHook> saHooks =
+           getHooks(HiveConf.ConfVars.SEMANTIC_ANALYZER_HOOK,
+@@ -451,7 +452,7 @@ public int compile(String command, boolean resetTaskIds) {
+ 
+       // validate the plan
+       sem.validate();
+-      perfLogger.PerfLogEnd(LOG, PerfLogger.ANALYZE);
++      perfLogger.PerfLogEnd(CLASS_NAME, PerfLogger.ANALYZE);
+ 
+       plan = new QueryPlan(command, sem, perfLogger.getStartTime(PerfLogger.DRIVER_RUN));
+ 
+@@ -489,7 +490,7 @@ public int compile(String command, boolean resetTaskIds) {
+       if (HiveConf.getBoolVar(conf,
+           HiveConf.ConfVars.HIVE_AUTHORIZATION_ENABLED)) {
+         try {
+-          perfLogger.PerfLogBegin(LOG, PerfLogger.DO_AUTHORIZATION);
++          perfLogger.PerfLogBegin(CLASS_NAME, PerfLogger.DO_AUTHORIZATION);
+           doAuthorization(sem);
+         } catch (AuthorizationException authExp) {
+           errorMessage = "Authorization failed:" + authExp.getMessage()
+@@ -497,7 +498,7 @@ public int compile(String command, boolean resetTaskIds) {
+           console.printError(errorMessage);
+           return 403;
+         } finally {
+-          perfLogger.PerfLogEnd(LOG, PerfLogger.DO_AUTHORIZATION);
++          perfLogger.PerfLogEnd(CLASS_NAME, PerfLogger.DO_AUTHORIZATION);
+         }
+       }
+ 
+@@ -524,7 +525,7 @@ public int compile(String command, boolean resetTaskIds) {
+           + org.apache.hadoop.util.StringUtils.stringifyException(e));
+       return error.getErrorCode();
+     } finally {
+-      perfLogger.PerfLogEnd(LOG, PerfLogger.COMPILE);
++      perfLogger.PerfLogEnd(CLASS_NAME, PerfLogger.COMPILE);
+       restoreSession(queryState);
+     }
+   }
+@@ -780,7 +781,7 @@ public QueryPlan getPlan() {
+    **/
+   public int acquireReadWriteLocks() {
+     PerfLogger perfLogger = PerfLogger.getPerfLogger();
+-    perfLogger.PerfLogBegin(LOG, PerfLogger.ACQUIRE_READ_WRITE_LOCKS);
++    perfLogger.PerfLogBegin(CLASS_NAME, PerfLogger.ACQUIRE_READ_WRITE_LOCKS);
+ 
+     try {
+       boolean supportConcurrency = conf.getBoolVar(HiveConf.ConfVars.HIVE_SUPPORT_CONCURRENCY);
+@@ -863,7 +864,7 @@ else if (output.getTyp() == WriteEntity.Type.DUMMYPARTITION) {
+           + org.apache.hadoop.util.StringUtils.stringifyException(e));
+       return (10);
+     } finally {
+-      perfLogger.PerfLogEnd(LOG, PerfLogger.ACQUIRE_READ_WRITE_LOCKS);
++      perfLogger.PerfLogEnd(CLASS_NAME, PerfLogger.ACQUIRE_READ_WRITE_LOCKS);
+     }
+   }
+ 
+@@ -874,14 +875,14 @@ else if (output.getTyp() == WriteEntity.Type.DUMMYPARTITION) {
+    **/
+   private void releaseLocks(List<HiveLock> hiveLocks) {
+     PerfLogger perfLogger = PerfLogger.getPerfLogger();
+-    perfLogger.PerfLogBegin(LOG, PerfLogger.RELEASE_LOCKS);
++    perfLogger.PerfLogBegin(CLASS_NAME, PerfLogger.RELEASE_LOCKS);
+ 
+     if (hiveLocks != null) {
+       ctx.getHiveLockMgr().releaseLocks(hiveLocks);
+     }
+     ctx.setHiveLocks(null);
+ 
+-    perfLogger.PerfLogEnd(LOG, PerfLogger.RELEASE_LOCKS);
++    perfLogger.PerfLogEnd(CLASS_NAME, PerfLogger.RELEASE_LOCKS);
+   }
+ 
+   public CommandProcessorResponse run(String command) throws CommandNeedRetryException {
+@@ -969,8 +970,8 @@ private CommandProcessorResponse runInternal(String command) throws CommandNeedR
+ 
+     // Reset the perf logger
+     PerfLogger perfLogger = PerfLogger.getPerfLogger(true);
+-    perfLogger.PerfLogBegin(LOG, PerfLogger.DRIVER_RUN);
+-    perfLogger.PerfLogBegin(LOG, PerfLogger.TIME_TO_SUBMIT);
++    perfLogger.PerfLogBegin(CLASS_NAME, PerfLogger.DRIVER_RUN);
++    perfLogger.PerfLogBegin(CLASS_NAME, PerfLogger.TIME_TO_SUBMIT);
+ 
+     int ret;
+     synchronized (compileMonitor) {
+@@ -1027,7 +1028,7 @@ private CommandProcessorResponse runInternal(String command) throws CommandNeedR
+     //if needRequireLock is false, the release here will do nothing because there is no lock
+     releaseLocks(ctx.getHiveLocks());
+ 
+-    perfLogger.PerfLogEnd(LOG, PerfLogger.DRIVER_RUN);
++    perfLogger.PerfLogEnd(CLASS_NAME, PerfLogger.DRIVER_RUN);
+     perfLogger.close(LOG, plan);
+ 
+     // Take all the driver run hooks and post-execute them.
+@@ -1097,7 +1098,7 @@ private boolean validateConfVariables() {
+ 
+   public int execute() throws CommandNeedRetryException {
+     PerfLogger perfLogger = PerfLogger.getPerfLogger();
+-    perfLogger.PerfLogBegin(LOG, PerfLogger.DRIVER_EXECUTE);
++    perfLogger.PerfLogBegin(CLASS_NAME, PerfLogger.DRIVER_EXECUTE);
+ 
+     boolean noName = StringUtils.isEmpty(conf.getVar(HiveConf.ConfVars.HADOOPJOBNAME));
+     int maxlen = conf.getIntVar(HiveConf.ConfVars.HIVEJOBNAMELENGTH);
+@@ -1130,18 +1131,18 @@ public int execute() throws CommandNeedRetryException {
+ 
+       for (Hook peh : getHooks(HiveConf.ConfVars.PREEXECHOOKS)) {
+         if (peh instanceof ExecuteWithHookContext) {
+-          perfLogger.PerfLogBegin(LOG, PerfLogger.PRE_HOOK + peh.getClass().getName());
++          perfLogger.PerfLogBegin(CLASS_NAME, PerfLogger.PRE_HOOK + peh.getClass().getName());
+ 
+           ((ExecuteWithHookContext) peh).run(hookContext);
+ 
+-          perfLogger.PerfLogEnd(LOG, PerfLogger.PRE_HOOK + peh.getClass().getName());
++          perfLogger.PerfLogEnd(CLASS_NAME, PerfLogger.PRE_HOOK + peh.getClass().getName());
+         } else if (peh instanceof PreExecute) {
+-          perfLogger.PerfLogBegin(LOG, PerfLogger.PRE_HOOK + peh.getClass().getName());
++          perfLogger.PerfLogBegin(CLASS_NAME, PerfLogger.PRE_HOOK + peh.getClass().getName());
+ 
+           ((PreExecute) peh).run(SessionState.get(), plan.getInputs(), plan.getOutputs(),
+               ShimLoader.getHadoopShims().getUGIForConf(conf));
+ 
+-          perfLogger.PerfLogEnd(LOG, PerfLogger.PRE_HOOK + peh.getClass().getName());
++          perfLogger.PerfLogEnd(CLASS_NAME, PerfLogger.PRE_HOOK + peh.getClass().getName());
+         }
+       }
+ 
+@@ -1181,14 +1182,14 @@ public int execute() throws CommandNeedRetryException {
+         driverCxt.addToRunnable(tsk);
+       }
+ 
+-      perfLogger.PerfLogEnd(LOG, PerfLogger.TIME_TO_SUBMIT);
+-      perfLogger.PerfLogBegin(LOG, PerfLogger.RUN_TASKS);
++      perfLogger.PerfLogEnd(CLASS_NAME, PerfLogger.TIME_TO_SUBMIT);
++      perfLogger.PerfLogBegin(CLASS_NAME, PerfLogger.RUN_TASKS);
+       // Loop while you either have tasks running, or tasks queued up
+       while (running.size() != 0 || runnable.peek() != null) {
+         // Launch upto maxthreads tasks
+         while (runnable.peek() != null && running.size() < maxthreads) {
+           Task<? extends Serializable> tsk = runnable.remove();
+-          perfLogger.PerfLogBegin(LOG, PerfLogger.TASK + tsk.getName() + "." + tsk.getId());
++          perfLogger.PerfLogBegin(CLASS_NAME, PerfLogger.TASK + tsk.getName() + "." + tsk.getId());
+           launchTask(tsk, queryId, noName, running, jobname, jobs, driverCxt);
+         }
+ 
+@@ -1196,7 +1197,7 @@ public int execute() throws CommandNeedRetryException {
+         TaskResult tskRes = pollTasks(running.keySet());
+         TaskRunner tskRun = running.remove(tskRes);
+         Task<? extends Serializable> tsk = tskRun.getTask();
+-        perfLogger.PerfLogEnd(LOG, PerfLogger.TASK + tsk.getName() + "." + tsk.getId());
++        perfLogger.PerfLogEnd(CLASS_NAME, PerfLogger.TASK + tsk.getName() + "." + tsk.getId());
+         hookContext.addCompleteTask(tskRun);
+ 
+         int exitVal = tskRes.getExitVal();
+@@ -1227,11 +1228,11 @@ public int execute() throws CommandNeedRetryException {
+             hookContext.setHookType(HookContext.HookType.ON_FAILURE_HOOK);
+             // Get all the failure execution hooks and execute them.
+             for (Hook ofh : getHooks(HiveConf.ConfVars.ONFAILUREHOOKS)) {
+-              perfLogger.PerfLogBegin(LOG, PerfLogger.FAILURE_HOOK + ofh.getClass().getName());
++              perfLogger.PerfLogBegin(CLASS_NAME, PerfLogger.FAILURE_HOOK + ofh.getClass().getName());
+ 
+               ((ExecuteWithHookContext) ofh).run(hookContext);
+ 
+-              perfLogger.PerfLogEnd(LOG, PerfLogger.FAILURE_HOOK + ofh.getClass().getName());
++              perfLogger.PerfLogEnd(CLASS_NAME, PerfLogger.FAILURE_HOOK + ofh.getClass().getName());
+             }
+             setErrorMsgAndDetail(exitVal, tskRes.getTaskError(), tsk);
+             SQLState = "08S01";
+@@ -1260,7 +1261,7 @@ public int execute() throws CommandNeedRetryException {
+           }
+         }
+       }
+-      perfLogger.PerfLogEnd(LOG, PerfLogger.RUN_TASKS);
++      perfLogger.PerfLogEnd(CLASS_NAME, PerfLogger.RUN_TASKS);
+ 
+       // in case we decided to run everything in local mode, restore the
+       // the jobtracker setting to its initial value
+@@ -1284,19 +1285,19 @@ public int execute() throws CommandNeedRetryException {
+       // Get all the post execution hooks and execute them.
+       for (Hook peh : getHooks(HiveConf.ConfVars.POSTEXECHOOKS)) {
+         if (peh instanceof ExecuteWithHookContext) {
+-          perfLogger.PerfLogBegin(LOG, PerfLogger.POST_HOOK + peh.getClass().getName());
++          perfLogger.PerfLogBegin(CLASS_NAME, PerfLogger.POST_HOOK + peh.getClass().getName());
+ 
+           ((ExecuteWithHookContext) peh).run(hookContext);
+ 
+-          perfLogger.PerfLogEnd(LOG, PerfLogger.POST_HOOK + peh.getClass().getName());
++          perfLogger.PerfLogEnd(CLASS_NAME, PerfLogger.POST_HOOK + peh.getClass().getName());
+         } else if (peh instanceof PostExecute) {
+-          perfLogger.PerfLogBegin(LOG, PerfLogger.POST_HOOK + peh.getClass().getName());
++          perfLogger.PerfLogBegin(CLASS_NAME, PerfLogger.POST_HOOK + peh.getClass().getName());
+ 
+           ((PostExecute) peh).run(SessionState.get(), plan.getInputs(), plan.getOutputs(),
+               (SessionState.get() != null ? SessionState.get().getLineageState().getLineageInfo()
+                   : null), ShimLoader.getHadoopShims().getUGIForConf(conf));
+ 
+-          perfLogger.PerfLogEnd(LOG, PerfLogger.POST_HOOK + peh.getClass().getName());
++          perfLogger.PerfLogEnd(CLASS_NAME, PerfLogger.POST_HOOK + peh.getClass().getName());
+         }
+       }
+ 
+@@ -1328,7 +1329,7 @@ public int execute() throws CommandNeedRetryException {
+       if (noName) {
+         conf.setVar(HiveConf.ConfVars.HADOOPJOBNAME, "");
+       }
+-      perfLogger.PerfLogEnd(LOG, PerfLogger.DRIVER_EXECUTE);
++      perfLogger.PerfLogEnd(CLASS_NAME, PerfLogger.DRIVER_EXECUTE);
+ 
+       if (SessionState.get().getLastMapRedStatsList() != null
+           && SessionState.get().getLastMapRedStatsList().size() > 0) {
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/Utilities.java b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/Utilities.java
+index e69b7e4..1d0defc 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/Utilities.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/Utilities.java
+@@ -99,6 +99,7 @@
+ import org.apache.hadoop.hive.metastore.api.FieldSchema;
+ import org.apache.hadoop.hive.metastore.api.Order;
+ import org.apache.hadoop.hive.ql.Context;
++import org.apache.hadoop.hive.ql.Driver;
+ import org.apache.hadoop.hive.ql.ErrorMsg;
+ import org.apache.hadoop.hive.ql.QueryPlan;
+ import org.apache.hadoop.hive.ql.exec.FileSinkOperator.RecordWriter;
+@@ -218,7 +219,8 @@ private Utilities() {
+ 
+   private static Map<Path, BaseWork> gWorkMap = Collections
+       .synchronizedMap(new HashMap<Path, BaseWork>());
+-  private static final Log LOG = LogFactory.getLog(Utilities.class.getName());
++  private static final String CLASS_NAME = Utilities.class.getName();
++  private static final Log LOG = LogFactory.getLog(CLASS_NAME);
+ 
+   public static void clearWork(Configuration conf) {
+     Path mapPath = getPlanPath(conf, MAP_PLAN_NAME);
+@@ -661,7 +663,7 @@ public void write(Kryo kryo, Output output, CommonToken token) {
+   }
+   private static void serializePlan(Object plan, OutputStream out, Configuration conf, boolean cloningPlan) {
+     PerfLogger perfLogger = PerfLogger.getPerfLogger();
+-    perfLogger.PerfLogBegin(LOG, PerfLogger.SERIALIZE_PLAN);
++    perfLogger.PerfLogBegin(CLASS_NAME, PerfLogger.SERIALIZE_PLAN);
+     String serializationType = conf.get(HiveConf.ConfVars.PLAN_SERIALIZATION.varname, "kryo");
+     LOG.info("Serializing " + plan.getClass().getSimpleName() + " via " + serializationType);
+     if("javaXML".equalsIgnoreCase(serializationType)) {
+@@ -673,7 +675,7 @@ private static void serializePlan(Object plan, OutputStream out, Configuration c
+         serializeObjectByKryo(runtimeSerializationKryo.get(), plan, out);
+       }
+     }
+-    perfLogger.PerfLogEnd(LOG, PerfLogger.SERIALIZE_PLAN);
++    perfLogger.PerfLogEnd(CLASS_NAME, PerfLogger.SERIALIZE_PLAN);
+   }
+   /**
+    * Serializes the plan.
+@@ -687,7 +689,7 @@ public static void serializePlan(Object plan, OutputStream out, Configuration co
+ 
+   private static <T> T deserializePlan(InputStream in, Class<T> planClass, Configuration conf, boolean cloningPlan) {
+     PerfLogger perfLogger = PerfLogger.getPerfLogger();
+-    perfLogger.PerfLogBegin(LOG, PerfLogger.DESERIALIZE_PLAN);
++    perfLogger.PerfLogBegin(CLASS_NAME, PerfLogger.DESERIALIZE_PLAN);
+     T plan;
+     String serializationType = conf.get(HiveConf.ConfVars.PLAN_SERIALIZATION.varname, "kryo");
+     LOG.info("Deserializing " + planClass.getSimpleName() + " via " + serializationType);
+@@ -700,7 +702,7 @@ public static void serializePlan(Object plan, OutputStream out, Configuration co
+         plan = deserializeObjectByKryo(runtimeSerializationKryo.get(), in, planClass);
+       }
+     }
+-    perfLogger.PerfLogEnd(LOG, PerfLogger.DESERIALIZE_PLAN);
++    perfLogger.PerfLogEnd(CLASS_NAME, PerfLogger.DESERIALIZE_PLAN);
+     return plan;
+   }
+   /**
+@@ -721,13 +723,13 @@ public static void serializePlan(Object plan, OutputStream out, Configuration co
+   public static MapredWork clonePlan(MapredWork plan) {
+     // TODO: need proper clone. Meanwhile, let's at least keep this horror in one place
+     PerfLogger perfLogger = PerfLogger.getPerfLogger();
+-    perfLogger.PerfLogBegin(LOG, PerfLogger.CLONE_PLAN);
++    perfLogger.PerfLogBegin(CLASS_NAME, PerfLogger.CLONE_PLAN);
+     ByteArrayOutputStream baos = new ByteArrayOutputStream(4096);
+     Configuration conf = new Configuration();
+     serializePlan(plan, baos, conf, true);
+     MapredWork newPlan = deserializePlan(new ByteArrayInputStream(baos.toByteArray()),
+         MapredWork.class, conf, true);
+-    perfLogger.PerfLogEnd(LOG, PerfLogger.CLONE_PLAN);
++    perfLogger.PerfLogEnd(CLASS_NAME, PerfLogger.CLONE_PLAN);
+     return newPlan;
+   }
+ 
+@@ -1998,7 +2000,7 @@ public static void copyTableJobPropertiesToConf(TableDesc tbl, JobConf job) {
+   public static ContentSummary getInputSummary(Context ctx, MapWork work, PathFilter filter)
+       throws IOException {
+     PerfLogger perfLogger = PerfLogger.getPerfLogger();
+-    perfLogger.PerfLogBegin(LOG, PerfLogger.INPUT_SUMMARY);
++    perfLogger.PerfLogBegin(CLASS_NAME, PerfLogger.INPUT_SUMMARY);
+ 
+     long[] summary = {0, 0, 0};
+ 
+@@ -2134,7 +2136,7 @@ public void run() {
+               + cs.getFileCount() + " directory count: " + cs.getDirectoryCount());
+         }
+ 
+-        perfLogger.PerfLogEnd(LOG, PerfLogger.INPUT_SUMMARY);
++        perfLogger.PerfLogEnd(CLASS_NAME, PerfLogger.INPUT_SUMMARY);
+         return new ContentSummary(summary[0], summary[1], summary[2]);
+       } finally {
+         HiveInterruptUtils.remove(interrup);
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/io/CombineHiveInputFormat.java b/src/ql/src/java/org/apache/hadoop/hive/ql/io/CombineHiveInputFormat.java
+index a524f1f..3c92676 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/io/CombineHiveInputFormat.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/io/CombineHiveInputFormat.java
+@@ -68,8 +68,8 @@
+ public class CombineHiveInputFormat<K extends WritableComparable, V extends Writable>
+     extends HiveInputFormat<K, V> {
+ 
+-  public static final Log LOG = LogFactory
+-      .getLog("org.apache.hadoop.hive.ql.io.CombineHiveInputFormat");
++  private static final String CLASS_NAME = CombineHiveInputFormat.class.getName();
++  public static final Log LOG = LogFactory.getLog(CLASS_NAME);
+ 
+   /**
+    * CombineHiveInputSplit encapsulates an InputSplit with its corresponding
+@@ -264,7 +264,7 @@ public int hashCode() {
+   @Override
+   public InputSplit[] getSplits(JobConf job, int numSplits) throws IOException {
+     PerfLogger perfLogger = PerfLogger.getPerfLogger();
+-    perfLogger.PerfLogBegin(LOG, PerfLogger.GET_SPLITS);
++    perfLogger.PerfLogBegin(CLASS_NAME, PerfLogger.GET_SPLITS);
+     init(job);
+     Map<String, ArrayList<String>> pathToAliases = mrwork.getPathToAliases();
+     Map<String, Operator<? extends OperatorDesc>> aliasToWork =
+@@ -275,7 +275,7 @@ public int hashCode() {
+     InputSplit[] splits = null;
+     if (combine == null) {
+       splits = super.getSplits(job, numSplits);
+-      perfLogger.PerfLogEnd(LOG, PerfLogger.GET_SPLITS);
++      perfLogger.PerfLogEnd(CLASS_NAME, PerfLogger.GET_SPLITS);
+       return splits;
+     }
+ 
+@@ -328,7 +328,7 @@ public int hashCode() {
+             dirs.offer(path);
+           } else if ((new CompressionCodecFactory(job)).getCodec(path) != null) {
+             splits = super.getSplits(job, numSplits);
+-            perfLogger.PerfLogEnd(LOG, PerfLogger.GET_SPLITS);
++            perfLogger.PerfLogEnd(CLASS_NAME, PerfLogger.GET_SPLITS);
+             return splits;
+           }
+ 
+@@ -341,7 +341,7 @@ public int hashCode() {
+               } else if ((new CompressionCodecFactory(job)).getCodec(
+                   fStatus[idx].getPath()) != null) {
+                 splits = super.getSplits(job, numSplits);
+-                perfLogger.PerfLogEnd(LOG, PerfLogger.GET_SPLITS);
++                perfLogger.PerfLogEnd(CLASS_NAME, PerfLogger.GET_SPLITS);
+                 return splits;
+               }
+             }
+@@ -351,7 +351,7 @@ public int hashCode() {
+ 
+       if (inputFormat instanceof SymlinkTextInputFormat) {
+         splits = super.getSplits(job, numSplits);
+-        perfLogger.PerfLogEnd(LOG, PerfLogger.GET_SPLITS);
++        perfLogger.PerfLogEnd(CLASS_NAME, PerfLogger.GET_SPLITS);
+         return splits;
+       }
+ 
+@@ -422,7 +422,7 @@ public int hashCode() {
+     }
+ 
+     LOG.info("number of splits " + result.size());
+-    perfLogger.PerfLogEnd(LOG, PerfLogger.GET_SPLITS);
++    perfLogger.PerfLogEnd(CLASS_NAME, PerfLogger.GET_SPLITS);
+     return result.toArray(new CombineHiveInputSplit[result.size()]);
+   }
+ 
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/io/HiveInputFormat.java b/src/ql/src/java/org/apache/hadoop/hive/ql/io/HiveInputFormat.java
+index 65a94a8..cccdc1b 100755
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/io/HiveInputFormat.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/io/HiveInputFormat.java
+@@ -65,8 +65,8 @@
+ public class HiveInputFormat<K extends WritableComparable, V extends Writable>
+     implements InputFormat<K, V>, JobConfigurable {
+ 
+-  public static final Log LOG = LogFactory
+-      .getLog("org.apache.hadoop.hive.ql.io.HiveInputFormat");
++  public static final String CLASS_NAME = HiveInputFormat.class.getName();
++  public static final Log LOG = LogFactory.getLog(CLASS_NAME);
+ 
+   /**
+    * HiveInputSplit encapsulates an InputSplit with its corresponding
+@@ -259,7 +259,7 @@ protected void init(JobConf job) {
+ 
+   public InputSplit[] getSplits(JobConf job, int numSplits) throws IOException {
+     PerfLogger perfLogger = PerfLogger.getPerfLogger();
+-    perfLogger.PerfLogBegin(LOG, PerfLogger.GET_SPLITS);
++    perfLogger.PerfLogBegin(CLASS_NAME, PerfLogger.GET_SPLITS);
+     init(job);
+ 
+     Path[] dirs = FileInputFormat.getInputPaths(job);
+@@ -298,7 +298,7 @@ protected void init(JobConf job) {
+     }
+ 
+     LOG.info("number of splits " + result.size());
+-    perfLogger.PerfLogEnd(LOG, PerfLogger.GET_SPLITS);
++    perfLogger.PerfLogEnd(CLASS_NAME, PerfLogger.GET_SPLITS);
+     return result.toArray(new HiveInputSplit[result.size()]);
+   }
+ 
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/log/PerfLogger.java b/src/ql/src/java/org/apache/hadoop/hive/ql/log/PerfLogger.java
+index 440edd5..e0261fe 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/log/PerfLogger.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/log/PerfLogger.java
+@@ -92,9 +92,9 @@ public static PerfLogger getPerfLogger(boolean resetPerfLogger) {
+    * @param _log the logging object to be used.
+    * @param method method or ID that identifies this perf log element.
+    */
+-  public void PerfLogBegin(Log _log, String method) {
++  public void PerfLogBegin(String callerName, String method) {
+     long startTime = System.currentTimeMillis();
+-    _log.info("<PERFLOG method=" + method + ">");
++    LOG.info("<PERFLOG method=" + method + " from=" + callerName + ">");
+     startTimes.put(method, new Long(startTime));
+   }
+ 
+@@ -104,7 +104,7 @@ public void PerfLogBegin(Log _log, String method) {
+    * @param method
+    * @return long duration  the difference between now and startTime, or -1 if startTime is null
+    */
+-  public long PerfLogEnd(Log _log, String method) {
++  public long PerfLogEnd(String callerName, String method) {
+     Long startTime = startTimes.get(method);
+     long endTime = System.currentTimeMillis();
+     long duration = -1;
+@@ -120,8 +120,8 @@ public long PerfLogEnd(Log _log, String method) {
+       duration = endTime - startTime.longValue();
+       sb.append(" duration=").append(duration);
+     }
+-    sb.append(">");
+-    _log.info(sb);
++    sb.append(" from=").append(callerName).append(">");
++    LOG.info(sb);
+ 
+     return duration;
+   }
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/optimizer/ppr/PartitionPruner.java b/src/ql/src/java/org/apache/hadoop/hive/ql/optimizer/ppr/PartitionPruner.java
+index cd67dd8..055b68a 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/optimizer/ppr/PartitionPruner.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/optimizer/ppr/PartitionPruner.java
+@@ -66,8 +66,8 @@
+ public class PartitionPruner implements Transform {
+ 
+   // The log
+-  private static final Log LOG = LogFactory
+-    .getLog("hive.ql.optimizer.ppr.PartitionPruner");
++  public static final String CLASS_NAME = PartitionPruner.class.getName();
++  public static final Log LOG = LogFactory.getLog(CLASS_NAME);
+ 
+   /*
+    * (non-Javadoc)
+@@ -307,7 +307,7 @@ private static PrunedPartitionList getPartitionsFromServer(Table tab,
+   static private boolean pruneBySequentialScan(Table tab, Set<Partition> partitions,
+       ExprNodeDesc prunerExpr, HiveConf conf) throws Exception {
+     PerfLogger perfLogger = PerfLogger.getPerfLogger();
+-    perfLogger.PerfLogBegin(LOG, PerfLogger.PRUNE_LISTING);
++    perfLogger.PerfLogBegin(CLASS_NAME, PerfLogger.PRUNE_LISTING);
+ 
+     List<String> partNames = Hive.get().getPartitionNames(
+         tab.getDbName(), tab.getTableName(), (short) -1);
+@@ -317,13 +317,13 @@ static private boolean pruneBySequentialScan(Table tab, Set<Partition> partition
+ 
+     boolean hasUnknownPartitions = prunePartitionNames(
+         partCols, prunerExpr, defaultPartitionName, partNames);
+-    perfLogger.PerfLogEnd(LOG, PerfLogger.PRUNE_LISTING);
++    perfLogger.PerfLogEnd(CLASS_NAME, PerfLogger.PRUNE_LISTING);
+ 
+-    perfLogger.PerfLogBegin(LOG, PerfLogger.PARTITION_RETRIEVING);
++    perfLogger.PerfLogBegin(CLASS_NAME, PerfLogger.PARTITION_RETRIEVING);
+     if (!partNames.isEmpty()) {
+       partitions.addAll(Hive.get().getPartitionsByNames(tab, partNames));
+     }
+-    perfLogger.PerfLogEnd(LOG, PerfLogger.PARTITION_RETRIEVING);
++    perfLogger.PerfLogEnd(CLASS_NAME, PerfLogger.PARTITION_RETRIEVING);
+     return hasUnknownPartitions;
+   }
+ 
+-- 
+1.7.0.4
+

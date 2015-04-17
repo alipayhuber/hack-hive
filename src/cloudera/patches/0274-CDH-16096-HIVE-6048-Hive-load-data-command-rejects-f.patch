@@ -1,0 +1,1163 @@
+From 7ce5052131d13fa518d39679456df5869bce71f5 Mon Sep 17 00:00:00 2001
+From: Ashutosh Chauhan <hashutosh@apache.org>
+Date: Sun, 22 Dec 2013 17:41:24 +0000
+Subject: [PATCH 274/375] CDH-16096 HIVE-6048 : Hive load data command rejects file with '+' in the name (Xuefu Zhang via Ashutosh Chauhan)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1553006 13f79535-47bb-0310-9956-ffa450edef68
+---
+ data/files/person age.txt                          |   10 +++---
+ data/files/person+age.txt                          |    3 ++
+ .../org/apache/hadoop/hive/ql/exec/CopyTask.java   |    6 +--
+ .../org/apache/hadoop/hive/ql/exec/MoveTask.java   |    2 +-
+ .../hadoop/hive/ql/optimizer/GenMRFileSink1.java   |    3 +-
+ .../hadoop/hive/ql/parse/DDLSemanticAnalyzer.java  |    4 +-
+ .../hive/ql/parse/ExportSemanticAnalyzer.java      |    6 ++--
+ .../hive/ql/parse/ImportSemanticAnalyzer.java      |   16 +++++-----
+ .../hadoop/hive/ql/parse/LoadSemanticAnalyzer.java |   24 ++-------------
+ .../hadoop/hive/ql/parse/SemanticAnalyzer.java     |    7 ++--
+ .../org/apache/hadoop/hive/ql/plan/CopyWork.java   |   31 +++++++++++---------
+ .../org/apache/hadoop/hive/ql/plan/LoadDesc.java   |   18 ++++++-----
+ .../apache/hadoop/hive/ql/plan/LoadFileDesc.java   |   10 ++++--
+ .../apache/hadoop/hive/ql/plan/LoadTableDesc.java  |   22 +++++++------
+ .../load_file_with_space_in_the_name.q             |    1 +
+ .../load_hdfs_file_with_space_in_the_name.q        |    1 +
+ .../load_file_with_space_in_the_name.q.out         |    6 ++++
+ .../load_hdfs_file_with_space_in_the_name.q.out    |    6 ++++
+ .../results/compiler/plan/case_sensitivity.q.xml   |    6 ----
+ ql/src/test/results/compiler/plan/groupby1.q.xml   |    3 --
+ ql/src/test/results/compiler/plan/input1.q.xml     |    6 ----
+ ql/src/test/results/compiler/plan/input2.q.xml     |   18 -----------
+ ql/src/test/results/compiler/plan/input3.q.xml     |   24 ---------------
+ ql/src/test/results/compiler/plan/input4.q.xml     |    3 --
+ ql/src/test/results/compiler/plan/input5.q.xml     |    3 --
+ ql/src/test/results/compiler/plan/input6.q.xml     |    6 ----
+ ql/src/test/results/compiler/plan/input7.q.xml     |    6 ----
+ ql/src/test/results/compiler/plan/input9.q.xml     |    6 ----
+ .../compiler/plan/input_testsequencefile.q.xml     |    6 ----
+ ql/src/test/results/compiler/plan/join1.q.xml      |    3 --
+ ql/src/test/results/compiler/plan/join2.q.xml      |    3 --
+ ql/src/test/results/compiler/plan/join3.q.xml      |    3 --
+ ql/src/test/results/compiler/plan/sample2.q.xml    |    6 ----
+ ql/src/test/results/compiler/plan/sample3.q.xml    |    6 ----
+ ql/src/test/results/compiler/plan/sample4.q.xml    |    6 ----
+ ql/src/test/results/compiler/plan/sample5.q.xml    |    6 ----
+ ql/src/test/results/compiler/plan/sample6.q.xml    |    6 ----
+ ql/src/test/results/compiler/plan/sample7.q.xml    |    6 ----
+ ql/src/test/results/compiler/plan/subq.q.xml       |    6 ----
+ ql/src/test/results/compiler/plan/union.q.xml      |    6 ----
+ 40 files changed, 93 insertions(+), 227 deletions(-)
+ create mode 100644 data/files/person+age.txt
+
+diff --git a/src/data/files/person age.txt b/src/data/files/person age.txt
+index c902284..f63d241 100644
+--- a/src/data/files/person age.txt	
++++ b/src/data/files/person age.txt	
+@@ -1,5 +1,5 @@
+-John	23
+-Tom	17
+-Jim	31
+-Boby	9
+-Paul	51
+\ No newline at end of file
++John23
++Tom17
++Jim31
++Boby9
++Paul51
+diff --git a/src/data/files/person+age.txt b/src/data/files/person+age.txt
+new file mode 100644
+index 0000000..9d2fa32
+--- /dev/null
++++ b/src/data/files/person+age.txt
+@@ -0,0 +1,3 @@
++Sean29
++Tim47
++Pooh21
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/CopyTask.java b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/CopyTask.java
+index 38d97e3..b429a58 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/CopyTask.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/CopyTask.java
+@@ -26,7 +26,6 @@
+ import org.apache.hadoop.fs.FileSystem;
+ import org.apache.hadoop.fs.FileUtil;
+ import org.apache.hadoop.fs.Path;
+-import org.apache.hadoop.hive.ql.Context;
+ import org.apache.hadoop.hive.ql.DriverContext;
+ import org.apache.hadoop.hive.ql.parse.LoadSemanticAnalyzer;
+ import org.apache.hadoop.hive.ql.plan.CopyWork;
+@@ -51,8 +50,8 @@ public int execute(DriverContext driverContext) {
+     FileSystem dstFs = null;
+     Path toPath = null;
+     try {
+-      Path fromPath = new Path(work.getFromPath());
+-      toPath = new Path(work.getToPath());
++      Path fromPath = work.getFromPath();
++      toPath = work.getToPath();
+ 
+       console.printInfo("Copying data from " + fromPath.toString(), " to "
+           + toPath.toString());
+@@ -61,7 +60,6 @@ public int execute(DriverContext driverContext) {
+       dstFs = toPath.getFileSystem(conf);
+ 
+       FileStatus[] srcs = LoadSemanticAnalyzer.matchFilesOrDir(srcFs, fromPath);
+-
+       if (srcs == null || srcs.length == 0) {
+         if (work.isErrorOnSrcEmpty()) {
+           console.printError("No files matching path: " + fromPath.toString());
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/MoveTask.java b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/MoveTask.java
+index cee95fd..fd5d553 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/MoveTask.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/MoveTask.java
+@@ -251,7 +251,7 @@ public int execute(DriverContext driverContext) {
+           FileSystem fs;
+           try {
+             fs = FileSystem.get(table.getDataLocation(), conf);
+-            dirs = fs.globStatus(new Path(tbd.getSourceDir()));
++            dirs = fs.globStatus(tbd.getSourcePath());
+             files = new ArrayList<FileStatus>();
+             for (int i = 0; (dirs != null && i < dirs.length); i++) {
+               files.addAll(Arrays.asList(fs.listStatus(dirs[i].getPath())));
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/optimizer/GenMRFileSink1.java b/src/ql/src/java/org/apache/hadoop/hive/ql/optimizer/GenMRFileSink1.java
+index 686a380..1449c8c 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/optimizer/GenMRFileSink1.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/optimizer/GenMRFileSink1.java
+@@ -19,6 +19,7 @@
+ package org.apache.hadoop.hive.ql.optimizer;
+ 
+ import java.io.Serializable;
++import java.net.URI;
+ import java.util.ArrayList;
+ import java.util.HashMap;
+ import java.util.LinkedHashMap;
+@@ -347,7 +348,7 @@ private void createMRWorkForMergingFiles (FileSinkOperator fsInput, GenMRProcCon
+     // 2. Constructing a conditional task consisting of a move task and a map reduce task
+     //
+     MoveWork dummyMv = new MoveWork(null, null, null,
+-        new LoadFileDesc(fsInputDesc.getFinalDirName(), finalName, true, null, null), false);
++        new LoadFileDesc(new Path(fsInputDesc.getFinalDirName()), finalName, true, null, null), false);
+     MapWork cplan;
+     Serializable work;
+ 
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/DDLSemanticAnalyzer.java b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/DDLSemanticAnalyzer.java
+index 0130d80..623ca92 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/DDLSemanticAnalyzer.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/DDLSemanticAnalyzer.java
+@@ -991,7 +991,7 @@ private void analyzeTruncateTable(ASTNode ast) throws SemanticException {
+         // so the operation is atomic.
+         String queryTmpdir = ctx.getExternalTmpFileURI(newTblPartLoc.toUri());
+         truncateTblDesc.setOutputDir(queryTmpdir);
+-        LoadTableDesc ltd = new LoadTableDesc(queryTmpdir, queryTmpdir, tblDesc,
++        LoadTableDesc ltd = new LoadTableDesc(new Path(queryTmpdir), queryTmpdir, tblDesc,
+             partSpec == null ? new HashMap<String, String>() : partSpec);
+         ltd.setLbCtx(lbCtx);
+         Task<MoveWork> moveTsk = TaskFactory.get(new MoveWork(null, null, ltd, null, false),
+@@ -1607,7 +1607,7 @@ private void analyzeAlterTablePartMergeFiles(ASTNode tablePartAST, ASTNode ast,
+       TableDesc tblDesc = Utilities.getTableDesc(tblObj);
+       String queryTmpdir = ctx.getExternalTmpFileURI(newTblPartLoc.toUri());
+       mergeDesc.setOutputDir(queryTmpdir);
+-      LoadTableDesc ltd = new LoadTableDesc(queryTmpdir, queryTmpdir, tblDesc,
++      LoadTableDesc ltd = new LoadTableDesc(new Path(queryTmpdir), queryTmpdir, tblDesc,
+           partSpec == null ? new HashMap<String, String>() : partSpec);
+       ltd.setLbCtx(lbCtx);
+       Task<MoveWork> moveTsk = TaskFactory.get(new MoveWork(null, null, ltd, null, false),
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/ExportSemanticAnalyzer.java b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/ExportSemanticAnalyzer.java
+index 21e8ad5..a2e81c7 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/ExportSemanticAnalyzer.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/ExportSemanticAnalyzer.java
+@@ -91,7 +91,7 @@ public void analyzeInternal(ASTNode ast) throws SemanticException {
+       Path path = new Path(tmpfile, "_metadata");
+       EximUtil.createExportDump(FileSystem.getLocal(conf), path, ts.tableHandle, partitions);
+       Task<? extends Serializable> rTask = TaskFactory.get(new CopyWork(
+-          path.toString(), toURI.toString(), false), conf);
++          path, new Path(toURI), false), conf);
+       rootTasks.add(rTask);
+       LOG.debug("_metadata file written into " + path.toString()
+           + " and then copied to " + toURI.toString());
+@@ -106,7 +106,7 @@ public void analyzeInternal(ASTNode ast) throws SemanticException {
+         URI fromURI = partition.getDataLocation();
+         Path toPartPath = new Path(toURI.toString(), partition.getName());
+         Task<? extends Serializable> rTask = TaskFactory.get(
+-            new CopyWork(fromURI.toString(), toPartPath.toString(), false),
++            new CopyWork(new Path(fromURI), toPartPath, false),
+             conf);
+         rootTasks.add(rTask);
+         inputs.add(new ReadEntity(partition));
+@@ -115,7 +115,7 @@ public void analyzeInternal(ASTNode ast) throws SemanticException {
+       URI fromURI = ts.tableHandle.getDataLocation();
+       Path toDataPath = new Path(toURI.toString(), "data");
+       Task<? extends Serializable> rTask = TaskFactory.get(new CopyWork(
+-          fromURI.toString(), toDataPath.toString(), false), conf);
++          new Path(fromURI), toDataPath, false), conf);
+       rootTasks.add(rTask);
+       inputs.add(new ReadEntity(ts.tableHandle));
+     }
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/ImportSemanticAnalyzer.java b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/ImportSemanticAnalyzer.java
+index 9a275f6..4d02577 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/ImportSemanticAnalyzer.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/ImportSemanticAnalyzer.java
+@@ -284,10 +284,10 @@ public void analyzeInternal(ASTNode ast) throws SemanticException {
+ 
+   private Task<?> loadTable(URI fromURI, Table table) {
+     Path dataPath = new Path(fromURI.toString(), "data");
+-    String tmpURI = ctx.getExternalTmpFileURI(fromURI);
+-    Task<?> copyTask = TaskFactory.get(new CopyWork(dataPath.toString(),
+-        tmpURI, false), conf);
+-    LoadTableDesc loadTableWork = new LoadTableDesc(tmpURI.toString(),
++    Path tmpPath = new Path(ctx.getExternalTmpFileURI(fromURI));
++    Task<?> copyTask = TaskFactory.get(new CopyWork(dataPath,
++       tmpPath, false), conf);
++    LoadTableDesc loadTableWork = new LoadTableDesc(tmpPath,
+         ctx.getExternalTmpFileURI(fromURI),
+         Utilities.getTableDesc(table), new TreeMap<String, String>(),
+         false);
+@@ -329,12 +329,12 @@ public void analyzeInternal(ASTNode ast) throws SemanticException {
+       LOG.debug("adding dependent CopyWork/AddPart/MoveWork for partition "
+           + partSpecToString(addPartitionDesc.getPartSpec())
+           + " with source location: " + srcLocation);
+-      String tmpURI = ctx.getExternalTmpFileURI(fromURI);
+-      Task<?> copyTask = TaskFactory.get(new CopyWork(srcLocation,
+-          tmpURI, false), conf);
++      Path tmpPath = new Path(ctx.getExternalTmpFileURI(fromURI));
++      Task<?> copyTask = TaskFactory.get(new CopyWork(new Path(srcLocation),
++          tmpPath, false), conf);
+       Task<?> addPartTask = TaskFactory.get(new DDLWork(getInputs(),
+           getOutputs(), addPartitionDesc), conf);
+-      LoadTableDesc loadTableWork = new LoadTableDesc(tmpURI,
++      LoadTableDesc loadTableWork = new LoadTableDesc(tmpPath,
+           ctx.getExternalTmpFileURI(fromURI),
+           Utilities.getTableDesc(table),
+           addPartitionDesc.getPartSpec(), true);
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/LoadSemanticAnalyzer.java b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/LoadSemanticAnalyzer.java
+index 593ab2d..27d208e 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/LoadSemanticAnalyzer.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/LoadSemanticAnalyzer.java
+@@ -27,8 +27,6 @@
+ import java.util.Map;
+ 
+ import org.antlr.runtime.tree.Tree;
+-import org.apache.commons.httpclient.URIException;
+-import org.apache.commons.httpclient.util.URIUtil;
+ import org.apache.commons.lang.StringUtils;
+ import org.apache.hadoop.fs.FileStatus;
+ import org.apache.hadoop.fs.FileSystem;
+@@ -86,7 +84,7 @@ private URI initializeFromURI(String fromPath) throws IOException,
+     // directory
+     if (!path.startsWith("/")) {
+       if (isLocal) {
+-        path = URIUtil.decode( new Path(System.getProperty("user.dir"), path).toUri().toString() );
++        path = new Path(System.getProperty("user.dir"), fromPath).toString();
+       } else {
+         path = new Path(new Path("/user/" + System.getProperty("user.name")),
+           path).toString();
+@@ -127,10 +125,7 @@ private void applyConstraints(URI fromURI, URI toURI, Tree ast,
+     }
+ 
+     try {
+-      FileStatus[] srcs = matchFilesOrDir(FileSystem.get(fromURI, conf),
+-          new Path(fromURI.getScheme(), fromURI.getAuthority(), fromURI
+-          .getPath()));
+-
++      FileStatus[] srcs = matchFilesOrDir(FileSystem.get(fromURI, conf), new Path(fromURI));
+       if (srcs == null || srcs.length == 0) {
+         throw new SemanticException(ErrorMsg.INVALID_PATH.getMsg(ast,
+             "No files matching path " + fromURI));
+@@ -238,13 +233,7 @@ public void analyzeInternal(ASTNode ast) throws SemanticException {
+       // that's just a test case.
+       String copyURIStr = ctx.getExternalTmpFileURI(toURI);
+       URI copyURI = URI.create(copyURIStr);
+-      try {
+-        rTask = TaskFactory.get(new CopyWork(URIUtil.decode(fromURI.toString()), copyURIStr),
+-            conf);
+-      } catch (URIException e) {
+-        throw new SemanticException(ErrorMsg.INVALID_PATH.getMsg(fromTree, e
+-            .getMessage()), e);
+-      }
++      rTask = TaskFactory.get(new CopyWork(new Path(fromURI), new Path(copyURI)), conf);
+       fromURI = copyURI;
+     }
+ 
+@@ -274,13 +263,8 @@ public void analyzeInternal(ASTNode ast) throws SemanticException {
+ 
+ 
+     LoadTableDesc loadTableWork;
+-    try {
+-      loadTableWork = new LoadTableDesc(URIUtil.decode(fromURI.toString()),
++    loadTableWork = new LoadTableDesc(new Path(fromURI),
+           loadTmpPath, Utilities.getTableDesc(ts.tableHandle), partSpec, isOverWrite);
+-    } catch (URIException e1) {
+-      throw new SemanticException(ErrorMsg.INVALID_PATH.getMsg(fromTree, e1
+-          .getMessage()), e1);
+-    }
+ 
+     Task<? extends Serializable> childTask = TaskFactory.get(new MoveWork(getInputs(),
+         getOutputs(), loadTableWork, null, true), conf);
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/SemanticAnalyzer.java b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/SemanticAnalyzer.java
+index 32cc388..d50945e 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/SemanticAnalyzer.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/SemanticAnalyzer.java
+@@ -19,6 +19,7 @@
+ package org.apache.hadoop.hive.ql.parse;
+ 
+ import java.io.Serializable;
++import java.net.URI;
+ import java.util.ArrayList;
+ import java.util.HashMap;
+ import java.util.HashSet;
+@@ -5019,7 +5020,7 @@ private Operator genFileSinkPlan(String dest, QB qb, Operator input)
+       // Create the work for moving the table
+       // NOTE: specify Dynamic partitions in dest_tab for WriteEntity
+       if (!isNonNativeTable) {
+-        ltd = new LoadTableDesc(queryTmpdir, ctx.getExternalTmpFileURI(dest_path.toUri()),
++        ltd = new LoadTableDesc(new Path(queryTmpdir), ctx.getExternalTmpFileURI(dest_path.toUri()),
+             table_desc, dpCtx);
+         ltd.setReplace(!qb.getParseInfo().isInsertIntoTable(dest_tab.getDbName(),
+             dest_tab.getTableName()));
+@@ -5103,7 +5104,7 @@ private Operator genFileSinkPlan(String dest, QB qb, Operator input)
+       lbCtx = constructListBucketingCtx(dest_part.getSkewedColNames(),
+           dest_part.getSkewedColValues(), dest_part.getSkewedColValueLocationMaps(),
+           dest_part.isStoredAsSubDirectories(), conf);
+-      ltd = new LoadTableDesc(queryTmpdir, ctx.getExternalTmpFileURI(dest_path.toUri()),
++      ltd = new LoadTableDesc(new Path(queryTmpdir), ctx.getExternalTmpFileURI(dest_path.toUri()),
+           table_desc, dest_part.getSpec());
+       ltd.setReplace(!qb.getParseInfo().isInsertIntoTable(dest_tab.getDbName(),
+           dest_tab.getTableName()));
+@@ -5225,7 +5226,7 @@ private Operator genFileSinkPlan(String dest, QB qb, Operator input)
+       }
+ 
+       boolean isDfsDir = (dest_type.intValue() == QBMetaData.DEST_DFS_FILE);
+-      loadFileWork.add(new LoadFileDesc(tblDesc, queryTmpdir, destStr, isDfsDir, cols,
++      loadFileWork.add(new LoadFileDesc(tblDesc, new Path(queryTmpdir), destStr, isDfsDir, cols,
+           colTypes));
+ 
+       if (tblDesc == null) {
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/plan/CopyWork.java b/src/ql/src/java/org/apache/hadoop/hive/ql/plan/CopyWork.java
+index de31b21..04993b2 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/plan/CopyWork.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/plan/CopyWork.java
+@@ -20,6 +20,8 @@
+ 
+ import java.io.Serializable;
+ 
++import org.apache.hadoop.fs.Path;
++
+ /**
+  * CopyWork.
+  *
+@@ -27,39 +29,39 @@
+ @Explain(displayName = "Copy")
+ public class CopyWork implements Serializable {
+   private static final long serialVersionUID = 1L;
+-  private String fromPath;
+-  private String toPath;
++  private Path fromPath;
++  private Path toPath;
+   private boolean errorOnSrcEmpty;
+ 
+   public CopyWork() {
+   }
+ 
+-  public CopyWork(final String fromPath, final String toPath) {
++  public CopyWork(final Path fromPath, final Path toPath) {
+     this(fromPath, toPath, true);
+   }
+ 
+-  public CopyWork(final String fromPath, final String toPath, boolean errorOnSrcEmpty) {
++  public CopyWork(final Path fromPath, final Path toPath, boolean errorOnSrcEmpty) {
+     this.fromPath = fromPath;
+     this.toPath = toPath;
+     this.setErrorOnSrcEmpty(errorOnSrcEmpty);
+   }
+ 
+   @Explain(displayName = "source")
+-  public String getFromPath() {
+-    return fromPath;
++  public String getFromPathAsString() {
++    return fromPath.toUri().toString();
+   }
+-
+-  public void setFromPath(final String fromPath) {
+-    this.fromPath = fromPath;
++  
++  @Explain(displayName = "destination")
++  public String getToPathAsString() {
++    return toPath.toUri().toString();
+   }
+ 
+-  @Explain(displayName = "destination")
+-  public String getToPath() {
+-    return toPath;
++  public Path getFromPath() {
++    return fromPath;
+   }
+ 
+-  public void setToPath(final String toPath) {
+-    this.toPath = toPath;
++  public Path getToPath() {
++    return toPath;
+   }
+ 
+   public void setErrorOnSrcEmpty(boolean errorOnSrcEmpty) {
+@@ -69,4 +71,5 @@ public void setErrorOnSrcEmpty(boolean errorOnSrcEmpty) {
+   public boolean isErrorOnSrcEmpty() {
+     return errorOnSrcEmpty;
+   }
++
+ }
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/plan/LoadDesc.java b/src/ql/src/java/org/apache/hadoop/hive/ql/plan/LoadDesc.java
+index bada915..0e46b9f 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/plan/LoadDesc.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/plan/LoadDesc.java
+@@ -20,28 +20,30 @@
+ 
+ import java.io.Serializable;
+ 
++import org.apache.hadoop.fs.Path;
++
+ /**
+  * LoadDesc.
+  *
+  */
+ public class LoadDesc implements Serializable {
+   private static final long serialVersionUID = 1L;
+-  private String sourceDir;
++  private Path sourcePath;
+ 
+   public LoadDesc() {
+   }
+ 
+-  public LoadDesc(final String sourceDir) {
+-
+-    this.sourceDir = sourceDir;
++  public LoadDesc(final Path sourcePath) {
++    this.sourcePath = sourcePath;
+   }
+ 
+   @Explain(displayName = "source", normalExplain = false)
+   public String getSourceDir() {
+-    return sourceDir;
++    return sourcePath.toString();
+   }
+-
+-  public void setSourceDir(final String source) {
+-    sourceDir = source;
++  
++  public Path getSourcePath() {
++    return sourcePath;
+   }
++  
+ }
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/plan/LoadFileDesc.java b/src/ql/src/java/org/apache/hadoop/hive/ql/plan/LoadFileDesc.java
+index 40adca7..cac6abf 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/plan/LoadFileDesc.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/plan/LoadFileDesc.java
+@@ -20,6 +20,8 @@
+ 
+ import java.io.Serializable;
+ 
++import org.apache.hadoop.fs.Path;
++
+ /**
+  * LoadFileDesc.
+  *
+@@ -36,10 +38,10 @@
+   public LoadFileDesc() {
+   }
+ 
+-  public LoadFileDesc(final CreateTableDesc createTableDesc, final String sourceDir,
++  public LoadFileDesc(final CreateTableDesc createTableDesc, final Path sourcePath,
+       final String targetDir,
+       final boolean isDfsDir, final String columns, final String columnTypes) {
+-    this(sourceDir, targetDir, isDfsDir, columns, columnTypes);
++    this(sourcePath, targetDir, isDfsDir, columns, columnTypes);
+     if (createTableDesc != null && createTableDesc.getDatabaseName() != null
+         && createTableDesc.getTableName() != null) {
+       destinationCreateTable = (createTableDesc.getTableName().contains(".") ? "" : createTableDesc
+@@ -48,10 +50,10 @@ public LoadFileDesc(final CreateTableDesc createTableDesc, final String sourceDi
+     }
+   }
+ 
+-  public LoadFileDesc(final String sourceDir, final String targetDir,
++  public LoadFileDesc(final Path sourcePath, final String targetDir,
+       final boolean isDfsDir, final String columns, final String columnTypes) {
+ 
+-    super(sourceDir);
++    super(sourcePath);
+     this.targetDir = targetDir;
+     this.isDfsDir = isDfsDir;
+     this.columns = columns;
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/plan/LoadTableDesc.java b/src/ql/src/java/org/apache/hadoop/hive/ql/plan/LoadTableDesc.java
+index 7d555e4..882e98c 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/plan/LoadTableDesc.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/plan/LoadTableDesc.java
+@@ -22,6 +22,8 @@
+ import java.util.LinkedHashMap;
+ import java.util.Map;
+ 
++import org.apache.hadoop.fs.Path;
++
+ /**
+  * LoadTableDesc.
+  *
+@@ -45,32 +47,32 @@ public LoadTableDesc() {
+     this.holdDDLTime = false;
+   }
+ 
+-  public LoadTableDesc(final String sourceDir, final String tmpDir,
++  public LoadTableDesc(final Path sourcePath, final String tmpDir,
+       final org.apache.hadoop.hive.ql.plan.TableDesc table,
+       final Map<String, String> partitionSpec, final boolean replace) {
+-    super(sourceDir);
+-    init(sourceDir, tmpDir, table, partitionSpec, replace);
++    super(sourcePath);
++    init(tmpDir, table, partitionSpec, replace);
+   }
+ 
+-  public LoadTableDesc(final String sourceDir, final String tmpDir,
++  public LoadTableDesc(final Path sourcePath, final String tmpDir,
+       final org.apache.hadoop.hive.ql.plan.TableDesc table,
+       final Map<String, String> partitionSpec) {
+-    this(sourceDir, tmpDir, table, partitionSpec, true);
++    this(sourcePath, tmpDir, table, partitionSpec, true);
+   }
+ 
+-  public LoadTableDesc(final String sourceDir, final String tmpDir,
++  public LoadTableDesc(final Path sourcePath, final String tmpDir,
+       final org.apache.hadoop.hive.ql.plan.TableDesc table,
+       final DynamicPartitionCtx dpCtx) {
+-    super(sourceDir);
++    super(sourcePath);
+     this.dpCtx = dpCtx;
+     if (dpCtx != null && dpCtx.getPartSpec() != null && partitionSpec == null) {
+-      init(sourceDir, tmpDir, table, dpCtx.getPartSpec(), true);
++      init(tmpDir, table, dpCtx.getPartSpec(), true);
+     } else {
+-      init(sourceDir, tmpDir, table, new LinkedHashMap<String, String>(), true);
++      init(tmpDir, table, new LinkedHashMap<String, String>(), true);
+     }
+   }
+ 
+-  private void init(final String sourceDir, final String tmpDir,
++  private void init(final String tmpDir,
+       final org.apache.hadoop.hive.ql.plan.TableDesc table,
+       final Map<String, String> partitionSpec, final boolean replace) {
+     this.tmpDir = tmpDir;
+diff --git a/src/ql/src/test/queries/clientpositive/load_file_with_space_in_the_name.q b/src/ql/src/test/queries/clientpositive/load_file_with_space_in_the_name.q
+index 672d5d2..6bac47f 100644
+--- a/src/ql/src/test/queries/clientpositive/load_file_with_space_in_the_name.q
++++ b/src/ql/src/test/queries/clientpositive/load_file_with_space_in_the_name.q
+@@ -3,3 +3,4 @@
+ 
+ CREATE TABLE load_file_with_space_in_the_name(name STRING, age INT);
+ LOAD DATA LOCAL INPATH '../../data/files/person age.txt' INTO TABLE load_file_with_space_in_the_name;
++LOAD DATA LOCAL INPATH '../../data/files/person+age.txt' INTO TABLE load_file_with_space_in_the_name;
+diff --git a/src/ql/src/test/queries/clientpositive/load_hdfs_file_with_space_in_the_name.q b/src/ql/src/test/queries/clientpositive/load_hdfs_file_with_space_in_the_name.q
+index d4520e2..b8087b9 100644
+--- a/src/ql/src/test/queries/clientpositive/load_hdfs_file_with_space_in_the_name.q
++++ b/src/ql/src/test/queries/clientpositive/load_hdfs_file_with_space_in_the_name.q
+@@ -4,6 +4,7 @@ dfs -copyFromLocal ../../data/files hdfs:///tmp/test/.;
+ 
+ CREATE TABLE load_file_with_space_in_the_name(name STRING, age INT);
+ LOAD DATA INPATH 'hdfs:///tmp/test/files/person age.txt' INTO TABLE load_file_with_space_in_the_name;
++LOAD DATA INPATH 'hdfs:///tmp/test/files/person+age.txt' INTO TABLE load_file_with_space_in_the_name;
+ 
+ dfs -rmr hdfs:///tmp/test;
+ 
+diff --git a/src/ql/src/test/results/clientpositive/load_file_with_space_in_the_name.q.out b/src/ql/src/test/results/clientpositive/load_file_with_space_in_the_name.q.out
+index af6fd10..717c4a4 100644
+--- a/src/ql/src/test/results/clientpositive/load_file_with_space_in_the_name.q.out
++++ b/src/ql/src/test/results/clientpositive/load_file_with_space_in_the_name.q.out
+@@ -15,3 +15,9 @@ PREHOOK: Output: default@load_file_with_space_in_the_name
+ POSTHOOK: query: LOAD DATA LOCAL INPATH '../../data/files/person age.txt' INTO TABLE load_file_with_space_in_the_name
+ POSTHOOK: type: LOAD
+ POSTHOOK: Output: default@load_file_with_space_in_the_name
++PREHOOK: query: LOAD DATA LOCAL INPATH '../../data/files/person+age.txt' INTO TABLE load_file_with_space_in_the_name
++PREHOOK: type: LOAD
++PREHOOK: Output: default@load_file_with_space_in_the_name
++POSTHOOK: query: LOAD DATA LOCAL INPATH '../../data/files/person+age.txt' INTO TABLE load_file_with_space_in_the_name
++POSTHOOK: type: LOAD
++POSTHOOK: Output: default@load_file_with_space_in_the_name
+diff --git a/src/ql/src/test/results/clientpositive/load_hdfs_file_with_space_in_the_name.q.out b/src/ql/src/test/results/clientpositive/load_hdfs_file_with_space_in_the_name.q.out
+index 1e7fa33..fcc4339 100644
+--- a/src/ql/src/test/results/clientpositive/load_hdfs_file_with_space_in_the_name.q.out
++++ b/src/ql/src/test/results/clientpositive/load_hdfs_file_with_space_in_the_name.q.out
+@@ -10,3 +10,9 @@ PREHOOK: Output: default@load_file_with_space_in_the_name
+ POSTHOOK: type: LOAD
+ POSTHOOK: Output: default@load_file_with_space_in_the_name
+ #### A masked pattern was here ####
++PREHOOK: type: LOAD
++PREHOOK: Output: default@load_file_with_space_in_the_name
++#### A masked pattern was here ####
++POSTHOOK: type: LOAD
++POSTHOOK: Output: default@load_file_with_space_in_the_name
++#### A masked pattern was here ####
+diff --git a/src/ql/src/test/results/compiler/plan/case_sensitivity.q.xml b/src/ql/src/test/results/compiler/plan/case_sensitivity.q.xml
+index 5491e74..320f1cc 100644
+--- a/src/ql/src/test/results/compiler/plan/case_sensitivity.q.xml
++++ b/src/ql/src/test/results/compiler/plan/case_sensitivity.q.xml
+@@ -410,9 +410,6 @@
+                       <void property="isDfsDir"> 
+                        <boolean>true</boolean> 
+                       </void> 
+-                      <void property="sourceDir"> 
+-                       #### A masked pattern was here #### 
+-                      </void> 
+                       <void property="targetDir"> 
+                        #### A masked pattern was here #### 
+                       </void> 
+@@ -453,9 +450,6 @@
+                   <void property="replace"> 
+                    <boolean>true</boolean> 
+                   </void> 
+-                  <void property="sourceDir"> 
+-                   #### A masked pattern was here #### 
+-                  </void> 
+                   <void property="table"> 
+                    <object idref="TableDesc0"/> 
+                   </void> 
+diff --git a/src/ql/src/test/results/compiler/plan/groupby1.q.xml b/src/ql/src/test/results/compiler/plan/groupby1.q.xml
+index 2859cac..7e55c29 100755
+--- a/src/ql/src/test/results/compiler/plan/groupby1.q.xml
++++ b/src/ql/src/test/results/compiler/plan/groupby1.q.xml
+@@ -76,9 +76,6 @@
+           <void property="replace"> 
+            <boolean>true</boolean> 
+           </void> 
+-          <void property="sourceDir"> 
+-           #### A masked pattern was here #### 
+-          </void> 
+           <void property="table"> 
+            <object id="TableDesc0" class="org.apache.hadoop.hive.ql.plan.TableDesc"> 
+             <void property="inputFileFormatClass"> 
+diff --git a/src/ql/src/test/results/compiler/plan/input1.q.xml b/src/ql/src/test/results/compiler/plan/input1.q.xml
+index 10cb2a7..dbe46fb 100755
+--- a/src/ql/src/test/results/compiler/plan/input1.q.xml
++++ b/src/ql/src/test/results/compiler/plan/input1.q.xml
+@@ -410,9 +410,6 @@
+                       <void property="isDfsDir"> 
+                        <boolean>true</boolean> 
+                       </void> 
+-                      <void property="sourceDir"> 
+-                       #### A masked pattern was here #### 
+-                      </void> 
+                       <void property="targetDir"> 
+                        #### A masked pattern was here #### 
+                       </void> 
+@@ -453,9 +450,6 @@
+                   <void property="replace"> 
+                    <boolean>true</boolean> 
+                   </void> 
+-                  <void property="sourceDir"> 
+-                   #### A masked pattern was here #### 
+-                  </void> 
+                   <void property="table"> 
+                    <object idref="TableDesc0"/> 
+                   </void> 
+diff --git a/src/ql/src/test/results/compiler/plan/input2.q.xml b/src/ql/src/test/results/compiler/plan/input2.q.xml
+index 78258a4..4e10850 100755
+--- a/src/ql/src/test/results/compiler/plan/input2.q.xml
++++ b/src/ql/src/test/results/compiler/plan/input2.q.xml
+@@ -410,9 +410,6 @@
+                       <void property="isDfsDir"> 
+                        <boolean>true</boolean> 
+                       </void> 
+-                      <void property="sourceDir"> 
+-                       #### A masked pattern was here #### 
+-                      </void> 
+                       <void property="targetDir"> 
+                        #### A masked pattern was here #### 
+                       </void> 
+@@ -453,9 +450,6 @@
+                   <void property="replace"> 
+                    <boolean>true</boolean> 
+                   </void> 
+-                  <void property="sourceDir"> 
+-                   #### A masked pattern was here #### 
+-                  </void> 
+                   <void property="table"> 
+                    <object idref="TableDesc0"/> 
+                   </void> 
+@@ -928,9 +922,6 @@
+                       <void property="isDfsDir"> 
+                        <boolean>true</boolean> 
+                       </void> 
+-                      <void property="sourceDir"> 
+-                       #### A masked pattern was here #### 
+-                      </void> 
+                       <void property="targetDir"> 
+                        #### A masked pattern was here #### 
+                       </void> 
+@@ -971,9 +962,6 @@
+                   <void property="replace"> 
+                    <boolean>true</boolean> 
+                   </void> 
+-                  <void property="sourceDir"> 
+-                   #### A masked pattern was here #### 
+-                  </void> 
+                   <void property="table"> 
+                    <object idref="TableDesc1"/> 
+                   </void> 
+@@ -1450,9 +1438,6 @@
+                       <void property="isDfsDir"> 
+                        <boolean>true</boolean> 
+                       </void> 
+-                      <void property="sourceDir"> 
+-                       #### A masked pattern was here #### 
+-                      </void> 
+                       <void property="targetDir"> 
+                        #### A masked pattern was here #### 
+                       </void> 
+@@ -1502,9 +1487,6 @@
+                   <void property="replace"> 
+                    <boolean>true</boolean> 
+                   </void> 
+-                  <void property="sourceDir"> 
+-                   #### A masked pattern was here #### 
+-                  </void> 
+                   <void property="table"> 
+                    <object idref="TableDesc2"/> 
+                   </void> 
+diff --git a/src/ql/src/test/results/compiler/plan/input3.q.xml b/src/ql/src/test/results/compiler/plan/input3.q.xml
+index 4d6f380..dfb2360 100755
+--- a/src/ql/src/test/results/compiler/plan/input3.q.xml
++++ b/src/ql/src/test/results/compiler/plan/input3.q.xml
+@@ -410,9 +410,6 @@
+                       <void property="isDfsDir"> 
+                        <boolean>true</boolean> 
+                       </void> 
+-                      <void property="sourceDir"> 
+-                       #### A masked pattern was here #### 
+-                      </void> 
+                       <void property="targetDir"> 
+                        #### A masked pattern was here #### 
+                       </void> 
+@@ -453,9 +450,6 @@
+                   <void property="replace"> 
+                    <boolean>true</boolean> 
+                   </void> 
+-                  <void property="sourceDir"> 
+-                   #### A masked pattern was here #### 
+-                  </void> 
+                   <void property="table"> 
+                    <object idref="TableDesc0"/> 
+                   </void> 
+@@ -928,9 +922,6 @@
+                       <void property="isDfsDir"> 
+                        <boolean>true</boolean> 
+                       </void> 
+-                      <void property="sourceDir"> 
+-                       #### A masked pattern was here #### 
+-                      </void> 
+                       <void property="targetDir"> 
+                        #### A masked pattern was here #### 
+                       </void> 
+@@ -971,9 +962,6 @@
+                   <void property="replace"> 
+                    <boolean>true</boolean> 
+                   </void> 
+-                  <void property="sourceDir"> 
+-                   #### A masked pattern was here #### 
+-                  </void> 
+                   <void property="table"> 
+                    <object idref="TableDesc1"/> 
+                   </void> 
+@@ -1450,9 +1438,6 @@
+                       <void property="isDfsDir"> 
+                        <boolean>true</boolean> 
+                       </void> 
+-                      <void property="sourceDir"> 
+-                       #### A masked pattern was here #### 
+-                      </void> 
+                       <void property="targetDir"> 
+                        #### A masked pattern was here #### 
+                       </void> 
+@@ -1502,9 +1487,6 @@
+                   <void property="replace"> 
+                    <boolean>true</boolean> 
+                   </void> 
+-                  <void property="sourceDir"> 
+-                   #### A masked pattern was here #### 
+-                  </void> 
+                   <void property="table"> 
+                    <object idref="TableDesc2"/> 
+                   </void> 
+@@ -1867,9 +1849,6 @@
+                       <void property="isDfsDir"> 
+                        <boolean>true</boolean> 
+                       </void> 
+-                      <void property="sourceDir"> 
+-                       #### A masked pattern was here #### 
+-                      </void> 
+                       <void property="targetDir"> 
+                        #### A masked pattern was here #### 
+                       </void> 
+@@ -1894,9 +1873,6 @@
+                   <void property="isDfsDir"> 
+                    <boolean>true</boolean> 
+                   </void> 
+-                  <void property="sourceDir"> 
+-                   #### A masked pattern was here #### 
+-                  </void> 
+                   <void property="targetDir"> 
+                    <string>../../../../build/contrib/hive/ql/test/data/warehouse/dest4.out</string> 
+                   </void> 
+diff --git a/src/ql/src/test/results/compiler/plan/input4.q.xml b/src/ql/src/test/results/compiler/plan/input4.q.xml
+index dea920b..0fe98ce 100755
+--- a/src/ql/src/test/results/compiler/plan/input4.q.xml
++++ b/src/ql/src/test/results/compiler/plan/input4.q.xml
+@@ -76,9 +76,6 @@
+           <void property="replace"> 
+            <boolean>true</boolean> 
+           </void> 
+-          <void property="sourceDir"> 
+-           #### A masked pattern was here #### 
+-          </void> 
+           <void property="table"> 
+            <object id="TableDesc0" class="org.apache.hadoop.hive.ql.plan.TableDesc"> 
+             <void property="inputFileFormatClass"> 
+diff --git a/src/ql/src/test/results/compiler/plan/input5.q.xml b/src/ql/src/test/results/compiler/plan/input5.q.xml
+index 62cc918..04a4d5a 100644
+--- a/src/ql/src/test/results/compiler/plan/input5.q.xml
++++ b/src/ql/src/test/results/compiler/plan/input5.q.xml
+@@ -76,9 +76,6 @@
+           <void property="replace"> 
+            <boolean>true</boolean> 
+           </void> 
+-          <void property="sourceDir"> 
+-           #### A masked pattern was here #### 
+-          </void> 
+           <void property="table"> 
+            <object id="TableDesc0" class="org.apache.hadoop.hive.ql.plan.TableDesc"> 
+             <void property="inputFileFormatClass"> 
+diff --git a/src/ql/src/test/results/compiler/plan/input6.q.xml b/src/ql/src/test/results/compiler/plan/input6.q.xml
+index bbcc337..92f94ee 100644
+--- a/src/ql/src/test/results/compiler/plan/input6.q.xml
++++ b/src/ql/src/test/results/compiler/plan/input6.q.xml
+@@ -410,9 +410,6 @@
+                       <void property="isDfsDir"> 
+                        <boolean>true</boolean> 
+                       </void> 
+-                      <void property="sourceDir"> 
+-                       #### A masked pattern was here #### 
+-                      </void> 
+                       <void property="targetDir"> 
+                        #### A masked pattern was here #### 
+                       </void> 
+@@ -453,9 +450,6 @@
+                   <void property="replace"> 
+                    <boolean>true</boolean> 
+                   </void> 
+-                  <void property="sourceDir"> 
+-                   #### A masked pattern was here #### 
+-                  </void> 
+                   <void property="table"> 
+                    <object idref="TableDesc0"/> 
+                   </void> 
+diff --git a/src/ql/src/test/results/compiler/plan/input7.q.xml b/src/ql/src/test/results/compiler/plan/input7.q.xml
+index 4048178..df0ebfa 100644
+--- a/src/ql/src/test/results/compiler/plan/input7.q.xml
++++ b/src/ql/src/test/results/compiler/plan/input7.q.xml
+@@ -410,9 +410,6 @@
+                       <void property="isDfsDir"> 
+                        <boolean>true</boolean> 
+                       </void> 
+-                      <void property="sourceDir"> 
+-                       #### A masked pattern was here #### 
+-                      </void> 
+                       <void property="targetDir"> 
+                        #### A masked pattern was here #### 
+                       </void> 
+@@ -453,9 +450,6 @@
+                   <void property="replace"> 
+                    <boolean>true</boolean> 
+                   </void> 
+-                  <void property="sourceDir"> 
+-                   #### A masked pattern was here #### 
+-                  </void> 
+                   <void property="table"> 
+                    <object idref="TableDesc0"/> 
+                   </void> 
+diff --git a/src/ql/src/test/results/compiler/plan/input9.q.xml b/src/ql/src/test/results/compiler/plan/input9.q.xml
+index caec9ba..288fd7f 100644
+--- a/src/ql/src/test/results/compiler/plan/input9.q.xml
++++ b/src/ql/src/test/results/compiler/plan/input9.q.xml
+@@ -410,9 +410,6 @@
+                       <void property="isDfsDir"> 
+                        <boolean>true</boolean> 
+                       </void> 
+-                      <void property="sourceDir"> 
+-                       #### A masked pattern was here #### 
+-                      </void> 
+                       <void property="targetDir"> 
+                        #### A masked pattern was here #### 
+                       </void> 
+@@ -453,9 +450,6 @@
+                   <void property="replace"> 
+                    <boolean>true</boolean> 
+                   </void> 
+-                  <void property="sourceDir"> 
+-                   #### A masked pattern was here #### 
+-                  </void> 
+                   <void property="table"> 
+                    <object idref="TableDesc0"/> 
+                   </void> 
+diff --git a/src/ql/src/test/results/compiler/plan/input_testsequencefile.q.xml b/src/ql/src/test/results/compiler/plan/input_testsequencefile.q.xml
+index 6742063..f9a2775 100644
+--- a/src/ql/src/test/results/compiler/plan/input_testsequencefile.q.xml
++++ b/src/ql/src/test/results/compiler/plan/input_testsequencefile.q.xml
+@@ -410,9 +410,6 @@
+                       <void property="isDfsDir"> 
+                        <boolean>true</boolean> 
+                       </void> 
+-                      <void property="sourceDir"> 
+-                       #### A masked pattern was here #### 
+-                      </void> 
+                       <void property="targetDir"> 
+                        #### A masked pattern was here #### 
+                       </void> 
+@@ -453,9 +450,6 @@
+                   <void property="replace"> 
+                    <boolean>true</boolean> 
+                   </void> 
+-                  <void property="sourceDir"> 
+-                   #### A masked pattern was here #### 
+-                  </void> 
+                   <void property="table"> 
+                    <object idref="TableDesc0"/> 
+                   </void> 
+diff --git a/src/ql/src/test/results/compiler/plan/join1.q.xml b/src/ql/src/test/results/compiler/plan/join1.q.xml
+index e7a2cef..b5250a6 100644
+--- a/src/ql/src/test/results/compiler/plan/join1.q.xml
++++ b/src/ql/src/test/results/compiler/plan/join1.q.xml
+@@ -76,9 +76,6 @@
+           <void property="replace"> 
+            <boolean>true</boolean> 
+           </void> 
+-          <void property="sourceDir"> 
+-           #### A masked pattern was here #### 
+-          </void> 
+           <void property="table"> 
+            <object id="TableDesc0" class="org.apache.hadoop.hive.ql.plan.TableDesc"> 
+             <void property="inputFileFormatClass"> 
+diff --git a/src/ql/src/test/results/compiler/plan/join2.q.xml b/src/ql/src/test/results/compiler/plan/join2.q.xml
+index 60d7094..7fd3292 100644
+--- a/src/ql/src/test/results/compiler/plan/join2.q.xml
++++ b/src/ql/src/test/results/compiler/plan/join2.q.xml
+@@ -80,9 +80,6 @@
+               <void property="replace"> 
+                <boolean>true</boolean> 
+               </void> 
+-              <void property="sourceDir"> 
+-               #### A masked pattern was here #### 
+-              </void> 
+               <void property="table"> 
+                <object id="TableDesc0" class="org.apache.hadoop.hive.ql.plan.TableDesc"> 
+                 <void property="inputFileFormatClass"> 
+diff --git a/src/ql/src/test/results/compiler/plan/join3.q.xml b/src/ql/src/test/results/compiler/plan/join3.q.xml
+index 060a44f..cb232cb 100644
+--- a/src/ql/src/test/results/compiler/plan/join3.q.xml
++++ b/src/ql/src/test/results/compiler/plan/join3.q.xml
+@@ -76,9 +76,6 @@
+           <void property="replace"> 
+            <boolean>true</boolean> 
+           </void> 
+-          <void property="sourceDir"> 
+-           #### A masked pattern was here #### 
+-          </void> 
+           <void property="table"> 
+            <object id="TableDesc0" class="org.apache.hadoop.hive.ql.plan.TableDesc"> 
+             <void property="inputFileFormatClass"> 
+diff --git a/src/ql/src/test/results/compiler/plan/sample2.q.xml b/src/ql/src/test/results/compiler/plan/sample2.q.xml
+index 49a1212..047e401 100644
+--- a/src/ql/src/test/results/compiler/plan/sample2.q.xml
++++ b/src/ql/src/test/results/compiler/plan/sample2.q.xml
+@@ -410,9 +410,6 @@
+                       <void property="isDfsDir"> 
+                        <boolean>true</boolean> 
+                       </void> 
+-                      <void property="sourceDir"> 
+-                       #### A masked pattern was here #### 
+-                      </void> 
+                       <void property="targetDir"> 
+                        #### A masked pattern was here #### 
+                       </void> 
+@@ -453,9 +450,6 @@
+                   <void property="replace"> 
+                    <boolean>true</boolean> 
+                   </void> 
+-                  <void property="sourceDir"> 
+-                   #### A masked pattern was here #### 
+-                  </void> 
+                   <void property="table"> 
+                    <object idref="TableDesc0"/> 
+                   </void> 
+diff --git a/src/ql/src/test/results/compiler/plan/sample3.q.xml b/src/ql/src/test/results/compiler/plan/sample3.q.xml
+index 4f90931..56431f2 100644
+--- a/src/ql/src/test/results/compiler/plan/sample3.q.xml
++++ b/src/ql/src/test/results/compiler/plan/sample3.q.xml
+@@ -410,9 +410,6 @@
+                       <void property="isDfsDir"> 
+                        <boolean>true</boolean> 
+                       </void> 
+-                      <void property="sourceDir"> 
+-                       #### A masked pattern was here #### 
+-                      </void> 
+                       <void property="targetDir"> 
+                        #### A masked pattern was here #### 
+                       </void> 
+@@ -453,9 +450,6 @@
+                   <void property="replace"> 
+                    <boolean>true</boolean> 
+                   </void> 
+-                  <void property="sourceDir"> 
+-                   #### A masked pattern was here #### 
+-                  </void> 
+                   <void property="table"> 
+                    <object idref="TableDesc0"/> 
+                   </void> 
+diff --git a/src/ql/src/test/results/compiler/plan/sample4.q.xml b/src/ql/src/test/results/compiler/plan/sample4.q.xml
+index 49a1212..047e401 100644
+--- a/src/ql/src/test/results/compiler/plan/sample4.q.xml
++++ b/src/ql/src/test/results/compiler/plan/sample4.q.xml
+@@ -410,9 +410,6 @@
+                       <void property="isDfsDir"> 
+                        <boolean>true</boolean> 
+                       </void> 
+-                      <void property="sourceDir"> 
+-                       #### A masked pattern was here #### 
+-                      </void> 
+                       <void property="targetDir"> 
+                        #### A masked pattern was here #### 
+                       </void> 
+@@ -453,9 +450,6 @@
+                   <void property="replace"> 
+                    <boolean>true</boolean> 
+                   </void> 
+-                  <void property="sourceDir"> 
+-                   #### A masked pattern was here #### 
+-                  </void> 
+                   <void property="table"> 
+                    <object idref="TableDesc0"/> 
+                   </void> 
+diff --git a/src/ql/src/test/results/compiler/plan/sample5.q.xml b/src/ql/src/test/results/compiler/plan/sample5.q.xml
+index d9f0a61..b453211 100644
+--- a/src/ql/src/test/results/compiler/plan/sample5.q.xml
++++ b/src/ql/src/test/results/compiler/plan/sample5.q.xml
+@@ -410,9 +410,6 @@
+                       <void property="isDfsDir"> 
+                        <boolean>true</boolean> 
+                       </void> 
+-                      <void property="sourceDir"> 
+-                       #### A masked pattern was here #### 
+-                      </void> 
+                       <void property="targetDir"> 
+                        #### A masked pattern was here #### 
+                       </void> 
+@@ -453,9 +450,6 @@
+                   <void property="replace"> 
+                    <boolean>true</boolean> 
+                   </void> 
+-                  <void property="sourceDir"> 
+-                   #### A masked pattern was here #### 
+-                  </void> 
+                   <void property="table"> 
+                    <object idref="TableDesc0"/> 
+                   </void> 
+diff --git a/src/ql/src/test/results/compiler/plan/sample6.q.xml b/src/ql/src/test/results/compiler/plan/sample6.q.xml
+index 7f691b1..c75cb2f 100644
+--- a/src/ql/src/test/results/compiler/plan/sample6.q.xml
++++ b/src/ql/src/test/results/compiler/plan/sample6.q.xml
+@@ -410,9 +410,6 @@
+                       <void property="isDfsDir"> 
+                        <boolean>true</boolean> 
+                       </void> 
+-                      <void property="sourceDir"> 
+-                       #### A masked pattern was here #### 
+-                      </void> 
+                       <void property="targetDir"> 
+                        #### A masked pattern was here #### 
+                       </void> 
+@@ -453,9 +450,6 @@
+                   <void property="replace"> 
+                    <boolean>true</boolean> 
+                   </void> 
+-                  <void property="sourceDir"> 
+-                   #### A masked pattern was here #### 
+-                  </void> 
+                   <void property="table"> 
+                    <object idref="TableDesc0"/> 
+                   </void> 
+diff --git a/src/ql/src/test/results/compiler/plan/sample7.q.xml b/src/ql/src/test/results/compiler/plan/sample7.q.xml
+index 14818a3..9e4d37a 100644
+--- a/src/ql/src/test/results/compiler/plan/sample7.q.xml
++++ b/src/ql/src/test/results/compiler/plan/sample7.q.xml
+@@ -410,9 +410,6 @@
+                       <void property="isDfsDir"> 
+                        <boolean>true</boolean> 
+                       </void> 
+-                      <void property="sourceDir"> 
+-                       #### A masked pattern was here #### 
+-                      </void> 
+                       <void property="targetDir"> 
+                        #### A masked pattern was here #### 
+                       </void> 
+@@ -453,9 +450,6 @@
+                   <void property="replace"> 
+                    <boolean>true</boolean> 
+                   </void> 
+-                  <void property="sourceDir"> 
+-                   #### A masked pattern was here #### 
+-                  </void> 
+                   <void property="table"> 
+                    <object idref="TableDesc0"/> 
+                   </void> 
+diff --git a/src/ql/src/test/results/compiler/plan/subq.q.xml b/src/ql/src/test/results/compiler/plan/subq.q.xml
+index d98e19e..e0d72f0 100644
+--- a/src/ql/src/test/results/compiler/plan/subq.q.xml
++++ b/src/ql/src/test/results/compiler/plan/subq.q.xml
+@@ -322,9 +322,6 @@
+                       <void property="isDfsDir"> 
+                        <boolean>true</boolean> 
+                       </void> 
+-                      <void property="sourceDir"> 
+-                       #### A masked pattern was here #### 
+-                      </void> 
+                       <void property="targetDir"> 
+                        #### A masked pattern was here #### 
+                       </void> 
+@@ -349,9 +346,6 @@
+                   <void property="isDfsDir"> 
+                    <boolean>true</boolean> 
+                   </void> 
+-                  <void property="sourceDir"> 
+-                   #### A masked pattern was here #### 
+-                  </void> 
+                   <void property="targetDir"> 
+                    <string>../build/ql/test/data/warehouse/union.out</string> 
+                   </void> 
+diff --git a/src/ql/src/test/results/compiler/plan/union.q.xml b/src/ql/src/test/results/compiler/plan/union.q.xml
+index fb32458..78fa333 100644
+--- a/src/ql/src/test/results/compiler/plan/union.q.xml
++++ b/src/ql/src/test/results/compiler/plan/union.q.xml
+@@ -322,9 +322,6 @@
+                       <void property="isDfsDir"> 
+                        <boolean>true</boolean> 
+                       </void> 
+-                      <void property="sourceDir"> 
+-                       #### A masked pattern was here #### 
+-                      </void> 
+                       <void property="targetDir"> 
+                        #### A masked pattern was here #### 
+                       </void> 
+@@ -349,9 +346,6 @@
+                   <void property="isDfsDir"> 
+                    <boolean>true</boolean> 
+                   </void> 
+-                  <void property="sourceDir"> 
+-                   #### A masked pattern was here #### 
+-                  </void> 
+                   <void property="targetDir"> 
+                    <string>../build/ql/test/data/warehouse/union.out</string> 
+                   </void> 
+-- 
+1.7.0.4
+

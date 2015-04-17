@@ -1,0 +1,188 @@
+From 480660526e4e5659fc3c074fe95db4ac0743f23c Mon Sep 17 00:00:00 2001
+From: Xuefu Zhang <xuefu@apache.org>
+Date: Thu, 22 May 2014 22:18:11 +0000
+Subject: [PATCH 347/375] CDH-19160: HIVE-7092: Insert overwrite should not delete the original directory (Szehon via Xuefu)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1596977 13f79535-47bb-0310-9956-ffa450edef68
+
+Conflicts:
+	common/src/java/org/apache/hadoop/hive/common/FileUtils.java
+	ql/src/java/org/apache/hadoop/hive/ql/metadata/Hive.java
+---
+ .../org/apache/hadoop/hive/common/FileUtils.java   |   62 ++++++++++++++++++-
+ .../hive/ql/security/TestFolderPermissions.java    |   42 +++++++++++++
+ .../org/apache/hadoop/hive/ql/metadata/Hive.java   |    7 +--
+ 3 files changed, 102 insertions(+), 9 deletions(-)
+
+diff --git a/src/common/src/java/org/apache/hadoop/hive/common/FileUtils.java b/src/common/src/java/org/apache/hadoop/hive/common/FileUtils.java
+index 7447c70..21a0679 100644
+--- a/src/common/src/java/org/apache/hadoop/hive/common/FileUtils.java
++++ b/src/common/src/java/org/apache/hadoop/hive/common/FileUtils.java
+@@ -21,7 +21,6 @@
+ import java.io.FileNotFoundException;
+ import java.io.IOException;
+ import java.net.URI;
+-import java.net.URISyntaxException;
+ import java.util.ArrayList;
+ import java.util.BitSet;
+ import java.util.List;
+@@ -33,12 +32,12 @@
+ import org.apache.hadoop.fs.FileSystem;
+ import org.apache.hadoop.fs.FileUtil;
+ import org.apache.hadoop.fs.FsShell;
+-import org.apache.hadoop.fs.LocalFileSystem;
+ import org.apache.hadoop.fs.Path;
+-import org.apache.hadoop.fs.permission.FsAction;
++import org.apache.hadoop.fs.PathFilter;
+ import org.apache.hadoop.fs.permission.FsPermission;
+ import org.apache.hadoop.hive.conf.HiveConf;
+-import org.apache.hadoop.security.UserGroupInformation;
++import org.apache.hadoop.hive.shims.HadoopShims;
++import org.apache.hadoop.hive.shims.ShimLoader;
+ import org.apache.hadoop.util.Shell;
+ 
+ 
+@@ -50,6 +49,18 @@
+   private static final Log LOG = LogFactory.getLog(FileUtils.class.getName());
+ 
+   /**
++   * Accept all paths.
++   */
++  private static class AcceptAllPathFilter implements PathFilter {
++    @Override
++    public boolean accept(Path path) {
++      return true;
++    }
++  }
++
++  private static final PathFilter allPathFilter = new AcceptAllPathFilter();
++
++  /**
+    * Variant of Path.makeQualified that qualifies the input path against the default file system
+    * indicated by the configuration
+    *
+@@ -389,4 +400,47 @@ public static boolean copy(FileSystem srcFS, Path src,
+     }
+     return copied;
+   }
++
++  /**
++   * Deletes all files under a directory, sending them to the trash.  Leaves the directory as is.
++   * @param fs FileSystem to use
++   * @param f path of directory
++   * @param conf hive configuration
++   * @return true if deletion successful
++   * @throws FileNotFoundException
++   * @throws IOException
++   */
++  public static boolean trashFilesUnderDir(FileSystem fs, Path f, Configuration conf) throws FileNotFoundException, IOException {
++    FileStatus[] statuses = fs.listStatus(f, allPathFilter);
++    boolean result = true;
++    for (FileStatus status : statuses) {
++      result = result & moveToTrash(fs, status.getPath(), conf);
++    }
++    return result;
++  }
++
++  /**
++   * Move a particular file or directory to the trash.
++   * @param fs FileSystem to use
++   * @param f path of file or directory to move to trash.
++   * @param conf
++   * @return true if move successful
++   * @throws IOException
++   */
++  public static boolean moveToTrash(FileSystem fs, Path f, Configuration conf) throws IOException {
++    LOG.info("deleting  " + f);
++    HadoopShims hadoopShim = ShimLoader.getHadoopShims();
++
++    if (hadoopShim.moveToAppropriateTrash(fs, f, conf)) {
++      LOG.info("Moved to trash: " + f);
++      return true;
++    }
++
++    boolean result = fs.delete(f, true);
++    if (!result) {
++      LOG.error("Failed to delete " + f);
++    }
++    return result;
++  }
++
+ }
+diff --git a/src/itests/hive-unit/src/test/java/org/apache/hadoop/hive/ql/security/TestFolderPermissions.java b/src/itests/hive-unit/src/test/java/org/apache/hadoop/hive/ql/security/TestFolderPermissions.java
+index c4c89d2..910aa31 100644
+--- a/src/itests/hive-unit/src/test/java/org/apache/hadoop/hive/ql/security/TestFolderPermissions.java
++++ b/src/itests/hive-unit/src/test/java/org/apache/hadoop/hive/ql/security/TestFolderPermissions.java
+@@ -224,6 +224,48 @@ public void testExternalTable() throws Exception {
+   }
+ 
+   @Test
++  public void testInsertOverwrite() throws Exception {
++    //case 1 is non-partitioned table.
++    String tableName = "insertoverwrite";
++
++    CommandProcessorResponse ret = driver.run("CREATE TABLE " + tableName + " (key string, value string)");
++    Assert.assertEquals(0,ret.getResponseCode());
++
++    String tableLoc = testDir + "/" + tableName;
++    assertExistence(testDir + "/" + tableName);
++    setPermissions(testDir + "/" + tableName, FsPermission.createImmutable((short) 0777));
++
++    ret = driver.run("insert overwrite table " + tableName + " select key,value from mysrc");
++    Assert.assertEquals(0,ret.getResponseCode());
++
++    Assert.assertTrue(listChildrenPerms(tableLoc).size() > 0);
++    for (FsPermission perm : listChildrenPerms(tableLoc)) {
++      Assert.assertEquals("rwxrwxrwx", perm.toString());
++    }
++
++    //case 2 is partitioned table.
++    tableName = "insertoverwritepartition";
++
++    ret = driver.run("CREATE TABLE " + tableName + " (key string, value string) partitioned by (part1 int, part2 int)");
++    Assert.assertEquals(0,ret.getResponseCode());
++
++    ret = driver.run("insert overwrite table " + tableName + " partition(part1='1',part2='1') select key,value from mysrc");
++    Assert.assertEquals(0,ret.getResponseCode());
++
++    String partLoc = testDir + "/" + tableName + "/part1=1/part2=1";
++    assertExistence(partLoc);
++    setPermissions(partLoc, FsPermission.createImmutable((short) 0777));
++
++    ret = driver.run("insert overwrite table " + tableName + " partition(part1='1',part2='1') select key,value from mysrc");
++    Assert.assertEquals(0,ret.getResponseCode());
++
++    Assert.assertTrue(listChildrenPerms(tableLoc).size() > 0);
++    for (FsPermission perm : listChildrenPerms(tableLoc)) {
++      Assert.assertEquals("rwxrwxrwx", perm.toString());
++    }
++  }
++
++  @Test
+   public void testEximPermissionInheritance() throws Exception {
+ 
+     //export the table to external file.
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/metadata/Hive.java b/src/ql/src/java/org/apache/hadoop/hive/ql/metadata/Hive.java
+index 84a901a..0be9bdd 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/metadata/Hive.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/metadata/Hive.java
+@@ -2303,14 +2303,11 @@ static protected void replaceFiles(Path srcf, Path destf, Path oldPath, HiveConf
+         try {
+           FileSystem fs2 = oldPath.getFileSystem(conf);
+           if (fs2.exists(oldPath)) {
+-            // use FsShell to move data to .Trash first rather than delete permanently
+-            FsShell fshell = new FsShell();
+-            fshell.setConf(conf);
+-            fshell.run(new String[]{"-rmr", oldPath.toString()});
++            FileUtils.trashFilesUnderDir(fs2, oldPath, conf);
+           }
+         } catch (Exception e) {
+           //swallow the exception
+-          LOG.warn("Directory " + oldPath.toString() + " canot be removed.");
++          LOG.warn("Directory " + oldPath.toString() + " canot be removed:" + StringUtils.stringifyException(e));
+         }
+       }
+ 
+-- 
+1.7.0.4
+

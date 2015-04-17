@@ -1,0 +1,50 @@
+From 54f8e71282ae0f6d551c296b4ea47954aff32a60 Mon Sep 17 00:00:00 2001
+From: Brock Noland <brock@apache.org>
+Date: Wed, 25 Sep 2013 18:47:00 +0000
+Subject: [PATCH 053/375] HIVE-5360 - fix hcatalog checkstyle issue introduced in HIVE-5223 (Thejas M Nair via Brock Noland)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1526260 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../java/org/apache/hcatalog/common/HCatUtil.java  |    8 ++++----
+ .../org/apache/hive/hcatalog/common/HCatUtil.java  |    6 +++---
+ 2 files changed, 7 insertions(+), 7 deletions(-)
+
+diff --git a/src/hcatalog/core/src/main/java/org/apache/hcatalog/common/HCatUtil.java b/src/hcatalog/core/src/main/java/org/apache/hcatalog/common/HCatUtil.java
+index 55ae9eb..15433e3 100644
+--- a/src/hcatalog/core/src/main/java/org/apache/hcatalog/common/HCatUtil.java
++++ b/src/hcatalog/core/src/main/java/org/apache/hcatalog/common/HCatUtil.java
+@@ -450,10 +450,10 @@ public static HCatStorageHandler getStorageHandler(Configuration conf,
+   public static Map<String, String>
+   getInputJobProperties(HCatStorageHandler storageHandler,
+               InputJobInfo inputJobInfo) {
+-      Properties props = inputJobInfo.getTableInfo().getStorerInfo().getProperties();  
+-      props.put(serdeConstants.SERIALIZATION_LIB,storageHandler.getSerDeClass().getName());
+-      TableDesc tableDesc = new TableDesc(storageHandler.getInputFormatClass(),
+-      storageHandler.getOutputFormatClass(),props);
++    Properties props = inputJobInfo.getTableInfo().getStorerInfo().getProperties();  
++    props.put(serdeConstants.SERIALIZATION_LIB,storageHandler.getSerDeClass().getName());
++    TableDesc tableDesc = new TableDesc(storageHandler.getInputFormatClass(),
++        storageHandler.getOutputFormatClass(),props);
+     if (tableDesc.getJobProperties() == null) {
+       tableDesc.setJobProperties(new HashMap<String, String>());
+     }
+diff --git a/src/hcatalog/core/src/main/java/org/apache/hive/hcatalog/common/HCatUtil.java b/src/hcatalog/core/src/main/java/org/apache/hive/hcatalog/common/HCatUtil.java
+index e4de862..2f74cf1 100644
+--- a/src/hcatalog/core/src/main/java/org/apache/hive/hcatalog/common/HCatUtil.java
++++ b/src/hcatalog/core/src/main/java/org/apache/hive/hcatalog/common/HCatUtil.java
+@@ -483,9 +483,9 @@ public static HiveStorageHandler getStorageHandler(Configuration conf,
+                   OutputJobInfo outputJobInfo) {
+     //TODO replace IgnoreKeyTextOutputFormat with a
+     //HiveOutputFormatWrapper in StorageHandler
+-   Properties props = outputJobInfo.getTableInfo().getStorerInfo().getProperties();
+-   props.put(serdeConstants.SERIALIZATION_LIB,storageHandler.getSerDeClass().getName());
+-   TableDesc tableDesc = new TableDesc(storageHandler.getInputFormatClass(),
++    Properties props = outputJobInfo.getTableInfo().getStorerInfo().getProperties();
++    props.put(serdeConstants.SERIALIZATION_LIB,storageHandler.getSerDeClass().getName());
++    TableDesc tableDesc = new TableDesc(storageHandler.getInputFormatClass(),
+       IgnoreKeyTextOutputFormat.class,props);
+     if (tableDesc.getJobProperties() == null)
+       tableDesc.setJobProperties(new HashMap<String, String>());
+-- 
+1.7.0.4
+

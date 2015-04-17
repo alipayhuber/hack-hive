@@ -1,0 +1,683 @@
+From b2d92df9dedf6fd9127ed06ffd635a740e8d2cfd Mon Sep 17 00:00:00 2001
+From: Brock Noland <brock@cloudera.com>
+Date: Tue, 3 Dec 2013 08:44:57 -0600
+Subject: [PATCH 172/375] FIXUP: CDH-15655 - Build Hive 0.12 via Maven (completed via CDH-15963: Fix paths in tests missed during mavenization)
+
+---
+ .../clientnegative/columnstats_partlvl_dp.q        |   12 ++++++------
+ .../columnstats_partlvl_incorrect_num_keys.q       |   12 ++++++------
+ .../columnstats_partlvl_invalid_values.q           |   12 ++++++------
+ .../columnstats_partlvl_multiple_part_clause.q     |   12 ++++++------
+ .../queries/clientnegative/columnstats_tbllvl.q    |    2 +-
+ .../columnstats_tbllvl_incorrect_column.q          |    2 +-
+ .../queries/clientnegative/compute_stats_long.q    |    2 +-
+ .../clientnegative/exim_00_unsupported_schema.q    |    2 +-
+ .../clientnegative/exim_01_nonpart_over_loaded.q   |    4 ++--
+ .../clientnegative/exim_02_all_part_over_overlap.q |   10 +++++-----
+ .../exim_03_nonpart_noncompat_colschema.q          |    2 +-
+ .../exim_04_nonpart_noncompat_colnumber.q          |    2 +-
+ .../exim_05_nonpart_noncompat_coltype.q            |    2 +-
+ .../exim_06_nonpart_noncompat_storage.q            |    2 +-
+ .../exim_07_nonpart_noncompat_ifof.q               |    2 +-
+ .../exim_08_nonpart_noncompat_serde.q              |    2 +-
+ .../exim_09_nonpart_noncompat_serdeparam.q         |    2 +-
+ .../exim_10_nonpart_noncompat_bucketing.q          |    2 +-
+ .../exim_11_nonpart_noncompat_sorting.q            |    2 +-
+ .../clientnegative/exim_13_nonnative_import.q      |    2 +-
+ .../queries/clientnegative/exim_14_nonpart_part.q  |    2 +-
+ .../queries/clientnegative/exim_15_part_nonpart.q  |    2 +-
+ .../clientnegative/exim_16_part_noncompat_schema.q |    2 +-
+ .../clientnegative/exim_17_part_spec_underspec.q   |    8 ++++----
+ .../clientnegative/exim_18_part_spec_missing.q     |    8 ++++----
+ .../exim_19_external_over_existing.q               |    2 +-
+ .../exim_20_managed_location_over_existing.q       |    2 +-
+ .../clientnegative/exim_21_part_managed_external.q |    8 ++++----
+ .../clientnegative/exim_23_import_exist_authfail.q |    2 +-
+ .../clientnegative/exim_24_import_part_authfail.q  |    2 +-
+ .../exim_25_import_nonexist_authfail.q             |    2 +-
+ ql/src/test/queries/clientnegative/serde_regex2.q  |    4 ++--
+ ql/src/test/queries/clientpositive/decimal_5.q     |    2 +-
+ ql/src/test/queries/clientpositive/decimal_6.q     |    4 ++--
+ .../test/results/beelinepositive/serde_regex.q.out |    4 ++--
+ .../test/results/beelinepositive/udf_in_file.q.out |   14 +++++++-------
+ ql/src/test/results/clientpositive/decimal_5.q.out |    4 ++--
+ ql/src/test/results/clientpositive/decimal_6.q.out |    8 ++++----
+ 38 files changed, 85 insertions(+), 85 deletions(-)
+
+diff --git a/src/ql/src/test/queries/clientnegative/columnstats_partlvl_dp.q b/src/ql/src/test/queries/clientnegative/columnstats_partlvl_dp.q
+index af92350..b4887c4 100644
+--- a/src/ql/src/test/queries/clientnegative/columnstats_partlvl_dp.q
++++ b/src/ql/src/test/queries/clientnegative/columnstats_partlvl_dp.q
+@@ -3,12 +3,12 @@ DROP TABLE Employee_Part;
+ CREATE TABLE Employee_Part(employeeID int, employeeName String) partitioned by (employeeSalary double, country string)
+ row format delimited fields terminated by '|'  stored as textfile;
+ 
+-LOAD DATA LOCAL INPATH "../data/files/employee2.dat" INTO TABLE Employee_Part partition(employeeSalary='2000.0', country='USA');
+-LOAD DATA LOCAL INPATH "../data/files/employee2.dat" INTO TABLE Employee_Part partition(employeeSalary='2000.0', country='UK');
+-LOAD DATA LOCAL INPATH "../data/files/employee2.dat" INTO TABLE Employee_Part partition(employeeSalary='3000.0', country='USA');
+-LOAD DATA LOCAL INPATH "../data/files/employee2.dat" INTO TABLE Employee_Part partition(employeeSalary='4000.0', country='USA');
+-LOAD DATA LOCAL INPATH "../data/files/employee2.dat" INTO TABLE Employee_Part partition(employeeSalary='3500.0', country='UK');
+-LOAD DATA LOCAL INPATH "../data/files/employee2.dat" INTO TABLE Employee_Part partition(employeeSalary='3000.0', country='UK');
++LOAD DATA LOCAL INPATH "../../data/files/employee2.dat" INTO TABLE Employee_Part partition(employeeSalary='2000.0', country='USA');
++LOAD DATA LOCAL INPATH "../../data/files/employee2.dat" INTO TABLE Employee_Part partition(employeeSalary='2000.0', country='UK');
++LOAD DATA LOCAL INPATH "../../data/files/employee2.dat" INTO TABLE Employee_Part partition(employeeSalary='3000.0', country='USA');
++LOAD DATA LOCAL INPATH "../../data/files/employee2.dat" INTO TABLE Employee_Part partition(employeeSalary='4000.0', country='USA');
++LOAD DATA LOCAL INPATH "../../data/files/employee2.dat" INTO TABLE Employee_Part partition(employeeSalary='3500.0', country='UK');
++LOAD DATA LOCAL INPATH "../../data/files/employee2.dat" INTO TABLE Employee_Part partition(employeeSalary='3000.0', country='UK');
+ 
+ -- dynamic partitioning syntax
+ explain 
+diff --git a/src/ql/src/test/queries/clientnegative/columnstats_partlvl_incorrect_num_keys.q b/src/ql/src/test/queries/clientnegative/columnstats_partlvl_incorrect_num_keys.q
+index d9725dd..2f8e927 100644
+--- a/src/ql/src/test/queries/clientnegative/columnstats_partlvl_incorrect_num_keys.q
++++ b/src/ql/src/test/queries/clientnegative/columnstats_partlvl_incorrect_num_keys.q
+@@ -3,12 +3,12 @@ DROP TABLE Employee_Part;
+ CREATE TABLE Employee_Part(employeeID int, employeeName String) partitioned by (employeeSalary double, country string)
+ row format delimited fields terminated by '|'  stored as textfile;
+ 
+-LOAD DATA LOCAL INPATH "../data/files/employee2.dat" INTO TABLE Employee_Part partition(employeeSalary='2000.0', country='USA');
+-LOAD DATA LOCAL INPATH "../data/files/employee2.dat" INTO TABLE Employee_Part partition(employeeSalary='2000.0', country='UK');
+-LOAD DATA LOCAL INPATH "../data/files/employee2.dat" INTO TABLE Employee_Part partition(employeeSalary='3000.0', country='USA');
+-LOAD DATA LOCAL INPATH "../data/files/employee2.dat" INTO TABLE Employee_Part partition(employeeSalary='4000.0', country='USA');
+-LOAD DATA LOCAL INPATH "../data/files/employee2.dat" INTO TABLE Employee_Part partition(employeeSalary='3500.0', country='UK');
+-LOAD DATA LOCAL INPATH "../data/files/employee2.dat" INTO TABLE Employee_Part partition(employeeSalary='3000.0', country='UK');
++LOAD DATA LOCAL INPATH "../../data/files/employee2.dat" INTO TABLE Employee_Part partition(employeeSalary='2000.0', country='USA');
++LOAD DATA LOCAL INPATH "../../data/files/employee2.dat" INTO TABLE Employee_Part partition(employeeSalary='2000.0', country='UK');
++LOAD DATA LOCAL INPATH "../../data/files/employee2.dat" INTO TABLE Employee_Part partition(employeeSalary='3000.0', country='USA');
++LOAD DATA LOCAL INPATH "../../data/files/employee2.dat" INTO TABLE Employee_Part partition(employeeSalary='4000.0', country='USA');
++LOAD DATA LOCAL INPATH "../../data/files/employee2.dat" INTO TABLE Employee_Part partition(employeeSalary='3500.0', country='UK');
++LOAD DATA LOCAL INPATH "../../data/files/employee2.dat" INTO TABLE Employee_Part partition(employeeSalary='3000.0', country='UK');
+ 
+ -- don't specify all partitioning keys
+ explain 
+diff --git a/src/ql/src/test/queries/clientnegative/columnstats_partlvl_invalid_values.q b/src/ql/src/test/queries/clientnegative/columnstats_partlvl_invalid_values.q
+index eb73962..34f91fc 100644
+--- a/src/ql/src/test/queries/clientnegative/columnstats_partlvl_invalid_values.q
++++ b/src/ql/src/test/queries/clientnegative/columnstats_partlvl_invalid_values.q
+@@ -3,12 +3,12 @@ DROP TABLE Employee_Part;
+ CREATE TABLE Employee_Part(employeeID int, employeeName String) partitioned by (employeeSalary double, country string)
+ row format delimited fields terminated by '|'  stored as textfile;
+ 
+-LOAD DATA LOCAL INPATH "../data/files/employee2.dat" INTO TABLE Employee_Part partition(employeeSalary='2000.0', country='USA');
+-LOAD DATA LOCAL INPATH "../data/files/employee2.dat" INTO TABLE Employee_Part partition(employeeSalary='2000.0', country='UK');
+-LOAD DATA LOCAL INPATH "../data/files/employee2.dat" INTO TABLE Employee_Part partition(employeeSalary='3000.0', country='USA');
+-LOAD DATA LOCAL INPATH "../data/files/employee2.dat" INTO TABLE Employee_Part partition(employeeSalary='4000.0', country='USA');
+-LOAD DATA LOCAL INPATH "../data/files/employee2.dat" INTO TABLE Employee_Part partition(employeeSalary='3500.0', country='UK');
+-LOAD DATA LOCAL INPATH "../data/files/employee2.dat" INTO TABLE Employee_Part partition(employeeSalary='3000.0', country='UK');
++LOAD DATA LOCAL INPATH "../../data/files/employee2.dat" INTO TABLE Employee_Part partition(employeeSalary='2000.0', country='USA');
++LOAD DATA LOCAL INPATH "../../data/files/employee2.dat" INTO TABLE Employee_Part partition(employeeSalary='2000.0', country='UK');
++LOAD DATA LOCAL INPATH "../../data/files/employee2.dat" INTO TABLE Employee_Part partition(employeeSalary='3000.0', country='USA');
++LOAD DATA LOCAL INPATH "../../data/files/employee2.dat" INTO TABLE Employee_Part partition(employeeSalary='4000.0', country='USA');
++LOAD DATA LOCAL INPATH "../../data/files/employee2.dat" INTO TABLE Employee_Part partition(employeeSalary='3500.0', country='UK');
++LOAD DATA LOCAL INPATH "../../data/files/employee2.dat" INTO TABLE Employee_Part partition(employeeSalary='3000.0', country='UK');
+ 
+ -- specify invalid values for the partitioning keys
+ explain
+diff --git a/src/ql/src/test/queries/clientnegative/columnstats_partlvl_multiple_part_clause.q b/src/ql/src/test/queries/clientnegative/columnstats_partlvl_multiple_part_clause.q
+index dbfaaec..49d89dd 100644
+--- a/src/ql/src/test/queries/clientnegative/columnstats_partlvl_multiple_part_clause.q
++++ b/src/ql/src/test/queries/clientnegative/columnstats_partlvl_multiple_part_clause.q
+@@ -3,12 +3,12 @@ DROP TABLE Employee_Part;
+ CREATE TABLE Employee_Part(employeeID int, employeeName String) partitioned by (employeeSalary double, country string)
+ row format delimited fields terminated by '|'  stored as textfile;
+ 
+-LOAD DATA LOCAL INPATH "../data/files/employee2.dat" INTO TABLE Employee_Part partition(employeeSalary='2000.0', country='USA');
+-LOAD DATA LOCAL INPATH "../data/files/employee2.dat" INTO TABLE Employee_Part partition(employeeSalary='2000.0', country='UK');
+-LOAD DATA LOCAL INPATH "../data/files/employee2.dat" INTO TABLE Employee_Part partition(employeeSalary='3000.0', country='USA');
+-LOAD DATA LOCAL INPATH "../data/files/employee2.dat" INTO TABLE Employee_Part partition(employeeSalary='4000.0', country='USA');
+-LOAD DATA LOCAL INPATH "../data/files/employee2.dat" INTO TABLE Employee_Part partition(employeeSalary='3500.0', country='UK');
+-LOAD DATA LOCAL INPATH "../data/files/employee2.dat" INTO TABLE Employee_Part partition(employeeSalary='3000.0', country='UK');
++LOAD DATA LOCAL INPATH "../../data/files/employee2.dat" INTO TABLE Employee_Part partition(employeeSalary='2000.0', country='USA');
++LOAD DATA LOCAL INPATH "../../data/files/employee2.dat" INTO TABLE Employee_Part partition(employeeSalary='2000.0', country='UK');
++LOAD DATA LOCAL INPATH "../../data/files/employee2.dat" INTO TABLE Employee_Part partition(employeeSalary='3000.0', country='USA');
++LOAD DATA LOCAL INPATH "../../data/files/employee2.dat" INTO TABLE Employee_Part partition(employeeSalary='4000.0', country='USA');
++LOAD DATA LOCAL INPATH "../../data/files/employee2.dat" INTO TABLE Employee_Part partition(employeeSalary='3500.0', country='UK');
++LOAD DATA LOCAL INPATH "../../data/files/employee2.dat" INTO TABLE Employee_Part partition(employeeSalary='3000.0', country='UK');
+ 
+ -- specify partitioning clause multiple times
+ explain
+diff --git a/src/ql/src/test/queries/clientnegative/columnstats_tbllvl.q b/src/ql/src/test/queries/clientnegative/columnstats_tbllvl.q
+index ca85489..a4e0056 100644
+--- a/src/ql/src/test/queries/clientnegative/columnstats_tbllvl.q
++++ b/src/ql/src/test/queries/clientnegative/columnstats_tbllvl.q
+@@ -13,7 +13,7 @@ CREATE TABLE UserVisits_web_text_none (
+   avgTimeOnSite int)
+ row format delimited fields terminated by '|'  stored as textfile;
+ 
+-LOAD DATA LOCAL INPATH "../data/files/UserVisits.dat" INTO TABLE UserVisits_web_text_none;
++LOAD DATA LOCAL INPATH "../../data/files/UserVisits.dat" INTO TABLE UserVisits_web_text_none;
+ 
+ explain 
+ analyze table UserVisits_web_text_none compute statistics for columns destIP;
+diff --git a/src/ql/src/test/queries/clientnegative/columnstats_tbllvl_incorrect_column.q b/src/ql/src/test/queries/clientnegative/columnstats_tbllvl_incorrect_column.q
+index ca85489..a4e0056 100644
+--- a/src/ql/src/test/queries/clientnegative/columnstats_tbllvl_incorrect_column.q
++++ b/src/ql/src/test/queries/clientnegative/columnstats_tbllvl_incorrect_column.q
+@@ -13,7 +13,7 @@ CREATE TABLE UserVisits_web_text_none (
+   avgTimeOnSite int)
+ row format delimited fields terminated by '|'  stored as textfile;
+ 
+-LOAD DATA LOCAL INPATH "../data/files/UserVisits.dat" INTO TABLE UserVisits_web_text_none;
++LOAD DATA LOCAL INPATH "../../data/files/UserVisits.dat" INTO TABLE UserVisits_web_text_none;
+ 
+ explain 
+ analyze table UserVisits_web_text_none compute statistics for columns destIP;
+diff --git a/src/ql/src/test/queries/clientnegative/compute_stats_long.q b/src/ql/src/test/queries/clientnegative/compute_stats_long.q
+index e24f417..5974811 100644
+--- a/src/ql/src/test/queries/clientnegative/compute_stats_long.q
++++ b/src/ql/src/test/queries/clientnegative/compute_stats_long.q
+@@ -1,7 +1,7 @@
+ create table tab_int(a int);
+ 
+ -- insert some data
+-LOAD DATA LOCAL INPATH "../data/files/int.txt" INTO TABLE tab_int;
++LOAD DATA LOCAL INPATH "../../data/files/int.txt" INTO TABLE tab_int;
+ 
+ -- compute stats should raise an error since the number of bit vectors > 1024
+ select compute_stats(a, 10000) from tab_int;
+diff --git a/src/ql/src/test/queries/clientnegative/exim_00_unsupported_schema.q b/src/ql/src/test/queries/clientnegative/exim_00_unsupported_schema.q
+index 6fe81d7..6ffc33a 100644
+--- a/src/ql/src/test/queries/clientnegative/exim_00_unsupported_schema.q
++++ b/src/ql/src/test/queries/clientnegative/exim_00_unsupported_schema.q
+@@ -4,7 +4,7 @@ set hive.test.mode.prefix=;
+ create table exim_department ( dep_id int comment "department id")
+ 	stored as textfile
+ 	tblproperties("creator"="krishna");
+-load data local inpath "../data/files/test.dat" into table exim_department;	
++load data local inpath "../../data/files/test.dat" into table exim_department;	
+ dfs ${system:test.dfs.mkdir} target/tmp/ql/test/data/exports/exim_department/temp;
+ dfs -rmr target/tmp/ql/test/data/exports/exim_department;
+ export table exim_department to 'nosuchschema://nosuchauthority/ql/test/data/exports/exim_department';
+diff --git a/src/ql/src/test/queries/clientnegative/exim_01_nonpart_over_loaded.q b/src/ql/src/test/queries/clientnegative/exim_01_nonpart_over_loaded.q
+index 8d4c41d..970e646 100644
+--- a/src/ql/src/test/queries/clientnegative/exim_01_nonpart_over_loaded.q
++++ b/src/ql/src/test/queries/clientnegative/exim_01_nonpart_over_loaded.q
+@@ -4,7 +4,7 @@ set hive.test.mode.prefix=;
+ create table exim_department ( dep_id int comment "department id")
+ 	stored as textfile
+ 	tblproperties("creator"="krishna");
+-load data local inpath "../data/files/test.dat" into table exim_department;	
++load data local inpath "../../data/files/test.dat" into table exim_department;	
+ dfs ${system:test.dfs.mkdir} target/tmp/ql/test/data/exports/exim_department/temp;
+ dfs -rmr target/tmp/ql/test/data/exports/exim_department;
+ export table exim_department to 'ql/test/data/exports/exim_department';
+@@ -16,7 +16,7 @@ use importer;
+ create table exim_department ( dep_id int comment "department identifier")
+ 	stored as textfile
+ 	tblproperties("maker"="krishna");
+-load data local inpath "../data/files/test.dat" into table exim_department;	
++load data local inpath "../../data/files/test.dat" into table exim_department;	
+ import from 'ql/test/data/exports/exim_department';
+ drop table exim_department;
+ dfs -rmr target/tmp/ql/test/data/exports/exim_department;
+diff --git a/src/ql/src/test/queries/clientnegative/exim_02_all_part_over_overlap.q b/src/ql/src/test/queries/clientnegative/exim_02_all_part_over_overlap.q
+index 1556862..3589183 100644
+--- a/src/ql/src/test/queries/clientnegative/exim_02_all_part_over_overlap.q
++++ b/src/ql/src/test/queries/clientnegative/exim_02_all_part_over_overlap.q
+@@ -6,13 +6,13 @@ create table exim_employee ( emp_id int comment "employee id")
+ 	partitioned by (emp_country string comment "two char iso code", emp_state string comment "free text")
+ 	stored as textfile	
+ 	tblproperties("creator"="krishna");
+-load data local inpath "../data/files/test.dat" 
++load data local inpath "../../data/files/test.dat" 
+ 	into table exim_employee partition (emp_country="in", emp_state="tn");	
+-load data local inpath "../data/files/test.dat" 
++load data local inpath "../../data/files/test.dat" 
+ 	into table exim_employee partition (emp_country="in", emp_state="ka");	
+-load data local inpath "../data/files/test.dat" 
++load data local inpath "../../data/files/test.dat" 
+ 	into table exim_employee partition (emp_country="us", emp_state="tn");	
+-load data local inpath "../data/files/test.dat" 
++load data local inpath "../../data/files/test.dat" 
+ 	into table exim_employee partition (emp_country="us", emp_state="ka");		
+ dfs ${system:test.dfs.mkdir} target/tmp/ql/test/data/exports/exim_employee/temp;
+ dfs -rmr target/tmp/ql/test/data/exports/exim_employee;
+@@ -27,7 +27,7 @@ create table exim_employee ( emp_id int comment "employee id")
+ 	partitioned by (emp_country string comment "iso code", emp_state string comment "free-form text")
+ 	stored as textfile	
+ 	tblproperties("maker"="krishna");
+-load data local inpath "../data/files/test.dat" 
++load data local inpath "../../data/files/test.dat" 
+ 	into table exim_employee partition (emp_country="us", emp_state="ka");			
+ import from 'ql/test/data/exports/exim_employee';
+ describe extended exim_employee;
+diff --git a/src/ql/src/test/queries/clientnegative/exim_03_nonpart_noncompat_colschema.q b/src/ql/src/test/queries/clientnegative/exim_03_nonpart_noncompat_colschema.q
+index e739f9f..45268c2 100644
+--- a/src/ql/src/test/queries/clientnegative/exim_03_nonpart_noncompat_colschema.q
++++ b/src/ql/src/test/queries/clientnegative/exim_03_nonpart_noncompat_colschema.q
+@@ -4,7 +4,7 @@ set hive.test.mode.prefix=;
+ create table exim_department ( dep_id int comment "department id") 	
+ 	stored as textfile	
+ 	tblproperties("creator"="krishna");
+-load data local inpath "../data/files/test.dat" into table exim_department;	
++load data local inpath "../../data/files/test.dat" into table exim_department;	
+ dfs ${system:test.dfs.mkdir} target/tmp/ql/test/data/exports/exim_department/temp;
+ dfs -rmr target/tmp/ql/test/data/exports/exim_department;
+ export table exim_department to 'ql/test/data/exports/exim_department';
+diff --git a/src/ql/src/test/queries/clientnegative/exim_04_nonpart_noncompat_colnumber.q b/src/ql/src/test/queries/clientnegative/exim_04_nonpart_noncompat_colnumber.q
+index 4b47bfa..cad6c90 100644
+--- a/src/ql/src/test/queries/clientnegative/exim_04_nonpart_noncompat_colnumber.q
++++ b/src/ql/src/test/queries/clientnegative/exim_04_nonpart_noncompat_colnumber.q
+@@ -4,7 +4,7 @@ set hive.test.mode.prefix=;
+ create table exim_department ( dep_id int comment "department id") 	
+ 	stored as textfile	
+ 	tblproperties("creator"="krishna");
+-load data local inpath "../data/files/test.dat" into table exim_department;	
++load data local inpath "../../data/files/test.dat" into table exim_department;	
+ dfs ${system:test.dfs.mkdir} target/tmp/ql/test/data/exports/exim_department/temp;
+ dfs -rmr target/tmp/ql/test/data/exports/exim_department;
+ export table exim_department to 'ql/test/data/exports/exim_department';
+diff --git a/src/ql/src/test/queries/clientnegative/exim_05_nonpart_noncompat_coltype.q b/src/ql/src/test/queries/clientnegative/exim_05_nonpart_noncompat_coltype.q
+index 5d3442e..f5f904f 100644
+--- a/src/ql/src/test/queries/clientnegative/exim_05_nonpart_noncompat_coltype.q
++++ b/src/ql/src/test/queries/clientnegative/exim_05_nonpart_noncompat_coltype.q
+@@ -4,7 +4,7 @@ set hive.test.mode.prefix=;
+ create table exim_department ( dep_id int comment "department id") 	
+ 	stored as textfile	
+ 	tblproperties("creator"="krishna");
+-load data local inpath "../data/files/test.dat" into table exim_department;	
++load data local inpath "../../data/files/test.dat" into table exim_department;	
+ dfs ${system:test.dfs.mkdir} target/tmp/ql/test/data/exports/exim_department/temp;
+ dfs -rmr target/tmp/ql/test/data/exports/exim_department;
+ export table exim_department to 'ql/test/data/exports/exim_department';
+diff --git a/src/ql/src/test/queries/clientnegative/exim_06_nonpart_noncompat_storage.q b/src/ql/src/test/queries/clientnegative/exim_06_nonpart_noncompat_storage.q
+index ad01408..c56329c 100644
+--- a/src/ql/src/test/queries/clientnegative/exim_06_nonpart_noncompat_storage.q
++++ b/src/ql/src/test/queries/clientnegative/exim_06_nonpart_noncompat_storage.q
+@@ -4,7 +4,7 @@ set hive.test.mode.prefix=;
+ create table exim_department ( dep_id int comment "department id") 	
+ 	stored as textfile	
+ 	tblproperties("creator"="krishna");
+-load data local inpath "../data/files/test.dat" into table exim_department;	
++load data local inpath "../../data/files/test.dat" into table exim_department;	
+ dfs ${system:test.dfs.mkdir} target/tmp/ql/test/data/exports/exim_department/temp;
+ dfs -rmr target/tmp/ql/test/data/exports/exim_department;
+ export table exim_department to 'ql/test/data/exports/exim_department';
+diff --git a/src/ql/src/test/queries/clientnegative/exim_07_nonpart_noncompat_ifof.q b/src/ql/src/test/queries/clientnegative/exim_07_nonpart_noncompat_ifof.q
+index 98703a4..afaedcd 100644
+--- a/src/ql/src/test/queries/clientnegative/exim_07_nonpart_noncompat_ifof.q
++++ b/src/ql/src/test/queries/clientnegative/exim_07_nonpart_noncompat_ifof.q
+@@ -4,7 +4,7 @@ set hive.test.mode.prefix=;
+ create table exim_department ( dep_id int comment "department id") 	
+ 	stored as textfile	
+ 	tblproperties("creator"="krishna");
+-load data local inpath "../data/files/test.dat" into table exim_department;	
++load data local inpath "../../data/files/test.dat" into table exim_department;	
+ dfs ${system:test.dfs.mkdir} target/tmp/ql/test/data/exports/exim_department/temp;
+ dfs -rmr target/tmp/ql/test/data/exports/exim_department;
+ export table exim_department to 'ql/test/data/exports/exim_department';
+diff --git a/src/ql/src/test/queries/clientnegative/exim_08_nonpart_noncompat_serde.q b/src/ql/src/test/queries/clientnegative/exim_08_nonpart_noncompat_serde.q
+index 5ecca13..230b28c 100644
+--- a/src/ql/src/test/queries/clientnegative/exim_08_nonpart_noncompat_serde.q
++++ b/src/ql/src/test/queries/clientnegative/exim_08_nonpart_noncompat_serde.q
+@@ -4,7 +4,7 @@ set hive.test.mode.prefix=;
+ create table exim_department ( dep_id int comment "department id") 	
+ 	stored as textfile	
+ 	tblproperties("creator"="krishna");
+-load data local inpath "../data/files/test.dat" into table exim_department;	
++load data local inpath "../../data/files/test.dat" into table exim_department;	
+ dfs ${system:test.dfs.mkdir} target/tmp/ql/test/data/exports/exim_department/temp;
+ dfs -rmr target/tmp/ql/test/data/exports/exim_department;
+ export table exim_department to 'ql/test/data/exports/exim_department';
+diff --git a/src/ql/src/test/queries/clientnegative/exim_09_nonpart_noncompat_serdeparam.q b/src/ql/src/test/queries/clientnegative/exim_09_nonpart_noncompat_serdeparam.q
+index 46b24a6..c2e00a9 100644
+--- a/src/ql/src/test/queries/clientnegative/exim_09_nonpart_noncompat_serdeparam.q
++++ b/src/ql/src/test/queries/clientnegative/exim_09_nonpart_noncompat_serdeparam.q
+@@ -4,7 +4,7 @@ set hive.test.mode.prefix=;
+ create table exim_department ( dep_id int comment "department id") 	
+ 	stored as textfile	
+ 	tblproperties("creator"="krishna");
+-load data local inpath "../data/files/test.dat" into table exim_department;	
++load data local inpath "../../data/files/test.dat" into table exim_department;	
+ dfs ${system:test.dfs.mkdir} target/tmp/ql/test/data/exports/exim_department/temp;
+ dfs -rmr target/tmp/ql/test/data/exports/exim_department;
+ export table exim_department to 'ql/test/data/exports/exim_department';
+diff --git a/src/ql/src/test/queries/clientnegative/exim_10_nonpart_noncompat_bucketing.q b/src/ql/src/test/queries/clientnegative/exim_10_nonpart_noncompat_bucketing.q
+index 54264f6..a6586ea 100644
+--- a/src/ql/src/test/queries/clientnegative/exim_10_nonpart_noncompat_bucketing.q
++++ b/src/ql/src/test/queries/clientnegative/exim_10_nonpart_noncompat_bucketing.q
+@@ -4,7 +4,7 @@ set hive.test.mode.prefix=;
+ create table exim_department ( dep_id int comment "department id") 	
+ 	stored as textfile	
+ 	tblproperties("creator"="krishna");
+-load data local inpath "../data/files/test.dat" into table exim_department;	
++load data local inpath "../../data/files/test.dat" into table exim_department;	
+ dfs ${system:test.dfs.mkdir} target/tmp/ql/test/data/exports/exim_department/temp;
+ dfs -rmr target/tmp/ql/test/data/exports/exim_department;
+ export table exim_department to 'ql/test/data/exports/exim_department';
+diff --git a/src/ql/src/test/queries/clientnegative/exim_11_nonpart_noncompat_sorting.q b/src/ql/src/test/queries/clientnegative/exim_11_nonpart_noncompat_sorting.q
+index 827a3bd..990a686 100644
+--- a/src/ql/src/test/queries/clientnegative/exim_11_nonpart_noncompat_sorting.q
++++ b/src/ql/src/test/queries/clientnegative/exim_11_nonpart_noncompat_sorting.q
+@@ -5,7 +5,7 @@ create table exim_department ( dep_id int comment "department id")
+ 	clustered by (dep_id) sorted by (dep_id desc) into 10 buckets
+ 	stored as textfile	
+ 	tblproperties("creator"="krishna");
+-load data local inpath "../data/files/test.dat" into table exim_department;	
++load data local inpath "../../data/files/test.dat" into table exim_department;	
+ dfs ${system:test.dfs.mkdir} target/tmp/ql/test/data/exports/exim_department/temp;
+ dfs -rmr target/tmp/ql/test/data/exports/exim_department;
+ export table exim_department to 'ql/test/data/exports/exim_department';
+diff --git a/src/ql/src/test/queries/clientnegative/exim_13_nonnative_import.q b/src/ql/src/test/queries/clientnegative/exim_13_nonnative_import.q
+index 3b5e3e7..02537ef 100644
+--- a/src/ql/src/test/queries/clientnegative/exim_13_nonnative_import.q
++++ b/src/ql/src/test/queries/clientnegative/exim_13_nonnative_import.q
+@@ -4,7 +4,7 @@ set hive.test.mode.prefix=;
+ create table exim_department ( dep_id int comment "department id") 	
+ 	stored as textfile	
+ 	tblproperties("creator"="krishna");
+-load data local inpath "../data/files/test.dat" into table exim_department;		
++load data local inpath "../../data/files/test.dat" into table exim_department;		
+ dfs ${system:test.dfs.mkdir} target/tmp/ql/test/data/exports/exim_department/temp;
+ dfs -rmr target/tmp/ql/test/data/exports/exim_department;
+ export table exim_department to 'ql/test/data/exports/exim_department';
+diff --git a/src/ql/src/test/queries/clientnegative/exim_14_nonpart_part.q b/src/ql/src/test/queries/clientnegative/exim_14_nonpart_part.q
+index 2a18e53..897c674 100644
+--- a/src/ql/src/test/queries/clientnegative/exim_14_nonpart_part.q
++++ b/src/ql/src/test/queries/clientnegative/exim_14_nonpart_part.q
+@@ -4,7 +4,7 @@ set hive.test.mode.prefix=;
+ create table exim_department ( dep_id int comment "department id") 	
+ 	stored as textfile	
+ 	tblproperties("creator"="krishna");
+-load data local inpath "../data/files/test.dat" into table exim_department;		
++load data local inpath "../../data/files/test.dat" into table exim_department;		
+ dfs ${system:test.dfs.mkdir} target/tmp/ql/test/data/exports/exim_department/temp;
+ dfs -rmr target/tmp/ql/test/data/exports/exim_department;
+ export table exim_department to 'ql/test/data/exports/exim_department';
+diff --git a/src/ql/src/test/queries/clientnegative/exim_15_part_nonpart.q b/src/ql/src/test/queries/clientnegative/exim_15_part_nonpart.q
+index cb40779..12013e5 100644
+--- a/src/ql/src/test/queries/clientnegative/exim_15_part_nonpart.q
++++ b/src/ql/src/test/queries/clientnegative/exim_15_part_nonpart.q
+@@ -5,7 +5,7 @@ create table exim_department ( dep_id int comment "department id")
+ 	partitioned by (dep_org string)
+ 	stored as textfile	
+ 	tblproperties("creator"="krishna");
+-load data local inpath "../data/files/test.dat" into table exim_department partition (dep_org="hr");		
++load data local inpath "../../data/files/test.dat" into table exim_department partition (dep_org="hr");		
+ dfs ${system:test.dfs.mkdir} target/tmp/ql/test/data/exports/exim_department/temp;
+ dfs -rmr target/tmp/ql/test/data/exports/exim_department;
+ export table exim_department to 'ql/test/data/exports/exim_department';
+diff --git a/src/ql/src/test/queries/clientnegative/exim_16_part_noncompat_schema.q b/src/ql/src/test/queries/clientnegative/exim_16_part_noncompat_schema.q
+index 73bfd33..d8d2b80 100644
+--- a/src/ql/src/test/queries/clientnegative/exim_16_part_noncompat_schema.q
++++ b/src/ql/src/test/queries/clientnegative/exim_16_part_noncompat_schema.q
+@@ -5,7 +5,7 @@ create table exim_department ( dep_id int comment "department id")
+ 	partitioned by (dep_org string)
+ 	stored as textfile	
+ 	tblproperties("creator"="krishna");
+-load data local inpath "../data/files/test.dat" into table exim_department partition (dep_org="hr");		
++load data local inpath "../../data/files/test.dat" into table exim_department partition (dep_org="hr");		
+ dfs ${system:test.dfs.mkdir} target/tmp/ql/test/data/exports/exim_department/temp;
+ dfs -rmr target/tmp/ql/test/data/exports/exim_department;
+ export table exim_department to 'ql/test/data/exports/exim_department';
+diff --git a/src/ql/src/test/queries/clientnegative/exim_17_part_spec_underspec.q b/src/ql/src/test/queries/clientnegative/exim_17_part_spec_underspec.q
+index 8d3f27a..82dcce9 100644
+--- a/src/ql/src/test/queries/clientnegative/exim_17_part_spec_underspec.q
++++ b/src/ql/src/test/queries/clientnegative/exim_17_part_spec_underspec.q
+@@ -6,13 +6,13 @@ create table exim_employee ( emp_id int comment "employee id")
+ 	partitioned by (emp_country string comment "two char iso code", emp_state string comment "free text")
+ 	stored as textfile	
+ 	tblproperties("creator"="krishna");
+-load data local inpath "../data/files/test.dat" 
++load data local inpath "../../data/files/test.dat" 
+ 	into table exim_employee partition (emp_country="in", emp_state="tn");	
+-load data local inpath "../data/files/test.dat" 
++load data local inpath "../../data/files/test.dat" 
+ 	into table exim_employee partition (emp_country="in", emp_state="ka");	
+-load data local inpath "../data/files/test.dat" 
++load data local inpath "../../data/files/test.dat" 
+ 	into table exim_employee partition (emp_country="us", emp_state="tn");	
+-load data local inpath "../data/files/test.dat" 
++load data local inpath "../../data/files/test.dat" 
+ 	into table exim_employee partition (emp_country="us", emp_state="ka");		
+ dfs ${system:test.dfs.mkdir} target/tmp/ql/test/data/exports/exim_employee/temp;
+ dfs -rmr target/tmp/ql/test/data/exports/exim_employee;
+diff --git a/src/ql/src/test/queries/clientnegative/exim_18_part_spec_missing.q b/src/ql/src/test/queries/clientnegative/exim_18_part_spec_missing.q
+index 076f576..d92efeb 100644
+--- a/src/ql/src/test/queries/clientnegative/exim_18_part_spec_missing.q
++++ b/src/ql/src/test/queries/clientnegative/exim_18_part_spec_missing.q
+@@ -6,13 +6,13 @@ create table exim_employee ( emp_id int comment "employee id")
+ 	partitioned by (emp_country string comment "two char iso code", emp_state string comment "free text")
+ 	stored as textfile	
+ 	tblproperties("creator"="krishna");
+-load data local inpath "../data/files/test.dat" 
++load data local inpath "../../data/files/test.dat" 
+ 	into table exim_employee partition (emp_country="in", emp_state="tn");	
+-load data local inpath "../data/files/test.dat" 
++load data local inpath "../../data/files/test.dat" 
+ 	into table exim_employee partition (emp_country="in", emp_state="ka");	
+-load data local inpath "../data/files/test.dat" 
++load data local inpath "../../data/files/test.dat" 
+ 	into table exim_employee partition (emp_country="us", emp_state="tn");	
+-load data local inpath "../data/files/test.dat" 
++load data local inpath "../../data/files/test.dat" 
+ 	into table exim_employee partition (emp_country="us", emp_state="ka");		
+ dfs ${system:test.dfs.mkdir} target/tmp/ql/test/data/exports/exim_employee/temp;
+ dfs -rmr target/tmp/ql/test/data/exports/exim_employee;
+diff --git a/src/ql/src/test/queries/clientnegative/exim_19_external_over_existing.q b/src/ql/src/test/queries/clientnegative/exim_19_external_over_existing.q
+index 355d8b5..12d827b 100644
+--- a/src/ql/src/test/queries/clientnegative/exim_19_external_over_existing.q
++++ b/src/ql/src/test/queries/clientnegative/exim_19_external_over_existing.q
+@@ -4,7 +4,7 @@ set hive.test.mode.prefix=;
+ create table exim_department ( dep_id int comment "department id") 	
+ 	stored as textfile	
+ 	tblproperties("creator"="krishna");
+-load data local inpath "../data/files/test.dat" into table exim_department;		
++load data local inpath "../../data/files/test.dat" into table exim_department;		
+ dfs ${system:test.dfs.mkdir} target/tmp/ql/test/data/exports/exim_department/temp;
+ dfs -rmr target/tmp/ql/test/data/exports/exim_department;
+ export table exim_department to 'ql/test/data/exports/exim_department';
+diff --git a/src/ql/src/test/queries/clientnegative/exim_20_managed_location_over_existing.q b/src/ql/src/test/queries/clientnegative/exim_20_managed_location_over_existing.q
+index 334aa38..726dee5 100644
+--- a/src/ql/src/test/queries/clientnegative/exim_20_managed_location_over_existing.q
++++ b/src/ql/src/test/queries/clientnegative/exim_20_managed_location_over_existing.q
+@@ -4,7 +4,7 @@ set hive.test.mode.prefix=;
+ create table exim_department ( dep_id int comment "department id") 	
+ 	stored as textfile	
+ 	tblproperties("creator"="krishna");
+-load data local inpath "../data/files/test.dat" into table exim_department;		
++load data local inpath "../../data/files/test.dat" into table exim_department;		
+ dfs ${system:test.dfs.mkdir} target/tmp/ql/test/data/exports/exim_department/temp;
+ dfs -rmr target/tmp/ql/test/data/exports/exim_department;
+ export table exim_department to 'ql/test/data/exports/exim_department';
+diff --git a/src/ql/src/test/queries/clientnegative/exim_21_part_managed_external.q b/src/ql/src/test/queries/clientnegative/exim_21_part_managed_external.q
+index 30c1b5a..d187c78 100644
+--- a/src/ql/src/test/queries/clientnegative/exim_21_part_managed_external.q
++++ b/src/ql/src/test/queries/clientnegative/exim_21_part_managed_external.q
+@@ -6,13 +6,13 @@ create table exim_employee ( emp_id int comment "employee id")
+ 	partitioned by (emp_country string comment "two char iso code", emp_state string comment "free text")
+ 	stored as textfile	
+ 	tblproperties("creator"="krishna");
+-load data local inpath "../data/files/test.dat" 
++load data local inpath "../../data/files/test.dat" 
+ 	into table exim_employee partition (emp_country="in", emp_state="tn");	
+-load data local inpath "../data/files/test.dat" 
++load data local inpath "../../data/files/test.dat" 
+ 	into table exim_employee partition (emp_country="in", emp_state="ka");	
+-load data local inpath "../data/files/test.dat" 
++load data local inpath "../../data/files/test.dat" 
+ 	into table exim_employee partition (emp_country="us", emp_state="tn");	
+-load data local inpath "../data/files/test.dat" 
++load data local inpath "../../data/files/test.dat" 
+ 	into table exim_employee partition (emp_country="us", emp_state="ka");		
+ dfs ${system:test.dfs.mkdir} target/tmp/ql/test/data/exports/exim_employee/temp;
+ dfs -rmr target/tmp/ql/test/data/exports/exim_employee;
+diff --git a/src/ql/src/test/queries/clientnegative/exim_23_import_exist_authfail.q b/src/ql/src/test/queries/clientnegative/exim_23_import_exist_authfail.q
+index 394f594..4acefb9 100644
+--- a/src/ql/src/test/queries/clientnegative/exim_23_import_exist_authfail.q
++++ b/src/ql/src/test/queries/clientnegative/exim_23_import_exist_authfail.q
+@@ -2,7 +2,7 @@ set hive.test.mode=true;
+ set hive.test.mode.prefix=;
+ 
+ create table exim_department ( dep_id int) stored as textfile;
+-load data local inpath "../data/files/test.dat" into table exim_department;
++load data local inpath "../../data/files/test.dat" into table exim_department;
+ dfs ${system:test.dfs.mkdir} target/tmp/ql/test/data/exports/exim_department/temp;
+ dfs -rmr target/tmp/ql/test/data/exports/exim_department;
+ export table exim_department to 'ql/test/data/exports/exim_department';
+diff --git a/src/ql/src/test/queries/clientnegative/exim_24_import_part_authfail.q b/src/ql/src/test/queries/clientnegative/exim_24_import_part_authfail.q
+index 7dfa2cf..467014e 100644
+--- a/src/ql/src/test/queries/clientnegative/exim_24_import_part_authfail.q
++++ b/src/ql/src/test/queries/clientnegative/exim_24_import_part_authfail.q
+@@ -7,7 +7,7 @@ create table exim_employee ( emp_id int comment "employee id")
+ 	partitioned by (emp_country string comment "two char iso code", emp_state string comment "free text")
+ 	stored as textfile	
+ 	tblproperties("creator"="krishna");
+-load data local inpath "../data/files/test.dat" 
++load data local inpath "../../data/files/test.dat" 
+ 	into table exim_employee partition (emp_country="in", emp_state="tn");		
+ dfs ${system:test.dfs.mkdir} target/tmp/ql/test/data/exports/exim_employee/temp;
+ dfs -rmr target/tmp/ql/test/data/exports/exim_employee;
+diff --git a/src/ql/src/test/queries/clientnegative/exim_25_import_nonexist_authfail.q b/src/ql/src/test/queries/clientnegative/exim_25_import_nonexist_authfail.q
+index 53b3e6c..595fa7e 100644
+--- a/src/ql/src/test/queries/clientnegative/exim_25_import_nonexist_authfail.q
++++ b/src/ql/src/test/queries/clientnegative/exim_25_import_nonexist_authfail.q
+@@ -3,7 +3,7 @@ set hive.test.mode.prefix=;
+ set hive.test.mode.nosamplelist=exim_department,exim_employee;
+ 
+ create table exim_department ( dep_id int) stored as textfile;
+-load data local inpath "../data/files/test.dat" into table exim_department;
++load data local inpath "../../data/files/test.dat" into table exim_department;
+ dfs ${system:test.dfs.mkdir} target/tmp/ql/test/data/exports/exim_department/temp;
+ dfs -rmr target/tmp/ql/test/data/exports/exim_department;
+ export table exim_department to 'ql/test/data/exports/exim_department';
+diff --git a/src/ql/src/test/queries/clientnegative/serde_regex2.q b/src/ql/src/test/queries/clientnegative/serde_regex2.q
+index a395574..d523d03 100644
+--- a/src/ql/src/test/queries/clientnegative/serde_regex2.q
++++ b/src/ql/src/test/queries/clientnegative/serde_regex2.q
+@@ -16,8 +16,8 @@ WITH SERDEPROPERTIES (
+ )
+ STORED AS TEXTFILE;
+ 
+-LOAD DATA LOCAL INPATH "../data/files/apache.access.log" INTO TABLE serde_regex;
+-LOAD DATA LOCAL INPATH "../data/files/apache.access.2.log" INTO TABLE serde_regex;
++LOAD DATA LOCAL INPATH "../../data/files/apache.access.log" INTO TABLE serde_regex;
++LOAD DATA LOCAL INPATH "../../data/files/apache.access.2.log" INTO TABLE serde_regex;
+ 
+ -- raise an exception 
+ SELECT * FROM serde_regex ORDER BY time;
+\ No newline at end of file
+diff --git a/src/ql/src/test/queries/clientpositive/decimal_5.q b/src/ql/src/test/queries/clientpositive/decimal_5.q
+index ecf9376..70e5db0 100644
+--- a/src/ql/src/test/queries/clientpositive/decimal_5.q
++++ b/src/ql/src/test/queries/clientpositive/decimal_5.q
+@@ -5,7 +5,7 @@ ROW FORMAT DELIMITED
+    FIELDS TERMINATED BY ' '
+ STORED AS TEXTFILE;
+ 
+-LOAD DATA LOCAL INPATH '../data/files/kv7.txt' INTO TABLE DECIMAL_5;
++LOAD DATA LOCAL INPATH '../../data/files/kv7.txt' INTO TABLE DECIMAL_5;
+ 
+ SELECT key FROM DECIMAL_5 ORDER BY key;
+ 
+diff --git a/src/ql/src/test/queries/clientpositive/decimal_6.q b/src/ql/src/test/queries/clientpositive/decimal_6.q
+index c1135f1..b58e224 100644
+--- a/src/ql/src/test/queries/clientpositive/decimal_6.q
++++ b/src/ql/src/test/queries/clientpositive/decimal_6.q
+@@ -12,8 +12,8 @@ ROW FORMAT DELIMITED
+    FIELDS TERMINATED BY ' '
+ STORED AS TEXTFILE;
+ 
+-LOAD DATA LOCAL INPATH '../data/files/kv9.txt' INTO TABLE DECIMAL_6_1;
+-LOAD DATA LOCAL INPATH '../data/files/kv9.txt' INTO TABLE DECIMAL_6_2;
++LOAD DATA LOCAL INPATH '../../data/files/kv9.txt' INTO TABLE DECIMAL_6_1;
++LOAD DATA LOCAL INPATH '../../data/files/kv9.txt' INTO TABLE DECIMAL_6_2;
+ 
+ SELECT T.key from (
+   SELECT key, value from DECIMAL_6_1
+diff --git a/src/ql/src/test/results/beelinepositive/serde_regex.q.out b/src/ql/src/test/results/beelinepositive/serde_regex.q.out
+index 32fbbdd..76db9cd 100644
+--- a/src/ql/src/test/results/beelinepositive/serde_regex.q.out
++++ b/src/ql/src/test/results/beelinepositive/serde_regex.q.out
+@@ -58,9 +58,9 @@ WITH SERDEPROPERTIES (
+ STORED AS TEXTFILE;
+ No rows affected 
+ >>>  
+->>>  LOAD DATA LOCAL INPATH "../data/files/apache.access.log" INTO TABLE serde_regex;
++>>>  LOAD DATA LOCAL INPATH "../../data/files/apache.access.log" INTO TABLE serde_regex;
+ No rows affected 
+->>>  LOAD DATA LOCAL INPATH "../data/files/apache.access.2.log" INTO TABLE serde_regex;
++>>>  LOAD DATA LOCAL INPATH "../../data/files/apache.access.2.log" INTO TABLE serde_regex;
+ No rows affected 
+ >>>  
+ >>>  SELECT * FROM serde_regex ORDER BY time;
+diff --git a/src/ql/src/test/results/beelinepositive/udf_in_file.q.out b/src/ql/src/test/results/beelinepositive/udf_in_file.q.out
+index fe0ecbc..3d4e95d 100644
+--- a/src/ql/src/test/results/beelinepositive/udf_in_file.q.out
++++ b/src/ql/src/test/results/beelinepositive/udf_in_file.q.out
+@@ -6,13 +6,13 @@ Saving all output to "!!{outputDirectory}!!/udf_in_file.q.raw". Enter "record" w
+ 1 row selected 
+ >>>  
+ >>>  EXPLAIN 
+-SELECT in_file("303", "../data/files/test2.dat"), 
+-in_file("304", "../data/files/test2.dat"), 
+-in_file(CAST(NULL AS STRING), "../data/files/test2.dat") 
++SELECT in_file("303", "../../data/files/test2.dat"), 
++in_file("304", "../../data/files/test2.dat"), 
++in_file(CAST(NULL AS STRING), "../../data/files/test2.dat") 
+ FROM src LIMIT 1;
+ 'Explain'
+ 'ABSTRACT SYNTAX TREE:'
+-'  (TOK_QUERY (TOK_FROM (TOK_TABREF (TOK_TABNAME src))) (TOK_INSERT (TOK_DESTINATION (TOK_DIR TOK_TMP_FILE)) (TOK_SELECT (TOK_SELEXPR (TOK_FUNCTION in_file "303" "../data/files/test2.dat")) (TOK_SELEXPR (TOK_FUNCTION in_file "304" "../data/files/test2.dat")) (TOK_SELEXPR (TOK_FUNCTION in_file (TOK_FUNCTION TOK_STRING TOK_NULL) "../data/files/test2.dat"))) (TOK_LIMIT 1)))'
++'  (TOK_QUERY (TOK_FROM (TOK_TABREF (TOK_TABNAME src))) (TOK_INSERT (TOK_DESTINATION (TOK_DIR TOK_TMP_FILE)) (TOK_SELECT (TOK_SELEXPR (TOK_FUNCTION in_file "303" "../../data/files/test2.dat")) (TOK_SELEXPR (TOK_FUNCTION in_file "304" "../data/files/test2.dat")) (TOK_SELEXPR (TOK_FUNCTION in_file (TOK_FUNCTION TOK_STRING TOK_NULL) "../data/files/test2.dat"))) (TOK_LIMIT 1)))'
+ ''
+ 'STAGE DEPENDENCIES:'
+ '  Stage-1 is a root stage'
+@@ -49,9 +49,9 @@ FROM src LIMIT 1;
+ ''
+ 36 rows selected 
+ >>>  
+->>>  SELECT in_file("303", "../data/files/test2.dat"), 
+-in_file("304", "../data/files/test2.dat"), 
+-in_file(CAST(NULL AS STRING), "../data/files/test2.dat") 
++>>>  SELECT in_file("303", "../../data/files/test2.dat"), 
++in_file("304", "../../data/files/test2.dat"), 
++in_file(CAST(NULL AS STRING), "../../data/files/test2.dat") 
+ FROM src LIMIT 1;
+ '_c0','_c1','_c2'
+ 'true','false',''
+diff --git a/src/ql/src/test/results/clientpositive/decimal_5.q.out b/src/ql/src/test/results/clientpositive/decimal_5.q.out
+index 13f4117..77c3724 100644
+--- a/src/ql/src/test/results/clientpositive/decimal_5.q.out
++++ b/src/ql/src/test/results/clientpositive/decimal_5.q.out
+@@ -13,10 +13,10 @@ ROW FORMAT DELIMITED
+ STORED AS TEXTFILE
+ POSTHOOK: type: CREATETABLE
+ POSTHOOK: Output: default@DECIMAL_5
+-PREHOOK: query: LOAD DATA LOCAL INPATH '../data/files/kv7.txt' INTO TABLE DECIMAL_5
++PREHOOK: query: LOAD DATA LOCAL INPATH '../../data/files/kv7.txt' INTO TABLE DECIMAL_5
+ PREHOOK: type: LOAD
+ PREHOOK: Output: default@decimal_5
+-POSTHOOK: query: LOAD DATA LOCAL INPATH '../data/files/kv7.txt' INTO TABLE DECIMAL_5
++POSTHOOK: query: LOAD DATA LOCAL INPATH '../../data/files/kv7.txt' INTO TABLE DECIMAL_5
+ POSTHOOK: type: LOAD
+ POSTHOOK: Output: default@decimal_5
+ PREHOOK: query: SELECT key FROM DECIMAL_5 ORDER BY key
+diff --git a/src/ql/src/test/results/clientpositive/decimal_6.q.out b/src/ql/src/test/results/clientpositive/decimal_6.q.out
+index 7193d9e..ac83764 100644
+--- a/src/ql/src/test/results/clientpositive/decimal_6.q.out
++++ b/src/ql/src/test/results/clientpositive/decimal_6.q.out
+@@ -32,16 +32,16 @@ ROW FORMAT DELIMITED
+ STORED AS TEXTFILE
+ POSTHOOK: type: CREATETABLE
+ POSTHOOK: Output: default@DECIMAL_6_2
+-PREHOOK: query: LOAD DATA LOCAL INPATH '../data/files/kv9.txt' INTO TABLE DECIMAL_6_1
++PREHOOK: query: LOAD DATA LOCAL INPATH '../../data/files/kv9.txt' INTO TABLE DECIMAL_6_1
+ PREHOOK: type: LOAD
+ PREHOOK: Output: default@decimal_6_1
+-POSTHOOK: query: LOAD DATA LOCAL INPATH '../data/files/kv9.txt' INTO TABLE DECIMAL_6_1
++POSTHOOK: query: LOAD DATA LOCAL INPATH '../../data/files/kv9.txt' INTO TABLE DECIMAL_6_1
+ POSTHOOK: type: LOAD
+ POSTHOOK: Output: default@decimal_6_1
+-PREHOOK: query: LOAD DATA LOCAL INPATH '../data/files/kv9.txt' INTO TABLE DECIMAL_6_2
++PREHOOK: query: LOAD DATA LOCAL INPATH '../../data/files/kv9.txt' INTO TABLE DECIMAL_6_2
+ PREHOOK: type: LOAD
+ PREHOOK: Output: default@decimal_6_2
+-POSTHOOK: query: LOAD DATA LOCAL INPATH '../data/files/kv9.txt' INTO TABLE DECIMAL_6_2
++POSTHOOK: query: LOAD DATA LOCAL INPATH '../../data/files/kv9.txt' INTO TABLE DECIMAL_6_2
+ POSTHOOK: type: LOAD
+ POSTHOOK: Output: default@decimal_6_2
+ PREHOOK: query: SELECT T.key from (
+-- 
+1.7.0.4
+

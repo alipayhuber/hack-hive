@@ -1,0 +1,30 @@
+From d9889dbfa873331b549b03be79d560befdeda662 Mon Sep 17 00:00:00 2001
+From: Szehon Ho <szehon@cloudera.com>
+Date: Mon, 6 Jan 2014 16:43:22 -0800
+Subject: [PATCH 218/375] CLOUDERA-BUILD: Part of CDH-16509, adding a missed test output file.
+
+---
+ .../results/clientpositive/groupby6_map_skew.q.out |    4 ++--
+ 1 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/src/ql/src/test/results/clientpositive/groupby6_map_skew.q.out b/src/ql/src/test/results/clientpositive/groupby6_map_skew.q.out
+index 21bab56..827fa2d 100644
+--- a/src/ql/src/test/results/clientpositive/groupby6_map_skew.q.out
++++ b/src/ql/src/test/results/clientpositive/groupby6_map_skew.q.out
+@@ -125,11 +125,11 @@ POSTHOOK: type: QUERY
+ POSTHOOK: Input: default@src
+ POSTHOOK: Output: default@dest1
+ POSTHOOK: Lineage: dest1.c1 EXPRESSION [(src)src.FieldSchema(name:value, type:string, comment:default), ]
+-PREHOOK: query: SELECT dest1.* FROM dest1
++PREHOOK: query: SELECT dest1.* FROM dest1 ORDER BY c1
+ PREHOOK: type: QUERY
+ PREHOOK: Input: default@dest1
+ #### A masked pattern was here ####
+-POSTHOOK: query: SELECT dest1.* FROM dest1
++POSTHOOK: query: SELECT dest1.* FROM dest1 ORDER BY c1
+ POSTHOOK: type: QUERY
+ POSTHOOK: Input: default@dest1
+ #### A masked pattern was here ####
+-- 
+1.7.0.4
+

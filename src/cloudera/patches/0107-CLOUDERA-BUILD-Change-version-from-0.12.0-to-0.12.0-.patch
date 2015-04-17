@@ -1,0 +1,137 @@
+From 1929544b0b3e91ea9989a2b6ae0d5c14a2d5514c Mon Sep 17 00:00:00 2001
+From: Brock Noland <brock@cloudera.com>
+Date: Wed, 23 Oct 2013 13:27:58 -0500
+Subject: [PATCH 107/375] CLOUDERA-BUILD: Change version from 0.12.0 to 0.12.0-cdh5.0.0-SNAPSHOT
+
+---
+ build.properties                        |    2 +-
+ hcatalog/build.properties               |    2 +-
+ hcatalog/core/pom.xml                   |    2 +-
+ hcatalog/hcatalog-pig-adapter/pom.xml   |    2 +-
+ hcatalog/pom.xml                        |    2 +-
+ hcatalog/server-extensions/pom.xml      |    2 +-
+ hcatalog/storage-handlers/hbase/pom.xml |    2 +-
+ hcatalog/webhcat/java-client/pom.xml    |    2 +-
+ hcatalog/webhcat/svr/pom.xml            |    2 +-
+ 9 files changed, 9 insertions(+), 9 deletions(-)
+
+diff --git a/src/build.properties b/src/build.properties
+index 8c2c07a..a88a304 100644
+--- a/src/build.properties
++++ b/src/build.properties
+@@ -16,7 +16,7 @@
+ 
+ Name=Hive
+ name=hive
+-shortversion=0.12.0
++shortversion=0.12.0-cdh5.0.0
+ version=${shortversion}-SNAPSHOT
+ hcatalog.version=${version}
+ year=2012
+diff --git a/src/hcatalog/build.properties b/src/hcatalog/build.properties
+index 522aade..cdf5ef8 100644
+--- a/src/hcatalog/build.properties
++++ b/src/hcatalog/build.properties
+@@ -15,7 +15,7 @@
+ # specific language governing permissions and limitations
+ # under the License.
+ 
+-hive.version=0.12.0
++hive.version=0.12.0-cdh5.0.0-SNAPSHOT
+ hcatalog.version=${hive.version}
+ jar.name=${ant.project.name}-${hcatalog.version}.jar
+ hcatalog.jar=${ant.project.name}-${hcatalog.version}.jar
+diff --git a/src/hcatalog/core/pom.xml b/src/hcatalog/core/pom.xml
+index 882d926..ed131f1 100644
+--- a/src/hcatalog/core/pom.xml
++++ b/src/hcatalog/core/pom.xml
+@@ -24,7 +24,7 @@
+     <parent>
+         <groupId>org.apache.hive.hcatalog</groupId>
+         <artifactId>hcatalog</artifactId>
+-        <version>0.12.0</version>
++        <version>0.12.0-cdh5.0.0-SNAPSHOT</version>
+         <relativePath>../pom.xml</relativePath>
+     </parent>
+ 
+diff --git a/src/hcatalog/hcatalog-pig-adapter/pom.xml b/src/hcatalog/hcatalog-pig-adapter/pom.xml
+index 37b9bea..c5c59ac 100644
+--- a/src/hcatalog/hcatalog-pig-adapter/pom.xml
++++ b/src/hcatalog/hcatalog-pig-adapter/pom.xml
+@@ -24,7 +24,7 @@
+     <parent>
+         <groupId>org.apache.hive.hcatalog</groupId>
+         <artifactId>hcatalog</artifactId>
+-        <version>0.12.0</version>
++        <version>0.12.0-cdh5.0.0-SNAPSHOT</version>
+         <relativePath>../pom.xml</relativePath>
+     </parent>
+ 
+diff --git a/src/hcatalog/pom.xml b/src/hcatalog/pom.xml
+index 504f32b..836f2cc 100644
+--- a/src/hcatalog/pom.xml
++++ b/src/hcatalog/pom.xml
+@@ -45,7 +45,7 @@
+   <modelVersion>4.0.0</modelVersion>
+   <groupId>org.apache.hive.hcatalog</groupId>
+   <artifactId>hcatalog</artifactId>
+-  <version>0.12.0</version>
++  <version>0.12.0-cdh5.0.0-SNAPSHOT</version>
+   <packaging>pom</packaging>
+ 
+   <build>
+diff --git a/src/hcatalog/server-extensions/pom.xml b/src/hcatalog/server-extensions/pom.xml
+index f9ec4a5..013f452 100644
+--- a/src/hcatalog/server-extensions/pom.xml
++++ b/src/hcatalog/server-extensions/pom.xml
+@@ -24,7 +24,7 @@
+     <parent>
+         <groupId>org.apache.hive.hcatalog</groupId>
+         <artifactId>hcatalog</artifactId>
+-        <version>0.12.0</version>
++        <version>0.12.0-cdh5.0.0-SNAPSHOT</version>
+         <relativePath>../pom.xml</relativePath>
+     </parent>
+ 
+diff --git a/src/hcatalog/storage-handlers/hbase/pom.xml b/src/hcatalog/storage-handlers/hbase/pom.xml
+index 6b9fc29..0e93f42 100644
+--- a/src/hcatalog/storage-handlers/hbase/pom.xml
++++ b/src/hcatalog/storage-handlers/hbase/pom.xml
+@@ -24,7 +24,7 @@
+   <parent>
+     <groupId>org.apache.hive.hcatalog</groupId>
+     <artifactId>hcatalog</artifactId>
+-    <version>0.12.0</version>
++    <version>0.12.0-cdh5.0.0-SNAPSHOT</version>
+     <relativePath>../../pom.xml</relativePath>
+   </parent>
+ 
+diff --git a/src/hcatalog/webhcat/java-client/pom.xml b/src/hcatalog/webhcat/java-client/pom.xml
+index 97ec5f6..63e4bb6 100644
+--- a/src/hcatalog/webhcat/java-client/pom.xml
++++ b/src/hcatalog/webhcat/java-client/pom.xml
+@@ -24,7 +24,7 @@
+     <parent>
+         <groupId>org.apache.hive.hcatalog</groupId>
+         <artifactId>hcatalog</artifactId>
+-        <version>0.12.0</version>
++        <version>0.12.0-cdh5.0.0-SNAPSHOT</version>
+         <relativePath>../../pom.xml</relativePath>
+     </parent>
+ 
+diff --git a/src/hcatalog/webhcat/svr/pom.xml b/src/hcatalog/webhcat/svr/pom.xml
+index da6038a..47f69e0 100644
+--- a/src/hcatalog/webhcat/svr/pom.xml
++++ b/src/hcatalog/webhcat/svr/pom.xml
+@@ -24,7 +24,7 @@
+     <parent>
+         <groupId>org.apache.hive.hcatalog</groupId>
+         <artifactId>hcatalog</artifactId>
+-        <version>0.12.0</version>
++        <version>0.12.0-cdh5.0.0-SNAPSHOT</version>
+         <relativePath>../../pom.xml</relativePath>
+     </parent>
+ 
+-- 
+1.7.0.4
+

@@ -1,0 +1,352 @@
+From 9faa0b1e5a2df238ed947f50c766708f476344c6 Mon Sep 17 00:00:00 2001
+From: Xuefu Zhang <xzhang@xzlt.(none)>
+Date: Mon, 14 Apr 2014 09:35:05 -0700
+Subject: [PATCH 321/375] CDH-18616: Backport HIVE-5847: DatabaseMetadata.getColumns() doesn't show correct column size for char/varchar/decimal
+
+---
+ .../java/org/apache/hive/jdbc/TestJdbcDriver2.java |   46 ++++++++++
+ jdbc/src/java/org/apache/hive/jdbc/JdbcColumn.java |    4 +-
+ .../src/java/org/apache/hive/service/cli/Type.java |   88 +------------------
+ .../apache/hive/service/cli/TypeDescriptor.java    |   66 +++++++++++++++
+ .../service/cli/operation/GetColumnsOperation.java |    4 +-
+ .../cli/operation/GetTypeInfoOperation.java        |    2 +-
+ 6 files changed, 122 insertions(+), 88 deletions(-)
+
+diff --git a/src/itests/hive-unit/src/test/java/org/apache/hive/jdbc/TestJdbcDriver2.java b/src/itests/hive-unit/src/test/java/org/apache/hive/jdbc/TestJdbcDriver2.java
+index 3a22d89..3b2cce7 100644
+--- a/src/itests/hive-unit/src/test/java/org/apache/hive/jdbc/TestJdbcDriver2.java
++++ b/src/itests/hive-unit/src/test/java/org/apache/hive/jdbc/TestJdbcDriver2.java
+@@ -1470,6 +1470,13 @@ public void testResultSetMetaData() throws SQLException {
+     assertEquals(Integer.MAX_VALUE, meta.getPrecision(14));
+     assertEquals(0, meta.getScale(14));
+ 
++    // Move the result of getColumns() forward to match the columns of the query
++    assertTrue(colRS.next());  // c13
++    assertTrue(colRS.next());  // c14
++    assertTrue(colRS.next());  // c15
++    assertTrue(colRS.next());  // c16
++    assertTrue(colRS.next());  // c17
++
+     assertEquals("c17", meta.getColumnName(15));
+     assertEquals(Types.TIMESTAMP, meta.getColumnType(15));
+     assertEquals("timestamp", meta.getColumnTypeName(15));
+@@ -1477,6 +1484,14 @@ public void testResultSetMetaData() throws SQLException {
+     assertEquals(29, meta.getPrecision(15));
+     assertEquals(9, meta.getScale(15));
+ 
++    assertEquals("c17", colRS.getString("COLUMN_NAME"));
++    assertEquals(Types.TIMESTAMP, colRS.getInt("DATA_TYPE"));
++    assertEquals("timestamp", colRS.getString("TYPE_NAME").toLowerCase());
++    assertEquals(meta.getPrecision(15), colRS.getInt("COLUMN_SIZE"));
++    assertEquals(meta.getScale(15), colRS.getInt("DECIMAL_DIGITS"));
++
++    assertTrue(colRS.next());
++
+     assertEquals("c18", meta.getColumnName(16));
+     assertEquals(Types.DECIMAL, meta.getColumnType(16));
+     assertEquals("decimal", meta.getColumnTypeName(16));
+@@ -1484,6 +1499,15 @@ public void testResultSetMetaData() throws SQLException {
+     assertEquals(16, meta.getPrecision(16));
+     assertEquals(7, meta.getScale(16));
+ 
++    assertEquals("c18", colRS.getString("COLUMN_NAME"));
++    assertEquals(Types.DECIMAL, colRS.getInt("DATA_TYPE"));
++    assertEquals("decimal", colRS.getString("TYPE_NAME").toLowerCase());
++    assertEquals(meta.getPrecision(16), colRS.getInt("COLUMN_SIZE"));
++    assertEquals(meta.getScale(16), colRS.getInt("DECIMAL_DIGITS"));
++
++    assertTrue(colRS.next());  // skip c19, since not selected by query
++    assertTrue(colRS.next());
++
+     assertEquals("c20", meta.getColumnName(17));
+     assertEquals(Types.DATE, meta.getColumnType(17));
+     assertEquals("date", meta.getColumnTypeName(17));
+@@ -1491,6 +1515,14 @@ public void testResultSetMetaData() throws SQLException {
+     assertEquals(10, meta.getPrecision(17));
+     assertEquals(0, meta.getScale(17));
+ 
++    assertEquals("c20", colRS.getString("COLUMN_NAME"));
++    assertEquals(Types.DATE, colRS.getInt("DATA_TYPE"));
++    assertEquals("date", colRS.getString("TYPE_NAME").toLowerCase());
++    assertEquals(meta.getPrecision(17), colRS.getInt("COLUMN_SIZE"));
++    assertEquals(meta.getScale(17), colRS.getInt("DECIMAL_DIGITS"));
++
++    assertTrue(colRS.next());
++
+     assertEquals("c21", meta.getColumnName(18));
+     assertEquals(Types.VARCHAR, meta.getColumnType(18));
+     assertEquals("varchar", meta.getColumnTypeName(18));
+@@ -1499,6 +1531,14 @@ public void testResultSetMetaData() throws SQLException {
+     assertEquals(20, meta.getPrecision(18));
+     assertEquals(0, meta.getScale(18));
+ 
++    assertEquals("c21", colRS.getString("COLUMN_NAME"));
++    assertEquals(Types.VARCHAR, colRS.getInt("DATA_TYPE"));
++    assertEquals("varchar", colRS.getString("TYPE_NAME").toLowerCase());
++    assertEquals(meta.getPrecision(18), colRS.getInt("COLUMN_SIZE"));
++    assertEquals(meta.getScale(18), colRS.getInt("DECIMAL_DIGITS"));
++
++    assertTrue(colRS.next());
++
+     assertEquals("c22", meta.getColumnName(19));
+     assertEquals(Types.CHAR, meta.getColumnType(19));
+     assertEquals("char", meta.getColumnTypeName(19));
+@@ -1507,6 +1547,12 @@ public void testResultSetMetaData() throws SQLException {
+     assertEquals(15, meta.getPrecision(19));
+     assertEquals(0, meta.getScale(19));
+ 
++    assertEquals("c22", colRS.getString("COLUMN_NAME"));
++    assertEquals(Types.CHAR, colRS.getInt("DATA_TYPE"));
++    assertEquals("char", colRS.getString("TYPE_NAME").toLowerCase());
++    assertEquals(meta.getPrecision(19), colRS.getInt("COLUMN_SIZE"));
++    assertEquals(meta.getScale(19), colRS.getInt("DECIMAL_DIGITS"));
++
+     for (int i = 1; i <= meta.getColumnCount(); i++) {
+       assertFalse(meta.isAutoIncrement(i));
+       assertFalse(meta.isCurrency(i));
+diff --git a/src/jdbc/src/java/org/apache/hive/jdbc/JdbcColumn.java b/src/jdbc/src/java/org/apache/hive/jdbc/JdbcColumn.java
+index 42ec32a..a9391f8 100644
+--- a/src/jdbc/src/java/org/apache/hive/jdbc/JdbcColumn.java
++++ b/src/jdbc/src/java/org/apache/hive/jdbc/JdbcColumn.java
+@@ -166,9 +166,9 @@ public Integer getNumPrecRadix() {
+     } else if (type.equalsIgnoreCase("bigint")) {
+       return 10;
+     } else if (type.equalsIgnoreCase("float")) {
+-      return 2;
++      return 10;
+     } else if (type.equalsIgnoreCase("double")) {
+-      return 2;
++      return 10;
+     } else if (type.equalsIgnoreCase("decimal")) {
+       return 10;
+     } else { // anything else including boolean and string is null
+diff --git a/src/service/src/java/org/apache/hive/service/cli/Type.java b/src/service/src/java/org/apache/hive/service/cli/Type.java
+index 9329392..4979b25 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/Type.java
++++ b/src/service/src/java/org/apache/hive/service/cli/Type.java
+@@ -20,6 +20,7 @@
+ 
+ import java.sql.DatabaseMetaData;
+ 
++import org.apache.hadoop.hive.common.type.HiveDecimal;
+ import org.apache.hive.service.cli.thrift.TTypeId;
+ 
+ /**
+@@ -166,40 +167,10 @@ public static Type getType(String name) {
+    * Null is returned for data types where this is not applicable.
+    */
+   public Integer getNumPrecRadix() {
+-    switch (this) {
+-    case TINYINT_TYPE:
+-    case SMALLINT_TYPE:
+-    case INT_TYPE:
+-    case BIGINT_TYPE:
++    if (this.isNumericType()) {
+       return 10;
+-    case FLOAT_TYPE:
+-    case DOUBLE_TYPE:
+-      return 2;
+-    default:
+-      // everything else (including boolean and string) is null
+-      return null;
+-    }
+-  }
+-
+-  /**
+-   * The number of fractional digits for this type.
+-   * Null is returned for data types where this is not applicable.
+-   */
+-  public Integer getDecimalDigits() {
+-    switch (this) {
+-    case BOOLEAN_TYPE:
+-    case TINYINT_TYPE:
+-    case SMALLINT_TYPE:
+-    case INT_TYPE:
+-    case BIGINT_TYPE:
+-      return 0;
+-    case FLOAT_TYPE:
+-      return 7;
+-    case DOUBLE_TYPE:
+-      return 15;
+-    default:
+-      return null;
+     }
++    return null;
+   }
+ 
+   /**
+@@ -207,7 +178,7 @@ public Integer getDecimalDigits() {
+    * Returns null for non-numeric types.
+    * @return
+    */
+-  public Integer getPrecision() {
++  public Integer getMaxPrecision() {
+     switch (this) {
+     case TINYINT_TYPE:
+       return 3;
+@@ -221,57 +192,8 @@ public Integer getPrecision() {
+       return 7;
+     case DOUBLE_TYPE:
+       return 15;
+-    default:
+-      return null;
+-    }
+-  }
+-
+-  /**
+-   * Scale for this type.
+-   */
+-  public Integer getScale() {
+-    switch (this) {
+-    case BOOLEAN_TYPE:
+-    case STRING_TYPE:
+-    case DATE_TYPE:
+-    case TIMESTAMP_TYPE:
+-    case TINYINT_TYPE:
+-    case SMALLINT_TYPE:
+-    case INT_TYPE:
+-    case BIGINT_TYPE:
+-      return 0;
+-    case FLOAT_TYPE:
+-      return 7;
+-    case DOUBLE_TYPE:
+-      return 15;
+     case DECIMAL_TYPE:
+-      return Integer.MAX_VALUE;
+-    default:
+-      return null;
+-    }
+-  }
+-
+-  /**
+-   * The column size for this type.
+-   * For numeric data this is the maximum precision.
+-   * For character data this is the length in characters.
+-   * For datetime types this is the length in characters of the String representation
+-   * (assuming the maximum allowed precision of the fractional seconds component).
+-   * For binary data this is the length in bytes.
+-   * Null is returned for for data types where the column size is not applicable.
+-   */
+-  public Integer getColumnSize() {
+-    if (isNumericType()) {
+-      return getPrecision();
+-    }
+-    switch (this) {
+-    case STRING_TYPE:
+-    case BINARY_TYPE:
+-      return Integer.MAX_VALUE;
+-    case DATE_TYPE:
+-      return 10;
+-    case TIMESTAMP_TYPE:
+-      return 30;
++      return HiveDecimal.MAX_PRECISION;
+     default:
+       return null;
+     }
+diff --git a/src/service/src/java/org/apache/hive/service/cli/TypeDescriptor.java b/src/service/src/java/org/apache/hive/service/cli/TypeDescriptor.java
+index fb0236c..562b3f5 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/TypeDescriptor.java
++++ b/src/service/src/java/org/apache/hive/service/cli/TypeDescriptor.java
+@@ -90,4 +90,70 @@ public TypeQualifiers getTypeQualifiers() {
+   public void setTypeQualifiers(TypeQualifiers typeQualifiers) {
+     this.typeQualifiers = typeQualifiers;
+   }
++
++  /**
++   * The column size for this type.
++   * For numeric data this is the maximum precision.
++   * For character data this is the length in characters.
++   * For datetime types this is the length in characters of the String representation
++   * (assuming the maximum allowed precision of the fractional seconds component).
++   * For binary data this is the length in bytes.
++   * Null is returned for for data types where the column size is not applicable.
++   */
++  public Integer getColumnSize() {
++    if (type.isNumericType()) {
++      return getPrecision();
++    }
++    switch (type) {
++    case STRING_TYPE:
++    case BINARY_TYPE:
++      return Integer.MAX_VALUE;
++    case CHAR_TYPE:
++    case VARCHAR_TYPE:
++      return typeQualifiers.getCharacterMaximumLength();
++    case DATE_TYPE:
++      return 10;
++    case TIMESTAMP_TYPE:
++      return 29;
++    default:
++      return null;
++    }
++  }
++
++  /**
++   * Maximum precision for numeric types.
++   * Returns null for non-numeric types.
++   * @return
++   */
++  public Integer getPrecision() {
++    if (this.type == Type.DECIMAL_TYPE) {
++      return typeQualifiers.getPrecision();
++    }
++    return this.type.getMaxPrecision();
++  }
++
++  /**
++   * The number of fractional digits for this type.
++   * Null is returned for data types where this is not applicable.
++   */
++  public Integer getDecimalDigits() {
++    switch (this.type) {
++    case BOOLEAN_TYPE:
++    case TINYINT_TYPE:
++    case SMALLINT_TYPE:
++    case INT_TYPE:
++    case BIGINT_TYPE:
++      return 0;
++    case FLOAT_TYPE:
++      return 7;
++    case DOUBLE_TYPE:
++      return 15;
++    case DECIMAL_TYPE:
++      return typeQualifiers.getScale();
++    case TIMESTAMP_TYPE:
++      return 9;
++    default:
++      return null;
++    }
++  }
+ }
+diff --git a/src/service/src/java/org/apache/hive/service/cli/operation/GetColumnsOperation.java b/src/service/src/java/org/apache/hive/service/cli/operation/GetColumnsOperation.java
+index 364f64f..194fc04 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/operation/GetColumnsOperation.java
++++ b/src/service/src/java/org/apache/hive/service/cli/operation/GetColumnsOperation.java
+@@ -152,9 +152,9 @@ public void run() throws HiveSQLException {
+                 column.getName(), // COLUMN_NAME
+                 column.getType().toJavaSQLType(), // DATA_TYPE
+                 column.getTypeName(), // TYPE_NAME
+-                column.getType().getColumnSize(), // COLUMN_SIZE
++                column.getTypeDescriptor().getColumnSize(), // COLUMN_SIZE
+                 null, // BUFFER_LENGTH, unused
+-                column.getType().getDecimalDigits(), // DECIMAL_DIGITS
++                column.getTypeDescriptor().getDecimalDigits(), // DECIMAL_DIGITS
+                 column.getType().getNumPrecRadix(), // NUM_PREC_RADIX
+                 DatabaseMetaData.columnNullable, // NULLABLE
+                 column.getComment(), // REMARKS
+diff --git a/src/service/src/java/org/apache/hive/service/cli/operation/GetTypeInfoOperation.java b/src/service/src/java/org/apache/hive/service/cli/operation/GetTypeInfoOperation.java
+index a923199..a921a5c 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/operation/GetTypeInfoOperation.java
++++ b/src/service/src/java/org/apache/hive/service/cli/operation/GetTypeInfoOperation.java
+@@ -90,7 +90,7 @@ public void run() throws HiveSQLException {
+         Object[] rowData = new Object[] {
+             type.getName(), // TYPE_NAME
+             type.toJavaSQLType(), // DATA_TYPE
+-            type.getPrecision(), // PRECISION
++            type.getMaxPrecision(), // PRECISION
+             type.getLiteralPrefix(), // LITERAL_PREFIX
+             type.getLiteralSuffix(), // LITERAL_SUFFIX
+             type.getCreateParams(), // CREATE_PARAMS
+-- 
+1.7.0.4
+

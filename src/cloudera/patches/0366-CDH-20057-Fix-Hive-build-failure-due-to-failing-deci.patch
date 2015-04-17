@@ -1,0 +1,91 @@
+From f0d8058f084e9d90eca5acc803250d788a784feb Mon Sep 17 00:00:00 2001
+From: asingh <asingh@cloudera.com>
+Date: Thu, 26 Jun 2014 15:36:11 -0700
+Subject: [PATCH 366/375] CDH-20057: Fix Hive build failure due to failing decimal test
+
+---
+ ql/src/test/queries/clientpositive/decimal_10_0.q  |    8 ++--
+ .../test/results/clientpositive/decimal_10_0.q.out |   38 +++++++++-----------
+ 2 files changed, 21 insertions(+), 25 deletions(-)
+
+diff --git a/src/ql/src/test/queries/clientpositive/decimal_10_0.q b/src/ql/src/test/queries/clientpositive/decimal_10_0.q
+index 02b547c..cd4ad26 100644
+--- a/src/ql/src/test/queries/clientpositive/decimal_10_0.q
++++ b/src/ql/src/test/queries/clientpositive/decimal_10_0.q
+@@ -1,9 +1,9 @@
+ DROP TABLE IF EXISTS DECIMAL;
+ 
+-CREATE TABLE DECIMAL (dec decimal);
++CREATE TABLE decimal_10_0 (dec decimal);
+ 
+-LOAD DATA LOCAL INPATH '../../data/files/decimal_10_0.txt' OVERWRITE INTO TABLE DECIMAL;
++LOAD DATA LOCAL INPATH '../../data/files/decimal_10_0.txt' OVERWRITE INTO TABLE decimal_10_0;
+ 
+-SELECT dec FROM DECIMAL;
++SELECT dec FROM decimal_10_0;
+ 
+-DROP TABLE DECIMAL;
+\ No newline at end of file
++DROP TABLE decimal_10_0;
+\ No newline at end of file
+diff --git a/src/ql/src/test/results/clientpositive/decimal_10_0.q.out b/src/ql/src/test/results/clientpositive/decimal_10_0.q.out
+index 722a0a0..d395203 100644
+--- a/src/ql/src/test/results/clientpositive/decimal_10_0.q.out
++++ b/src/ql/src/test/results/clientpositive/decimal_10_0.q.out
+@@ -2,36 +2,32 @@ PREHOOK: query: DROP TABLE IF EXISTS DECIMAL
+ PREHOOK: type: DROPTABLE
+ POSTHOOK: query: DROP TABLE IF EXISTS DECIMAL
+ POSTHOOK: type: DROPTABLE
+-PREHOOK: query: CREATE TABLE DECIMAL (dec decimal)
++PREHOOK: query: CREATE TABLE decimal_10_0 (dec decimal)
+ PREHOOK: type: CREATETABLE
+-PREHOOK: Output: database:default
+-POSTHOOK: query: CREATE TABLE DECIMAL (dec decimal)
++POSTHOOK: query: CREATE TABLE decimal_10_0 (dec decimal)
+ POSTHOOK: type: CREATETABLE
+-POSTHOOK: Output: database:default
+-POSTHOOK: Output: default@DECIMAL
+-PREHOOK: query: LOAD DATA LOCAL INPATH '../../data/files/decimal_10_0.txt' OVERWRITE INTO TABLE DECIMAL
++POSTHOOK: Output: default@decimal_10_0
++PREHOOK: query: LOAD DATA LOCAL INPATH '../../data/files/decimal_10_0.txt' OVERWRITE INTO TABLE decimal_10_0
+ PREHOOK: type: LOAD
+-#### A masked pattern was here ####
+-PREHOOK: Output: default@decimal
+-POSTHOOK: query: LOAD DATA LOCAL INPATH '../../data/files/decimal_10_0.txt' OVERWRITE INTO TABLE DECIMAL
++PREHOOK: Output: default@decimal_10_0
++POSTHOOK: query: LOAD DATA LOCAL INPATH '../../data/files/decimal_10_0.txt' OVERWRITE INTO TABLE decimal_10_0
+ POSTHOOK: type: LOAD
+-#### A masked pattern was here ####
+-POSTHOOK: Output: default@decimal
+-PREHOOK: query: SELECT dec FROM DECIMAL
++POSTHOOK: Output: default@decimal_10_0
++PREHOOK: query: SELECT dec FROM decimal_10_0
+ PREHOOK: type: QUERY
+-PREHOOK: Input: default@decimal
++PREHOOK: Input: default@decimal_10_0
+ #### A masked pattern was here ####
+-POSTHOOK: query: SELECT dec FROM DECIMAL
++POSTHOOK: query: SELECT dec FROM decimal_10_0
+ POSTHOOK: type: QUERY
+-POSTHOOK: Input: default@decimal
++POSTHOOK: Input: default@decimal_10_0
+ #### A masked pattern was here ####
+ 1000000000
+ NULL
+-PREHOOK: query: DROP TABLE DECIMAL
++PREHOOK: query: DROP TABLE decimal_10_0
+ PREHOOK: type: DROPTABLE
+-PREHOOK: Input: default@decimal
+-PREHOOK: Output: default@decimal
+-POSTHOOK: query: DROP TABLE DECIMAL
++PREHOOK: Input: default@decimal_10_0
++PREHOOK: Output: default@decimal_10_0
++POSTHOOK: query: DROP TABLE decimal_10_0
+ POSTHOOK: type: DROPTABLE
+-POSTHOOK: Input: default@decimal
+-POSTHOOK: Output: default@decimal
++POSTHOOK: Input: default@decimal_10_0
++POSTHOOK: Output: default@decimal_10_0
+-- 
+1.7.0.4
+

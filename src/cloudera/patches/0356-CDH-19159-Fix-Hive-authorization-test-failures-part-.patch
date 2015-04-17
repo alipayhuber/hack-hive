@@ -1,0 +1,39 @@
+From e79cd24a2cbe278ac1395da3514893339c39d25e Mon Sep 17 00:00:00 2001
+From: Szehon Ho <szehon@cloudera.com>
+Date: Tue, 10 Jun 2014 16:40:41 -0700
+Subject: [PATCH 356/375] CDH-19159: Fix Hive authorization test failures (part 2)
+
+---
+ ql/src/test/queries/clientpositive/keyword_1.q |   19 -------------------
+ 1 files changed, 0 insertions(+), 19 deletions(-)
+ delete mode 100644 ql/src/test/queries/clientpositive/keyword_1.q
+
+diff --git a/src/ql/src/test/queries/clientpositive/keyword_1.q b/src/ql/src/test/queries/clientpositive/keyword_1.q
+deleted file mode 100644
+index 2e996af..0000000
+--- a/src/ql/src/test/queries/clientpositive/keyword_1.q
++++ /dev/null
+@@ -1,19 +0,0 @@
+--- SORT_BEFORE_DIFF
+-
+-create table test_user (user string, `group` string);
+-grant select on table test_user to user hive_test;
+-
+-explain select user from test_user;
+-
+-show grant user hive_test on table test_user;
+-
+-drop table test_user;
+-
+-create table test_user (role string, `group` string);
+-grant select on table test_user to user hive_test;
+-
+-explain select role from test_user;
+-
+-show grant user hive_test on table test_user;
+-
+-drop table test_user;
+\ No newline at end of file
+-- 
+1.7.0.4
+

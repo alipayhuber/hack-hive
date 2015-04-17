@@ -1,0 +1,117 @@
+From c525232afddd5b4d66ab268ffa5ce49f9202e696 Mon Sep 17 00:00:00 2001
+From: Prasad Mujumdar <prasadm@cloudera.com>
+Date: Tue, 21 Jan 2014 18:39:01 -0800
+Subject: [PATCH 244/375] CDH-16913: Need database name in job.xml
+
+---
+ .../java/org/apache/hadoop/hive/conf/HiveConf.java |    3 +-
+ .../hadoop/hive/ql/session/SessionState.java       |    1 +
+ ql/src/test/queries/clientpositive/dbconf.q        |   17 ++++++++
+ ql/src/test/results/clientpositive/dbconf.q.out    |   44 ++++++++++++++++++++
+ 4 files changed, 64 insertions(+), 1 deletions(-)
+ create mode 100644 ql/src/test/queries/clientpositive/dbconf.q
+ create mode 100644 ql/src/test/results/clientpositive/dbconf.q.out
+
+diff --git a/src/common/src/java/org/apache/hadoop/hive/conf/HiveConf.java b/src/common/src/java/org/apache/hadoop/hive/conf/HiveConf.java
+index ef68d7a..904c486 100644
+--- a/src/common/src/java/org/apache/hadoop/hive/conf/HiveConf.java
++++ b/src/common/src/java/org/apache/hadoop/hive/conf/HiveConf.java
+@@ -817,8 +817,9 @@
+     // Enable list bucketing optimizer. Default value is false so that we disable it by default.
+     HIVEOPTLISTBUCKETING("hive.optimize.listbucketing", false),
+ 
+-    // Allow TCP Keep alive socket option for for HiveServer or a maximum timeout for the socket.
++    HIVE_CURRENT_DB("hive.current.db", "default"),
+ 
++    // Allow TCP Keep alive socket option for for HiveServer or a maximum timeout for the socket.
+     SERVER_READ_SOCKET_TIMEOUT("hive.server.read.socket.timeout", 10),
+     SERVER_TCP_KEEP_ALIVE("hive.server.tcp.keepalive", true),
+ 
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/session/SessionState.java b/src/ql/src/java/org/apache/hadoop/hive/ql/session/SessionState.java
+index b03f72a..efc6d8c 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/session/SessionState.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/session/SessionState.java
+@@ -786,6 +786,7 @@ public String getCurrentDatabase() {
+ 
+   public void setCurrentDatabase(String currentDatabase) {
+     this.currentDatabase = currentDatabase;
++    this.getConf().setVar(HiveConf.ConfVars.HIVE_CURRENT_DB, currentDatabase);
+   }
+ 
+   public void close() throws IOException {
+diff --git a/src/ql/src/test/queries/clientpositive/dbconf.q b/src/ql/src/test/queries/clientpositive/dbconf.q
+new file mode 100644
+index 0000000..ff89459
+--- /dev/null
++++ b/src/ql/src/test/queries/clientpositive/dbconf.q
+@@ -0,0 +1,17 @@
++set hive.current.db;
++
++DROP DATABASE IF EXISTS db_name1;
++CREATE DATABASE db_name1;
++USE db_name1;
++set hive.current.db;
++USE default;
++set hive.current.db;
++
++DROP DATABASE IF EXISTS db_name2;
++CREATE DATABASE db_name2;
++USE db_name2;
++set hive.current.db;
++
++USE default;
++DROP DATABASE IF EXISTS db_name1;
++DROP DATABASE IF EXISTS db_name2;
+diff --git a/src/ql/src/test/results/clientpositive/dbconf.q.out b/src/ql/src/test/results/clientpositive/dbconf.q.out
+new file mode 100644
+index 0000000..92df3ed
+--- /dev/null
++++ b/src/ql/src/test/results/clientpositive/dbconf.q.out
+@@ -0,0 +1,44 @@
++hive.current.db=default
++PREHOOK: query: DROP DATABASE IF EXISTS db_name1
++PREHOOK: type: DROPDATABASE
++POSTHOOK: query: DROP DATABASE IF EXISTS db_name1
++POSTHOOK: type: DROPDATABASE
++PREHOOK: query: CREATE DATABASE db_name1
++PREHOOK: type: CREATEDATABASE
++POSTHOOK: query: CREATE DATABASE db_name1
++POSTHOOK: type: CREATEDATABASE
++PREHOOK: query: USE db_name1
++PREHOOK: type: SWITCHDATABASE
++POSTHOOK: query: USE db_name1
++POSTHOOK: type: SWITCHDATABASE
++hive.current.db=db_name1
++PREHOOK: query: USE default
++PREHOOK: type: SWITCHDATABASE
++POSTHOOK: query: USE default
++POSTHOOK: type: SWITCHDATABASE
++hive.current.db=default
++PREHOOK: query: DROP DATABASE IF EXISTS db_name2
++PREHOOK: type: DROPDATABASE
++POSTHOOK: query: DROP DATABASE IF EXISTS db_name2
++POSTHOOK: type: DROPDATABASE
++PREHOOK: query: CREATE DATABASE db_name2
++PREHOOK: type: CREATEDATABASE
++POSTHOOK: query: CREATE DATABASE db_name2
++POSTHOOK: type: CREATEDATABASE
++PREHOOK: query: USE db_name2
++PREHOOK: type: SWITCHDATABASE
++POSTHOOK: query: USE db_name2
++POSTHOOK: type: SWITCHDATABASE
++hive.current.db=db_name2
++PREHOOK: query: USE default
++PREHOOK: type: SWITCHDATABASE
++POSTHOOK: query: USE default
++POSTHOOK: type: SWITCHDATABASE
++PREHOOK: query: DROP DATABASE IF EXISTS db_name1
++PREHOOK: type: DROPDATABASE
++POSTHOOK: query: DROP DATABASE IF EXISTS db_name1
++POSTHOOK: type: DROPDATABASE
++PREHOOK: query: DROP DATABASE IF EXISTS db_name2
++PREHOOK: type: DROPDATABASE
++POSTHOOK: query: DROP DATABASE IF EXISTS db_name2
++POSTHOOK: type: DROPDATABASE
+-- 
+1.7.0.4
+

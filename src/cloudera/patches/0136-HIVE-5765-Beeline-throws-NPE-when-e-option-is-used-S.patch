@@ -1,0 +1,37 @@
+From 4231246f9c9d07b72c354c20fa1073f60a83dee0 Mon Sep 17 00:00:00 2001
+From: Brock Noland <brock@apache.org>
+Date: Thu, 7 Nov 2013 16:03:17 +0000
+Subject: [PATCH 136/375] HIVE-5765 - Beeline throws NPE when -e option is used (Szehon Ho via Brock Noland)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1539694 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../src/java/org/apache/hive/beeline/Commands.java |    6 +++++-
+ 1 files changed, 5 insertions(+), 1 deletions(-)
+
+diff --git a/src/beeline/src/java/org/apache/hive/beeline/Commands.java b/src/beeline/src/java/org/apache/hive/beeline/Commands.java
+index 91ee3b3..d2d7fd3 100644
+--- a/src/beeline/src/java/org/apache/hive/beeline/Commands.java
++++ b/src/beeline/src/java/org/apache/hive/beeline/Commands.java
+@@ -674,7 +674,10 @@ private boolean execute(String line, boolean call) {
+ 
+     // use multiple lines for statements not terminated by ";"
+     try {
+-      while (!(line.trim().endsWith(";")) && beeLine.getOpts().isAllowMultiLineCommand()) {
++      //When using -e, console reader is not initialized and command is a single line
++      while (beeLine.getConsoleReader() != null && !(line.trim().endsWith(";"))
++        && beeLine.getOpts().isAllowMultiLineCommand()) {
++
+         StringBuilder prompt = new StringBuilder(beeLine.getPrompt());
+         for (int i = 0; i < prompt.length() - 1; i++) {
+           if (prompt.charAt(i) != '>') {
+@@ -691,6 +694,7 @@ private boolean execute(String line, boolean call) {
+       beeLine.handleException(e);
+     }
+ 
++
+     if (line.endsWith(";")) {
+       line = line.substring(0, line.length() - 1);
+     }
+-- 
+1.7.0.4
+

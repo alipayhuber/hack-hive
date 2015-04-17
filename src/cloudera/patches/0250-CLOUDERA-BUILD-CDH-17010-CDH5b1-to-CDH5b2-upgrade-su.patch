@@ -1,0 +1,96 @@
+From 7e49fa995acdb4ec9b62245887f30df3a7d1c272 Mon Sep 17 00:00:00 2001
+From: Prasad Mujumdar <prasadm@cloudera.com>
+Date: Mon, 27 Jan 2014 13:39:07 -0800
+Subject: [PATCH 250/375] CLOUDERA-BUILD CDH-17010: CDH5b1 to CDH5b2 upgrade support
+
+---
+ .../derby/upgrade-0.11.0-c5b1-to-0.12.0.derby.sql  |    2 ++
+ .../scripts/upgrade/derby/upgrade.order.derby      |    1 +
+ .../mysql/upgrade-0.11.0-c5b1-to-0.12.0.mysql.sql  |    3 +++
+ .../scripts/upgrade/mysql/upgrade.order.mysql      |    1 +
+ .../upgrade-0.11.0-c5b1-to-0.12.0.oracle.sql       |    4 ++++
+ .../scripts/upgrade/oracle/upgrade.order.oracle    |    1 +
+ .../upgrade-0.11.0-c5b1-to-0.12.0.postgres.sql     |    4 ++++
+ .../upgrade/postgres/upgrade.order.postgres        |    1 +
+ 8 files changed, 17 insertions(+), 0 deletions(-)
+ create mode 100644 metastore/scripts/upgrade/derby/upgrade-0.11.0-c5b1-to-0.12.0.derby.sql
+ create mode 100644 metastore/scripts/upgrade/mysql/upgrade-0.11.0-c5b1-to-0.12.0.mysql.sql
+ create mode 100644 metastore/scripts/upgrade/oracle/upgrade-0.11.0-c5b1-to-0.12.0.oracle.sql
+ create mode 100644 metastore/scripts/upgrade/postgres/upgrade-0.11.0-c5b1-to-0.12.0.postgres.sql
+
+diff --git a/src/metastore/scripts/upgrade/derby/upgrade-0.11.0-c5b1-to-0.12.0.derby.sql b/src/metastore/scripts/upgrade/derby/upgrade-0.11.0-c5b1-to-0.12.0.derby.sql
+new file mode 100644
+index 0000000..6d057c5
+--- /dev/null
++++ b/src/metastore/scripts/upgrade/derby/upgrade-0.11.0-c5b1-to-0.12.0.derby.sql
+@@ -0,0 +1,2 @@
++-- Upgrade MetaStore schema from 0.11.0-c5b1 to 0.12.0
++UPDATE "APP".VERSION SET SCHEMA_VERSION='0.12.0', VERSION_COMMENT='Hive release version 0.12.0' where VER_ID=1;
+diff --git a/src/metastore/scripts/upgrade/derby/upgrade.order.derby b/src/metastore/scripts/upgrade/derby/upgrade.order.derby
+index 59f02b9..69b9002 100644
+--- a/src/metastore/scripts/upgrade/derby/upgrade.order.derby
++++ b/src/metastore/scripts/upgrade/derby/upgrade.order.derby
+@@ -5,3 +5,4 @@
+ 0.9.0-to-0.10.0
+ 0.10.0-to-0.11.0
+ 0.11.0-to-0.12.0
++0.11.0-c5b1-to-0.12.0
+diff --git a/src/metastore/scripts/upgrade/mysql/upgrade-0.11.0-c5b1-to-0.12.0.mysql.sql b/src/metastore/scripts/upgrade/mysql/upgrade-0.11.0-c5b1-to-0.12.0.mysql.sql
+new file mode 100644
+index 0000000..6db7579
+--- /dev/null
++++ b/src/metastore/scripts/upgrade/mysql/upgrade-0.11.0-c5b1-to-0.12.0.mysql.sql
+@@ -0,0 +1,3 @@
++SELECT 'Upgrading MetaStore schema from 0.11-c5b1.0 to 0.12.0' AS ' ';
++UPDATE VERSION SET SCHEMA_VERSION='0.12.0', VERSION_COMMENT='Hive release version 0.12.0' where VER_ID=1;
++SELECT 'Finished upgrading MetaStore schema from 0.11.0-c5b1 to 0.12.0' AS ' ';
+diff --git a/src/metastore/scripts/upgrade/mysql/upgrade.order.mysql b/src/metastore/scripts/upgrade/mysql/upgrade.order.mysql
+index 59f02b9..69b9002 100644
+--- a/src/metastore/scripts/upgrade/mysql/upgrade.order.mysql
++++ b/src/metastore/scripts/upgrade/mysql/upgrade.order.mysql
+@@ -5,3 +5,4 @@
+ 0.9.0-to-0.10.0
+ 0.10.0-to-0.11.0
+ 0.11.0-to-0.12.0
++0.11.0-c5b1-to-0.12.0
+diff --git a/src/metastore/scripts/upgrade/oracle/upgrade-0.11.0-c5b1-to-0.12.0.oracle.sql b/src/metastore/scripts/upgrade/oracle/upgrade-0.11.0-c5b1-to-0.12.0.oracle.sql
+new file mode 100644
+index 0000000..98cfc64
+--- /dev/null
++++ b/src/metastore/scripts/upgrade/oracle/upgrade-0.11.0-c5b1-to-0.12.0.oracle.sql
+@@ -0,0 +1,4 @@
++SELECT 'Upgrading MetaStore schema from 0.11.0 to 0.1-c5b11.0-c5b1' AS Status from dual;
++UPDATE VERSION SET SCHEMA_VERSION='0.12.0', VERSION_COMMENT='Hive release version 0.12.0' where VER_ID=1;
++SELECT 'Finished upgrading MetaStore schema from 0.11.0-c5b1 to 0.12.0' AS Status from dual;
++
+diff --git a/src/metastore/scripts/upgrade/oracle/upgrade.order.oracle b/src/metastore/scripts/upgrade/oracle/upgrade.order.oracle
+index bcba11f..89a153f 100644
+--- a/src/metastore/scripts/upgrade/oracle/upgrade.order.oracle
++++ b/src/metastore/scripts/upgrade/oracle/upgrade.order.oracle
+@@ -1,3 +1,4 @@
+ 0.9.0-to-0.10.0
+ 0.10.0-to-0.11.0
+ 0.11.0-to-0.12.0
++0.11.0-c5b1-to-0.12.0
+diff --git a/src/metastore/scripts/upgrade/postgres/upgrade-0.11.0-c5b1-to-0.12.0.postgres.sql b/src/metastore/scripts/upgrade/postgres/upgrade-0.11.0-c5b1-to-0.12.0.postgres.sql
+new file mode 100644
+index 0000000..4711bc9
+--- /dev/null
++++ b/src/metastore/scripts/upgrade/postgres/upgrade-0.11.0-c5b1-to-0.12.0.postgres.sql
+@@ -0,0 +1,4 @@
++SELECT 'Upgrading MetaStore schema from 0.11.0-c5b1 to 0.12.0';
++UPDATE "VERSION" SET "SCHEMA_VERSION"='0.12.0', "VERSION_COMMENT"='Hive release version 0.12.0' where "VER_ID"=1;
++SELECT 'Finished upgrading MetaStore schema from 0.11.0-c5b1 to 0.12.0';
++
+diff --git a/src/metastore/scripts/upgrade/postgres/upgrade.order.postgres b/src/metastore/scripts/upgrade/postgres/upgrade.order.postgres
+index 59f02b9..69b9002 100644
+--- a/src/metastore/scripts/upgrade/postgres/upgrade.order.postgres
++++ b/src/metastore/scripts/upgrade/postgres/upgrade.order.postgres
+@@ -5,3 +5,4 @@
+ 0.9.0-to-0.10.0
+ 0.10.0-to-0.11.0
+ 0.11.0-to-0.12.0
++0.11.0-c5b1-to-0.12.0
+-- 
+1.7.0.4
+

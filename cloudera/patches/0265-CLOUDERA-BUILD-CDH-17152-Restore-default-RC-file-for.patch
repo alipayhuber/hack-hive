@@ -1,0 +1,39 @@
+From 1304088fbd3f5c8f92b64c5db4d37b85ebf26ce6 Mon Sep 17 00:00:00 2001
+From: Prasad Mujumdar <prasadm@cloudera.com>
+Date: Fri, 31 Jan 2014 12:55:58 -0800
+Subject: [PATCH 265/375] CLOUDERA-BUILD: CDH-17152: Restore default RC file format serde to ColumnarSerde
+
+---
+ .../java/org/apache/hadoop/hive/conf/HiveConf.java |    2 +-
+ conf/hive-default.xml.template                     |    2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/src/common/src/java/org/apache/hadoop/hive/conf/HiveConf.java b/src/common/src/java/org/apache/hadoop/hive/conf/HiveConf.java
+index 1a37ad5..00b98ec 100644
+--- a/src/common/src/java/org/apache/hadoop/hive/conf/HiveConf.java
++++ b/src/common/src/java/org/apache/hadoop/hive/conf/HiveConf.java
+@@ -447,7 +447,7 @@
+ 
+     // default serde for rcfile
+     HIVEDEFAULTRCFILESERDE("hive.default.rcfile.serde",
+-                           "org.apache.hadoop.hive.serde2.columnar.LazyBinaryColumnarSerDe"),
++                           "org.apache.hadoop.hive.serde2.columnar.ColumnarSerDe"),
+ 
+     //Location of Hive run time structured log file
+     HIVEHISTORYFILELOC("hive.querylog.location", System.getProperty("java.io.tmpdir") + File.separator + System.getProperty("user.name")),
+diff --git a/src/conf/hive-default.xml.template b/src/conf/hive-default.xml.template
+index ed74444..b3bd352 100644
+--- a/src/conf/hive-default.xml.template
++++ b/src/conf/hive-default.xml.template
+@@ -375,7 +375,7 @@
+ 
+ <property>
+   <name>hive.default.rcfile.serde</name>
+-  <value>org.apache.hadoop.hive.serde2.columnar.LazyBinaryColumnarSerDe</value>
++  <value>org.apache.hadoop.hive.serde2.columnar.ColumnarSerDe</value>
+   <description>The default SerDe hive will use for the rcfile format</description>
+ </property>
+ 
+-- 
+1.7.0.4
+

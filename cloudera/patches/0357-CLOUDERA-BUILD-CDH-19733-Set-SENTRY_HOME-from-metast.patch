@@ -1,0 +1,38 @@
+From 74ec527ac63692a7e287de1a8e5c1e17890db401 Mon Sep 17 00:00:00 2001
+From: Prasad Mujumdar <prasadm@cloudera.com>
+Date: Wed, 11 Jun 2014 23:03:25 -0700
+Subject: [PATCH 357/375] CLOUDERA-BUILD: CDH-19733: Set SENTRY_HOME from metastore script
+
+---
+ bin/ext/metastore.sh |   15 +++++++++++++++
+ 1 files changed, 15 insertions(+), 0 deletions(-)
+
+diff --git a/src/bin/ext/metastore.sh b/src/bin/ext/metastore.sh
+index 22b2d5d..b294942 100644
+--- a/src/bin/ext/metastore.sh
++++ b/src/bin/ext/metastore.sh
+@@ -24,6 +24,21 @@ metastore() {
+   fi
+   JAR=${HIVE_LIB}/hive-service-*.jar
+ 
++  # Set SENTRY_HOME if possible and add Sentry jars to classpath
++  if [[ -z "$SENTRY_HOME" ]]
++  then
++    if [[ -d ${HIVE_HOME}/../sentry ]]
++    then
++      export SENTRY_HOME=`readlink -m ${HIVE_HOME}/../sentry`
++    fi
++  fi
++  if [[ -n "$SENTRY_HOME" ]]
++  then
++    for f in ${SENTRY_HOME}/lib/*.jar; do
++      export HADOOP_CLASSPATH=${HADOOP_CLASSPATH}:${f}
++    done
++  fi
++
+   # hadoop 20 or newer - skip the aux_jars option and hiveconf
+ 
+   export HADOOP_OPTS="$HIVE_METASTORE_HADOOP_OPTS $HADOOP_OPTS"
+-- 
+1.7.0.4
+

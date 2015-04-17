@@ -1,0 +1,180 @@
+From 8faaf9c8a10bf247d2051a299a71d8b6cf6d5721 Mon Sep 17 00:00:00 2001
+From: Szehon Ho <szehon@cloudera.com>
+Date: Mon, 27 Jan 2014 15:54:36 -0800
+Subject: [PATCH 281/375] FIXUP: CDH-16381: HIVE-5783: Native Parquet Support in Hive (Justin via Xuefu)
+
+This includes CDH-only fixes of the JIRA (build and other differences with upstream)
+
+Conflicts:
+	ql/src/java/org/apache/hadoop/hive/ql/io/parquet/MapredParquetOutputFormat.java
+	ql/src/java/org/apache/hadoop/hive/ql/io/parquet/write/ParquetRecordWriterWrapper.java
+---
+ pom.xml                                            |    6 ++++
+ ql/pom.xml                                         |    5 ++-
+ .../ql/io/parquet/MapredParquetOutputFormat.java   |    7 ++--
+ .../parquet/write/ParquetRecordWriterWrapper.java  |   30 +++++--------------
+ 4 files changed, 20 insertions(+), 28 deletions(-)
+
+diff --git a/src/pom.xml b/src/pom.xml
+index 155aac4..76f886f 100644
+--- a/src/pom.xml
++++ b/src/pom.xml
+@@ -133,6 +133,7 @@
+         requires netty < 3.6.0 we force hadoops version
+       -->
+     <netty.version>3.4.0.Final</netty.version>
++    <parquet.version>${cdh.parquet.version}</parquet.version>
+     <pig.version>${cdh.pig.version}</pig.version>
+     <protobuf.version>${cdh.protobuf.version}</protobuf.version>
+     <rat.version>0.8</rat.version>
+@@ -935,6 +936,11 @@
+         <dependencies>
+           <dependency>
+             <groupId>org.apache.hadoop</groupId>
++            <artifactId>hadoop-client</artifactId>
++            <version>${hadoop-23.version}</version>
++          </dependency>
++          <dependency>
++            <groupId>org.apache.hadoop</groupId>
+             <artifactId>hadoop-common</artifactId>
+             <version>${hadoop-23.version}</version>
+           </dependency>
+diff --git a/src/ql/pom.xml b/src/ql/pom.xml
+index ba6a877..5fe44f9 100644
+--- a/src/ql/pom.xml
++++ b/src/ql/pom.xml
+@@ -69,6 +69,7 @@
+     <dependency>
+       <groupId>com.twitter</groupId>
+       <artifactId>parquet-hadoop-bundle</artifactId>
++      <version>${parquet.version}</version>
+     </dependency>
+     <dependency>
+       <groupId>commons-codec</groupId>
+@@ -205,7 +206,8 @@
+     <dependency>
+       <groupId>com.twitter</groupId>
+       <artifactId>parquet-column</artifactId>
+-      <classifier>tests</classifier>
++      <version>${parquet.version}</version>
++      <type>test-jar</type>
+       <scope>test</scope>
+     </dependency>
+     <dependency>
+@@ -353,7 +355,6 @@
+                   <include>org.apache.hive:hive-exec</include>
+                   <include>org.apache.hive:hive-serde</include>
+                   <include>com.esotericsoftware.kryo:kryo</include>
+-                  <include>com.twiter:parquet-hadoop-bundle</include>
+                   <include>org.apache.thrift:libthrift</include>
+                   <include>commons-lang:commons-lang</include>
+                   <include>org.json:json</include>
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/io/parquet/MapredParquetOutputFormat.java b/src/ql/src/java/org/apache/hadoop/hive/ql/io/parquet/MapredParquetOutputFormat.java
+index b87c673..0b8cbb5 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/io/parquet/MapredParquetOutputFormat.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/io/parquet/MapredParquetOutputFormat.java
+@@ -23,7 +23,7 @@
+ import org.apache.commons.logging.LogFactory;
+ import org.apache.hadoop.fs.FileSystem;
+ import org.apache.hadoop.fs.Path;
+-import org.apache.hadoop.hive.ql.io.FSRecordWriter;
++import org.apache.hadoop.hive.ql.exec.FileSinkOperator.RecordWriter;
+ import org.apache.hadoop.hive.ql.io.HiveOutputFormat;
+ import org.apache.hadoop.hive.ql.io.IOConstants;
+ import org.apache.hadoop.hive.ql.io.parquet.convert.HiveSchemaConverter;
+@@ -36,7 +36,6 @@
+ import org.apache.hadoop.io.Writable;
+ import org.apache.hadoop.mapred.FileOutputFormat;
+ import org.apache.hadoop.mapred.JobConf;
+-import org.apache.hadoop.mapred.RecordWriter;
+ import org.apache.hadoop.mapreduce.OutputFormat;
+ import org.apache.hadoop.util.Progressable;
+ 
+@@ -68,7 +67,7 @@ public void checkOutputSpecs(final FileSystem ignored, final JobConf job) throws
+   }
+ 
+   @Override
+-  public RecordWriter<Void, ArrayWritable> getRecordWriter(
++  public org.apache.hadoop.mapred.RecordWriter getRecordWriter(
+       final FileSystem ignored,
+       final JobConf job,
+       final String name,
+@@ -83,7 +82,7 @@ public void checkOutputSpecs(final FileSystem ignored, final JobConf job) throws
+    * contains the real output format
+    */
+   @Override
+-  public FSRecordWriter getHiveRecordWriter(
++  public RecordWriter getHiveRecordWriter(
+       final JobConf jobConf,
+       final Path finalOutPath,
+       final Class<? extends Writable> valueClass,
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/io/parquet/write/ParquetRecordWriterWrapper.java b/src/ql/src/java/org/apache/hadoop/hive/ql/io/parquet/write/ParquetRecordWriterWrapper.java
+index cd603c2..d92aa7a 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/io/parquet/write/ParquetRecordWriterWrapper.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/io/parquet/write/ParquetRecordWriterWrapper.java
+@@ -18,22 +18,19 @@
+ import org.apache.commons.logging.Log;
+ import org.apache.commons.logging.LogFactory;
+ import org.apache.hadoop.fs.Path;
++import org.apache.hadoop.hive.ql.exec.FileSinkOperator.RecordWriter;
+ import org.apache.hadoop.io.ArrayWritable;
+ import org.apache.hadoop.io.Writable;
+ import org.apache.hadoop.mapred.JobConf;
+-import org.apache.hadoop.mapred.RecordWriter;
+-import org.apache.hadoop.mapred.Reporter;
+ import org.apache.hadoop.mapreduce.OutputFormat;
+ import org.apache.hadoop.mapreduce.TaskAttemptContext;
+ import org.apache.hadoop.mapreduce.TaskAttemptID;
+ import org.apache.hadoop.util.Progressable;
+-import org.apache.hadoop.hive.ql.io.FSRecordWriter;
+ 
+ import parquet.hadoop.ParquetOutputFormat;
+ import parquet.hadoop.util.ContextUtil;
+ 
+-public class ParquetRecordWriterWrapper implements RecordWriter<Void, ArrayWritable>,
+-  FSRecordWriter {
++public class ParquetRecordWriterWrapper implements RecordWriter {
+ 
+   public static final Log LOG = LogFactory.getLog(ParquetRecordWriterWrapper.class);
+ 
+@@ -63,31 +60,20 @@ public ParquetRecordWriterWrapper(
+   }
+ 
+   @Override
+-  public void close(final Reporter reporter) throws IOException {
++  public void close(final boolean abort) throws IOException {
+     try {
+-      realWriter.close(taskContext);
+-    } catch (final InterruptedException e) {
++      realWriter.close(null);
++    } catch (InterruptedException e) {
+       throw new IOException(e);
+     }
+   }
+ 
+   @Override
+-  public void write(final Void key, final ArrayWritable value) throws IOException {
++  public void write(final Writable w) throws IOException {
+     try {
+-      realWriter.write(key, value);
+-    } catch (final InterruptedException e) {
++      realWriter.write(null, (ArrayWritable) w);
++    } catch (InterruptedException e) {
+       throw new IOException(e);
+     }
+   }
+-
+-  @Override
+-  public void close(final boolean abort) throws IOException {
+-    close(null);
+-  }
+-
+-  @Override
+-  public void write(final Writable w) throws IOException {
+-    write(null, (ArrayWritable) w);
+-  }
+-
+ }
+-- 
+1.7.0.4
+

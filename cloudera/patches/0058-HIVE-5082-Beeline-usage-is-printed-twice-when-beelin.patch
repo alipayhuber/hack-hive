@@ -1,0 +1,26 @@
+From dae55b62f189b28b5e9ba87f2462c2e04cf606fc Mon Sep 17 00:00:00 2001
+From: Ashutosh Chauhan <hashutosh@apache.org>
+Date: Thu, 26 Sep 2013 17:01:41 +0000
+Subject: [PATCH 058/375] HIVE-5082 : Beeline usage is printed twice when beeline --help is executed (Xuefu Zhang via Ashutosh Chauhan)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1526604 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../src/java/org/apache/hive/beeline/BeeLine.java  |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+
+diff --git a/src/beeline/src/java/org/apache/hive/beeline/BeeLine.java b/src/beeline/src/java/org/apache/hive/beeline/BeeLine.java
+index df05fd2..da9977e 100644
+--- a/src/beeline/src/java/org/apache/hive/beeline/BeeLine.java
++++ b/src/beeline/src/java/org/apache/hive/beeline/BeeLine.java
+@@ -502,7 +502,7 @@ boolean initArgs(String[] args) {
+ 
+     for (int i = 0; i < args.length; i++) {
+       if (args[i].equals("--help") || args[i].equals("-h")) {
+-        usage();
++        // Return false here, so usage will be printed.
+         return false;
+       }
+ 
+-- 
+1.7.0.4
+

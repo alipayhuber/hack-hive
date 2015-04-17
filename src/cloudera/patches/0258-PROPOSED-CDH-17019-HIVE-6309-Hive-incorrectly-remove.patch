@@ -1,0 +1,38 @@
+From d93963fc115ed092b42f432721f3b64c9729633a Mon Sep 17 00:00:00 2001
+From: Prasad Mujumdar <prasadm@cloudera.com>
+Date: Wed, 29 Jan 2014 21:54:27 -0800
+Subject: [PATCH 258/375] PROPOSED CDH-17019: HIVE-6309: Hive incorrectly removes TaskAttempt output files if MRAppMaster fails once
+
+---
+ .../org/apache/hadoop/hive/ql/exec/Utilities.java  |    8 ++++----
+ 1 files changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/Utilities.java b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/Utilities.java
+index 164076f..9791f4b 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/Utilities.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/Utilities.java
+@@ -1446,17 +1446,17 @@ public static void renameOrMoveFiles(FileSystem fs, Path src, Path dst) throws I
+   /**
+    * The first group will contain the task id. The second group is the optional extension. The file
+    * name looks like: "0_0" or "0_0.gz". There may be a leading prefix (tmp_). Since getTaskId() can
+-   * return an integer only - this should match a pure integer as well. {1,3} is used to limit
+-   * matching for attempts #'s 0-999.
++   * return an integer only - this should match a pure integer as well. {1,6} is used to limit
++   * matching for attempts #'s 0-999999.
+    */
+   private static final Pattern FILE_NAME_TO_TASK_ID_REGEX =
+-      Pattern.compile("^.*?([0-9]+)(_[0-9]{1,3})?(\\..*)?$");
++      Pattern.compile("^.*?([0-9]+)(_[0-9]{1,6})?(\\..*)?$");
+ 
+   /**
+    * This retruns prefix part + taskID for bucket join for partitioned table
+    */
+   private static final Pattern FILE_NAME_PREFIXED_TASK_ID_REGEX =
+-      Pattern.compile("^.*?((\\(.*\\))?[0-9]+)(_[0-9]{1,3})?(\\..*)?$");
++      Pattern.compile("^.*?((\\(.*\\))?[0-9]+)(_[0-9]{1,6})?(\\..*)?$");
+ 
+   /**
+    * This breaks a prefixed bucket number into the prefix and the taskID
+-- 
+1.7.0.4
+

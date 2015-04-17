@@ -1,0 +1,135 @@
+From b81f478f5b765556dd132606a04a8929306a8edb Mon Sep 17 00:00:00 2001
+From: Prasad Mujumdar <prasadm@cloudera.com>
+Date: Fri, 21 Jun 2013 11:27:06 -0700
+Subject: [PATCH 117/375] HIVE-4973. Compiler should captures UDF as part of read entities
+
+---
+ .../org/apache/hadoop/hive/ql/hooks/Entity.java    |   27 +++++++++++++++++---
+ .../apache/hadoop/hive/ql/hooks/ReadEntity.java    |    4 +++
+ .../hadoop/hive/ql/parse/SemanticAnalyzer.java     |    6 ++++
+ 3 files changed, 33 insertions(+), 4 deletions(-)
+
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/hooks/Entity.java b/src/ql/src/java/org/apache/hadoop/hive/ql/hooks/Entity.java
+index d1e25d7..47aed70 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/hooks/Entity.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/hooks/Entity.java
+@@ -22,11 +22,10 @@
+ import java.net.URI;
+ import java.util.Map;
+ 
+-import org.apache.hadoop.hive.ql.metadata.Partition;
++import org.apache.hadoop.hive.ql.exec.FunctionInfo;
+ import org.apache.hadoop.hive.ql.metadata.DummyPartition;
++import org.apache.hadoop.hive.ql.metadata.Partition;
+ import org.apache.hadoop.hive.ql.metadata.Table;
+-import org.apache.hadoop.hive.ql.session.SessionState;
+-import org.apache.hadoop.hive.conf.HiveConf;
+ 
+ /**
+  * This class encapsulates an object that is being read or written to by the
+@@ -40,7 +39,7 @@
+    * The type of the entity.
+    */
+   public static enum Type {
+-    TABLE, PARTITION, DUMMYPARTITION, DFS_DIR, LOCAL_DIR
++    TABLE, PARTITION, DUMMYPARTITION, DFS_DIR, LOCAL_DIR, UDF
+   };
+ 
+   /**
+@@ -64,6 +63,10 @@
+   private String d;
+ 
+   /**
++   * If this is a function
++   */
++  private FunctionInfo udf;
++  /**
+    * This is derived from t and p, but we need to serialize this field to make
+    * sure Entity.hashCode() does not need to recursively read into t and p.
+    */
+@@ -201,6 +204,13 @@ public Entity(String d, boolean islocal, boolean complete) {
+     this.complete = complete;
+   }
+ 
++  public Entity (FunctionInfo udf) {
++    this.udf = udf;
++    typ = Type.UDF;
++    name = computeName();
++    complete = true;
++  }
++
+   /**
+    * Get the parameter map of the Entity.
+    */
+@@ -253,6 +263,13 @@ public Table getTable() {
+   }
+ 
+   /**
++   * Get the UDF associated with the entity.
++   */
++  public FunctionInfo getUDF() {
++    return udf;
++  }
++
++  /**
+    * toString function.
+    */
+   @Override
+@@ -268,6 +285,8 @@ private String computeName() {
+       return t.getDbName() + "@" + t.getTableName() + "@" + p.getName();
+     case DUMMYPARTITION:
+       return p.getName();
++    case UDF:
++      return udf.getDisplayName();
+     default:
+       return d;
+     }
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/hooks/ReadEntity.java b/src/ql/src/java/org/apache/hadoop/hive/ql/hooks/ReadEntity.java
+index 3e2a954..d7a5000 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/hooks/ReadEntity.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/hooks/ReadEntity.java
+@@ -22,6 +22,7 @@
+ import java.util.HashSet;
+ import java.util.Set;
+ 
++import org.apache.hadoop.hive.ql.exec.FunctionInfo;
+ import org.apache.hadoop.hive.ql.metadata.Partition;
+ import org.apache.hadoop.hive.ql.metadata.Table;
+ 
+@@ -102,6 +103,9 @@ public ReadEntity (String path) {
+     super(path, false);
+   }
+ 
++  public ReadEntity (FunctionInfo udf) {
++    super(udf);
++  }
+   /**
+    * Equals function.
+    */
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/SemanticAnalyzer.java b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/SemanticAnalyzer.java
+index 720cd33..91482d7 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/SemanticAnalyzer.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/SemanticAnalyzer.java
+@@ -435,6 +435,9 @@ private void doPhase1GetAllAggregations(ASTNode expressionTree,
+         if(FunctionRegistry.impliesOrder(functionName)) {
+           throw new SemanticException(ErrorMsg.MISSING_OVER_CLAUSE.getMsg(functionName));
+         }
++        if (conf.getBoolVar(ConfVars.HIVE_EXTENDED_ENITITY_CAPTURE)) {
++          getInputs().add(new ReadEntity(FunctionRegistry.getFunctionInfo(functionName)));
++        }
+         if (FunctionRegistry.getGenericUDAFResolver(functionName) != null) {
+           if(containsLeadLagUDF(expressionTree)) {
+             throw new SemanticException(ErrorMsg.MISSING_OVER_CLAUSE.getMsg(functionName));
+@@ -2490,6 +2493,9 @@ private static boolean isRegex(String pattern) {
+       FunctionInfo fi = FunctionRegistry.getFunctionInfo(funcName);
+       if (fi != null) {
+         genericUDTF = fi.getGenericUDTF();
++        if (conf.getBoolVar(ConfVars.HIVE_EXTENDED_ENITITY_CAPTURE)) {
++          getInputs().add(new ReadEntity(fi));
++        }
+       }
+       isUDTF = (genericUDTF != null);
+       if (isUDTF) {
+-- 
+1.7.0.4
+

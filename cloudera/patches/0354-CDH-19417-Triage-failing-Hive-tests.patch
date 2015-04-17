@@ -1,0 +1,53 @@
+From 98dcfe19766598d0179d6cdeaac4841cdb412e55 Mon Sep 17 00:00:00 2001
+From: xzhang <xzhang@xzdt.(none)>
+Date: Tue, 10 Jun 2014 10:41:58 -0700
+Subject: [PATCH 354/375] CDH-19417: Triage failing Hive tests
+
+---
+ ql/src/test/queries/clientpositive/loadpart2.q     |    4 ++--
+ ql/src/test/results/clientpositive/loadpart2.q.out |    8 ++++----
+ 2 files changed, 6 insertions(+), 6 deletions(-)
+
+diff --git a/src/ql/src/test/queries/clientpositive/loadpart2.q b/src/ql/src/test/queries/clientpositive/loadpart2.q
+index c69d33e..a252eaa 100644
+--- a/src/ql/src/test/queries/clientpositive/loadpart2.q
++++ b/src/ql/src/test/queries/clientpositive/loadpart2.q
+@@ -1,7 +1,7 @@
+ 
+ create table hive_test ( col1 string ) partitioned by ( pcol1 string , pcol2 string) stored as textfile;
+-load data local inpath '../data/files/test.dat' overwrite into table hive_test partition (pcol1='part1',pcol2='part1') ;
+-load data local inpath '../data/files/test.dat' overwrite into table hive_test partition (pcol2='part2',pcol1='part2') ;
++load data local inpath '../../data/files/test.dat' overwrite into table hive_test partition (pcol1='part1',pcol2='part1') ;
++load data local inpath '../../data/files/test.dat' overwrite into table hive_test partition (pcol2='part2',pcol1='part2') ;
+ select * from hive_test where pcol1='part1' and pcol2='part1';
+ select * from hive_test where pcol1='part2' and pcol2='part2';
+ 
+diff --git a/src/ql/src/test/results/clientpositive/loadpart2.q.out b/src/ql/src/test/results/clientpositive/loadpart2.q.out
+index c11d252..ba89d5b 100644
+--- a/src/ql/src/test/results/clientpositive/loadpart2.q.out
++++ b/src/ql/src/test/results/clientpositive/loadpart2.q.out
+@@ -3,17 +3,17 @@ PREHOOK: type: CREATETABLE
+ POSTHOOK: query: create table hive_test ( col1 string ) partitioned by ( pcol1 string , pcol2 string) stored as textfile
+ POSTHOOK: type: CREATETABLE
+ POSTHOOK: Output: default@hive_test
+-PREHOOK: query: load data local inpath '../data/files/test.dat' overwrite into table hive_test partition (pcol1='part1',pcol2='part1')
++PREHOOK: query: load data local inpath '../../data/files/test.dat' overwrite into table hive_test partition (pcol1='part1',pcol2='part1')
+ PREHOOK: type: LOAD
+ PREHOOK: Output: default@hive_test
+-POSTHOOK: query: load data local inpath '../data/files/test.dat' overwrite into table hive_test partition (pcol1='part1',pcol2='part1')
++POSTHOOK: query: load data local inpath '../../data/files/test.dat' overwrite into table hive_test partition (pcol1='part1',pcol2='part1')
+ POSTHOOK: type: LOAD
+ POSTHOOK: Output: default@hive_test
+ POSTHOOK: Output: default@hive_test@pcol1=part1/pcol2=part1
+-PREHOOK: query: load data local inpath '../data/files/test.dat' overwrite into table hive_test partition (pcol2='part2',pcol1='part2')
++PREHOOK: query: load data local inpath '../../data/files/test.dat' overwrite into table hive_test partition (pcol2='part2',pcol1='part2')
+ PREHOOK: type: LOAD
+ PREHOOK: Output: default@hive_test
+-POSTHOOK: query: load data local inpath '../data/files/test.dat' overwrite into table hive_test partition (pcol2='part2',pcol1='part2')
++POSTHOOK: query: load data local inpath '../../data/files/test.dat' overwrite into table hive_test partition (pcol2='part2',pcol1='part2')
+ POSTHOOK: type: LOAD
+ POSTHOOK: Output: default@hive_test
+ POSTHOOK: Output: default@hive_test@pcol1=part2/pcol2=part2
+-- 
+1.7.0.4
+

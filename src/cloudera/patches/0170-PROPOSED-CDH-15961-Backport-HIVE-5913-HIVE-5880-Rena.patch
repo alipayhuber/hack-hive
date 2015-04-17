@@ -1,0 +1,25 @@
+From 0da01745e15f7ac3e1aa6dac47547757385457c4 Mon Sep 17 00:00:00 2001
+From: Brock Noland <brock@cloudera.com>
+Date: Mon, 2 Dec 2013 13:45:05 -0600
+Subject: [PATCH 170/375] PROPOSED: CDH-15961 - Backport HIVE-5913 - HIVE-5880 - (Rename HCatalog HBase Storage Handler artifact id) breaks packaging
+
+---
+ packaging/src/main/assembly/bin.xml |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+
+diff --git a/src/packaging/src/main/assembly/bin.xml b/src/packaging/src/main/assembly/bin.xml
+index 6cf41d7..424d748 100644
+--- a/src/packaging/src/main/assembly/bin.xml
++++ b/src/packaging/src/main/assembly/bin.xml
+@@ -59,7 +59,7 @@
+       <useProjectArtifact>false</useProjectArtifact>
+       <useStrictFiltering>true</useStrictFiltering>
+       <includes>
+-        <include>org.apache.hive.hcatalog:hive-hbase-storage-handler</include>
++        <include>org.apache.hive.hcatalog:hive-hcatalog-hbase-storage-handler</include>
+       </includes>
+     </dependencySet>
+     <!-- TODO 0.12 release the webhcat server lib directory had all transitive jars
+-- 
+1.7.0.4
+

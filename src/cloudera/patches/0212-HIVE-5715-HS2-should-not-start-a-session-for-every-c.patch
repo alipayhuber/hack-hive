@@ -1,0 +1,87 @@
+From 87b1c9f7ff680aa6c1a62678d9a5bee4e5664045 Mon Sep 17 00:00:00 2001
+From: Thejas Madhavan Nair <thejas@apache.org>
+Date: Fri, 1 Nov 2013 20:30:29 +0000
+Subject: [PATCH 212/375] HIVE-5715 : HS2 should not "start" a session for every command (Gunther Hagleitner via Thejas Nair)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1538052 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../hadoop/hive/ql/session/SessionState.java       |    9 ++++++++-
+ .../hive/service/cli/operation/SQLOperation.java   |    2 +-
+ .../hive/service/cli/session/HiveSessionImpl.java  |    7 +++++--
+ 3 files changed, 14 insertions(+), 4 deletions(-)
+
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/session/SessionState.java b/src/ql/src/java/org/apache/hadoop/hive/ql/session/SessionState.java
+index f6b1491..b03f72a 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/session/SessionState.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/session/SessionState.java
+@@ -247,6 +247,13 @@ public static SessionState start(HiveConf conf) {
+   }
+ 
+   /**
++   * Sets the given session state in the thread local var for sessions.
++   */
++  public static void setCurrentSessionState(SessionState session) {
++    tss.set(session);
++  }
++
++  /**
+    * set current session to existing session object if a thread is running
+    * multiple sessions - it must call this method with the new session object
+    * when switching from one session to another.
+@@ -254,7 +261,7 @@ public static SessionState start(HiveConf conf) {
+    */
+   public static SessionState start(SessionState startSs) {
+ 
+-    tss.set(startSs);
++    setCurrentSessionState(startSs);
+ 
+     if(startSs.hiveHist == null){
+       if (startSs.getConf().getBoolVar(HiveConf.ConfVars.HIVE_SESSION_HISTORY_ENABLED)) {
+diff --git a/src/service/src/java/org/apache/hive/service/cli/operation/SQLOperation.java b/src/service/src/java/org/apache/hive/service/cli/operation/SQLOperation.java
+index 11d1f70..592fa41 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/operation/SQLOperation.java
++++ b/src/service/src/java/org/apache/hive/service/cli/operation/SQLOperation.java
+@@ -168,7 +168,7 @@ public void run() throws HiveSQLException {
+         SessionState ss = SessionState.get();
+         @Override
+         public void run() {
+-          SessionState.start(ss);
++          SessionState.setCurrentSessionState(ss);
+           try {
+             runInternal(getConfigForOperation());
+           } catch (HiveSQLException e) {
+diff --git a/src/service/src/java/org/apache/hive/service/cli/session/HiveSessionImpl.java b/src/service/src/java/org/apache/hive/service/cli/session/HiveSessionImpl.java
+index 129b550..66439b2 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/session/HiveSessionImpl.java
++++ b/src/service/src/java/org/apache/hive/service/cli/session/HiveSessionImpl.java
+@@ -95,6 +95,7 @@ public HiveSessionImpl(String username, String password, Map<String, String> ses
+     hiveConf.set(ConfVars.HIVESESSIONID.varname,
+         sessionHandle.getHandleIdentifier().toString());
+     sessionState = new SessionState(hiveConf);
++    SessionState.start(sessionState);
+   }
+ 
+   public SessionManager getSessionManager() {
+@@ -114,7 +115,9 @@ public void setOperationManager(OperationManager operationManager) {
+   }
+ 
+   protected synchronized void acquire() throws HiveSQLException {
+-    SessionState.start(sessionState);
++    // need to make sure that the this connections session state is
++    // stored in the thread local for sessions.
++    SessionState.setCurrentSessionState(sessionState);
+   }
+ 
+   protected synchronized void release() {
+@@ -330,7 +333,7 @@ public OperationHandle getColumns(String catalogName, String schemaName,
+       opHandleSet.add(opHandle);
+       return opHandle;
+     } catch (HiveSQLException e) {
+-      operationManager.closeOperation(opHandle); 
++      operationManager.closeOperation(opHandle);
+       throw e;
+     } finally {
+       release();
+-- 
+1.7.0.4
+

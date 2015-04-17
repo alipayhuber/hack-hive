@@ -1,0 +1,27 @@
+From c4bf9a7d83a57f984386ef392a7f499dc64dd451 Mon Sep 17 00:00:00 2001
+From: Ashutosh Chauhan <hashutosh@apache.org>
+Date: Fri, 16 Aug 2013 03:45:21 +0000
+Subject: [PATCH 001/375] HIVE-4583 : HCatalog test TestPigHCatUtil might fail on JDK7 (Jarek Jarcec Cecho via Ashutosh Chauhan)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1514567 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../org/apache/hcatalog/pig/TestPigHCatUtil.java   |    4 ++++
+ 1 files changed, 4 insertions(+), 0 deletions(-)
+
+diff --git a/src/hcatalog/hcatalog-pig-adapter/src/test/java/org/apache/hcatalog/pig/TestPigHCatUtil.java b/src/hcatalog/hcatalog-pig-adapter/src/test/java/org/apache/hcatalog/pig/TestPigHCatUtil.java
+index 971296a..86c6275 100644
+--- a/src/hcatalog/hcatalog-pig-adapter/src/test/java/org/apache/hcatalog/pig/TestPigHCatUtil.java
++++ b/src/hcatalog/hcatalog-pig-adapter/src/test/java/org/apache/hcatalog/pig/TestPigHCatUtil.java
+@@ -90,5 +90,9 @@ public void testGetBagSubSchemaConfigured() throws Exception {
+     ResourceSchema actual = PigHCatUtil.getBagSubSchema(actualHCatFieldSchema);
+ 
+     Assert.assertEquals(expected.toString(), actual.toString());
++
++    // Clean up System properties that were set by this test
++    System.clearProperty(HCatConstants.HCAT_PIG_INNER_TUPLE_NAME);
++    System.clearProperty(HCatConstants.HCAT_PIG_INNER_FIELD_NAME);
+   }
+ }
+-- 
+1.7.0.4
+

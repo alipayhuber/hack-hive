@@ -1,0 +1,204 @@
+From 9996dde7bf12572a84df39d618286c5b8296b7db Mon Sep 17 00:00:00 2001
+From: Brock Noland <brock@apache.org>
+Date: Mon, 21 Oct 2013 15:48:08 +0000
+Subject: [PATCH 023/375] HIVE-5070 - Implement listLocatedStatus() in ProxyFileSystem for 0.23 shim (shanyu zhao via Brock Noland)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1534240 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../apache/hadoop/hive/shims/Hadoop20Shims.java    |    5 ++
+ .../apache/hadoop/hive/shims/Hadoop20SShims.java   |    7 +++
+ .../apache/hadoop/hive/shims/Hadoop23Shims.java    |   42 ++++++++++++++++++++
+ .../hadoop/hive/shims/HadoopShimsSecure.java       |    3 +
+ .../java/org/apache/hadoop/fs/ProxyFileSystem.java |    4 +-
+ .../org/apache/hadoop/fs/ProxyLocalFileSystem.java |    6 ++-
+ .../org/apache/hadoop/hive/shims/HadoopShims.java  |    6 +++
+ 7 files changed, 70 insertions(+), 3 deletions(-)
+
+diff --git a/src/shims/src/0.20/java/org/apache/hadoop/hive/shims/Hadoop20Shims.java b/src/shims/src/0.20/java/org/apache/hadoop/hive/shims/Hadoop20Shims.java
+index efc3211..a8a6e73 100644
+--- a/src/shims/src/0.20/java/org/apache/hadoop/hive/shims/Hadoop20Shims.java
++++ b/src/shims/src/0.20/java/org/apache/hadoop/hive/shims/Hadoop20Shims.java
+@@ -41,6 +41,7 @@
+ import org.apache.hadoop.fs.FileSystem;
+ import org.apache.hadoop.fs.Path;
+ import org.apache.hadoop.fs.PathFilter;
++import org.apache.hadoop.fs.ProxyFileSystem;
+ import org.apache.hadoop.fs.Trash;
+ import org.apache.hadoop.hdfs.MiniDFSCluster;
+ import org.apache.hadoop.hive.io.HiveIOExceptionHandlerUtil;
+@@ -749,4 +750,8 @@ public HCatHadoopShims getHCatShim() {
+   public WebHCatJTShim getWebHCatShim(Configuration conf, UserGroupInformation ugi) throws IOException {
+       throw new UnsupportedOperationException("WebHCat does not support Hadoop 0.20.x");
+   }
++  @Override
++  public FileSystem createProxyFileSystem(FileSystem fs, URI uri) {
++    return new ProxyFileSystem(fs, uri);
++  }
+ }
+diff --git a/src/shims/src/0.20S/java/org/apache/hadoop/hive/shims/Hadoop20SShims.java b/src/shims/src/0.20S/java/org/apache/hadoop/hive/shims/Hadoop20SShims.java
+index 9acfae9..fe24d25 100644
+--- a/src/shims/src/0.20S/java/org/apache/hadoop/hive/shims/Hadoop20SShims.java
++++ b/src/shims/src/0.20S/java/org/apache/hadoop/hive/shims/Hadoop20SShims.java
+@@ -21,11 +21,13 @@
+ import java.net.InetSocketAddress;
+ import java.net.MalformedURLException;
+ import java.net.URL;
++import java.net.URI;
+ 
+ import org.apache.hadoop.conf.Configuration;
+ import org.apache.hadoop.filecache.DistributedCache;
+ import org.apache.hadoop.fs.FileSystem;
+ import org.apache.hadoop.fs.Path;
++import org.apache.hadoop.fs.ProxyFileSystem;
+ import org.apache.hadoop.fs.Trash;
+ import org.apache.hadoop.hdfs.MiniDFSCluster;
+ import org.apache.hadoop.mapred.JobTracker;
+@@ -335,4 +337,9 @@ public boolean isFileInHDFS(FileSystem fs, Path path) throws IOException {
+   public WebHCatJTShim getWebHCatShim(Configuration conf, UserGroupInformation ugi) throws IOException {
+     return new WebHCatJTShim20S(conf, ugi);//this has state, so can't be cached
+   }
++
++  @Override
++  public FileSystem createProxyFileSystem(FileSystem fs, URI uri) {
++    return new ProxyFileSystem(fs, uri);
++  }
+ }
+diff --git a/src/shims/src/0.23/java/org/apache/hadoop/hive/shims/Hadoop23Shims.java b/src/shims/src/0.23/java/org/apache/hadoop/hive/shims/Hadoop23Shims.java
+index c4d020f..e9519df 100644
+--- a/src/shims/src/0.23/java/org/apache/hadoop/hive/shims/Hadoop23Shims.java
++++ b/src/shims/src/0.23/java/org/apache/hadoop/hive/shims/Hadoop23Shims.java
+@@ -23,11 +23,16 @@
+ import java.net.MalformedURLException;
+ import java.net.URL;
+ import java.util.Map;
++import java.net.URI;
++import java.io.FileNotFoundException;
+ 
+ import org.apache.commons.lang.StringUtils;
+ import org.apache.hadoop.conf.Configuration;
+ import org.apache.hadoop.fs.FileSystem;
+ import org.apache.hadoop.fs.Path;
++import org.apache.hadoop.fs.ProxyFileSystem;
++import org.apache.hadoop.fs.LocatedFileStatus;
++import org.apache.hadoop.fs.RemoteIterator;
+ import org.apache.hadoop.fs.Trash;
+ import org.apache.hadoop.hdfs.MiniDFSCluster;
+ import org.apache.hadoop.mapred.MiniMRCluster;
+@@ -344,4 +349,41 @@ public boolean isFileInHDFS(FileSystem fs, Path path) throws IOException {
+   public WebHCatJTShim getWebHCatShim(Configuration conf, UserGroupInformation ugi) throws IOException {
+     return new WebHCatJTShim23(conf, ugi);//this has state, so can't be cached
+   }
++
++  class ProxyFileSystem23 extends ProxyFileSystem {
++    public ProxyFileSystem23(FileSystem fs) {
++      super(fs);
++    }
++    public ProxyFileSystem23(FileSystem fs, URI uri) {
++      super(fs, uri);
++    }
++
++    @Override
++    public RemoteIterator<LocatedFileStatus> listLocatedStatus(final Path f)
++      throws FileNotFoundException, IOException {
++      return new RemoteIterator<LocatedFileStatus>() {
++        private RemoteIterator<LocatedFileStatus> stats =
++            ProxyFileSystem23.super.listLocatedStatus(
++                ProxyFileSystem23.super.swizzleParamPath(f));
++
++        @Override
++        public boolean hasNext() throws IOException {
++          return stats.hasNext();
++        }
++
++        @Override
++        public LocatedFileStatus next() throws IOException {
++          LocatedFileStatus result = stats.next();
++          return new LocatedFileStatus(
++              ProxyFileSystem23.super.swizzleFileStatus(result, false),
++              result.getBlockLocations());
++        }
++      };
++    }
++  }
++
++  @Override
++  public FileSystem createProxyFileSystem(FileSystem fs, URI uri) {
++    return new ProxyFileSystem23(fs, uri);
++  }
+ }
+diff --git a/src/shims/src/common-secure/java/org/apache/hadoop/hive/shims/HadoopShimsSecure.java b/src/shims/src/common-secure/java/org/apache/hadoop/hive/shims/HadoopShimsSecure.java
+index 28843e0..fd274a6 100644
+--- a/src/shims/src/common-secure/java/org/apache/hadoop/hive/shims/HadoopShimsSecure.java
++++ b/src/shims/src/common-secure/java/org/apache/hadoop/hive/shims/HadoopShimsSecure.java
+@@ -622,4 +622,7 @@ public void reLoginUserFromKeytab() throws IOException{
+   @Override
+   abstract public boolean moveToAppropriateTrash(FileSystem fs, Path path, Configuration conf)
+           throws IOException;
++
++  @Override
++  abstract public FileSystem createProxyFileSystem(FileSystem fs, URI uri);
+ }
+diff --git a/src/shims/src/common/java/org/apache/hadoop/fs/ProxyFileSystem.java b/src/shims/src/common/java/org/apache/hadoop/fs/ProxyFileSystem.java
+index 28a18f6..cb1e2b7 100644
+--- a/src/shims/src/common/java/org/apache/hadoop/fs/ProxyFileSystem.java
++++ b/src/shims/src/common/java/org/apache/hadoop/fs/ProxyFileSystem.java
+@@ -45,7 +45,7 @@
+ 
+ 
+ 
+-  private Path swizzleParamPath(Path p) {
++  protected Path swizzleParamPath(Path p) {
+     String pathUriString = p.toUri().toString();
+     URI newPathUri = URI.create(pathUriString);
+     return new Path (realScheme, realAuthority, newPathUri.getPath());
+@@ -57,7 +57,7 @@ private Path swizzleReturnPath(Path p) {
+     return new Path (myScheme, myAuthority, newPathUri.getPath());
+   }
+ 
+-  private FileStatus swizzleFileStatus(FileStatus orig, boolean isParam) {
++  protected FileStatus swizzleFileStatus(FileStatus orig, boolean isParam) {
+     FileStatus ret =
+       new FileStatus(orig.getLen(), orig.isDir(), orig.getReplication(),
+                      orig.getBlockSize(), orig.getModificationTime(),
+diff --git a/src/shims/src/common/java/org/apache/hadoop/fs/ProxyLocalFileSystem.java b/src/shims/src/common/java/org/apache/hadoop/fs/ProxyLocalFileSystem.java
+index 9f35769..228a972 100644
+--- a/src/shims/src/common/java/org/apache/hadoop/fs/ProxyLocalFileSystem.java
++++ b/src/shims/src/common/java/org/apache/hadoop/fs/ProxyLocalFileSystem.java
+@@ -23,6 +23,8 @@
+ 
+ import org.apache.hadoop.conf.Configuration;
+ import org.apache.hadoop.util.Shell;
++import org.apache.hadoop.hive.shims.ShimLoader;
++import org.apache.hadoop.hive.shims.HadoopShims;
+ 
+ /****************************************************************
+  * A Proxy for LocalFileSystem
+@@ -61,7 +63,9 @@ public void initialize(URI name, Configuration conf) throws IOException {
+ 
+     String authority = name.getAuthority() != null ? name.getAuthority() : "";
+     String proxyUriString = nameUriString + "://" + authority + "/";
+-    fs = new ProxyFileSystem(localFs, URI.create(proxyUriString));
++
++    fs = ShimLoader.getHadoopShims().createProxyFileSystem(
++        localFs, URI.create(proxyUriString));
+ 
+     fs.initialize(name, conf);
+   }
+diff --git a/src/shims/src/common/java/org/apache/hadoop/hive/shims/HadoopShims.java b/src/shims/src/common/java/org/apache/hadoop/hive/shims/HadoopShims.java
+index a3d320b..e678534 100644
+--- a/src/shims/src/common/java/org/apache/hadoop/hive/shims/HadoopShims.java
++++ b/src/shims/src/common/java/org/apache/hadoop/hive/shims/HadoopShims.java
+@@ -538,4 +538,10 @@ RecordReader getRecordReader(JobConf job, InputSplitShim split, Reporter reporte
+      */
+     public void close();
+   }
++
++  /**
++   * Create a proxy file system that can serve a given scheme/authority using some
++   * other file system.
++   */
++  public FileSystem createProxyFileSystem(FileSystem fs, URI uri);
+ }
+-- 
+1.7.0.4
+

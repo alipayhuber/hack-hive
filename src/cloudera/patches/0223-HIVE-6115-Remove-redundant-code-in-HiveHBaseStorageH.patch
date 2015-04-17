@@ -1,0 +1,38 @@
+From 2baa3d22716915c6325d0ace96d299d9aba18b1e Mon Sep 17 00:00:00 2001
+From: Brock Noland <brock@apache.org>
+Date: Mon, 13 Jan 2014 14:39:21 +0000
+Subject: [PATCH 223/375] HIVE-6115 - Remove redundant code in HiveHBaseStorageHandler (Brock reviewed by Xuefu and Sushanth)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1557731 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../hadoop/hive/hbase/HBaseStorageHandler.java     |    6 +++---
+ 1 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/src/hbase-handler/src/java/org/apache/hadoop/hive/hbase/HBaseStorageHandler.java b/src/hbase-handler/src/java/org/apache/hadoop/hive/hbase/HBaseStorageHandler.java
+index 44fb54b..899ccce 100644
+--- a/src/hbase-handler/src/java/org/apache/hadoop/hive/hbase/HBaseStorageHandler.java
++++ b/src/hbase-handler/src/java/org/apache/hadoop/hive/hbase/HBaseStorageHandler.java
+@@ -333,8 +333,10 @@ public void configureTableJobProperties(
+     // do this for reconciling HBaseStorageHandler for use in HCatalog
+     // check to see if this an input job or an outputjob
+     if (this.configureInputJobProps) {
++      for (String k : jobProperties.keySet()) {
++        jobConf.set(k, jobProperties.get(k));
++      }
+       try {
+-        HBaseConfiguration.addHbaseResources(jobConf);
+         addHBaseDelegationToken(jobConf);
+       }//try
+       catch (IOException e) {
+@@ -342,8 +344,6 @@ public void configureTableJobProperties(
+       } //input job properties
+     }
+     else {
+-      Configuration copyOfConf = new Configuration(jobConf);
+-      HBaseConfiguration.addHbaseResources(copyOfConf);
+       jobProperties.put(TableOutputFormat.OUTPUT_TABLE, tableName);
+     } // output job properties
+   }
+-- 
+1.7.0.4
+

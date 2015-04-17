@@ -1,0 +1,29 @@
+From 5cb5bef471cd2159a508e0f9cd0c9649f6be40c3 Mon Sep 17 00:00:00 2001
+From: Harish Butani <rhbutani@apache.org>
+Date: Tue, 15 Apr 2014 20:44:20 +0000
+Subject: [PATCH 324/375] HIVE-6740 Typo in src/ql/pom.xml (Szehon Ho via Xuefu Zhang)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1587720 13f79535-47bb-0310-9956-ffa450edef68
+
+Conflicts:
+	ql/pom.xml
+---
+ ql/pom.xml |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+
+diff --git a/src/ql/pom.xml b/src/ql/pom.xml
+index 6fc7cef..530d621 100644
+--- a/src/ql/pom.xml
++++ b/src/ql/pom.xml
+@@ -359,7 +359,7 @@
+                   <include>org.apache.thrift:libthrift</include>
+                   <include>commons-lang:commons-lang</include>
+                   <include>org.json:json</include>
+-                  <include>org.apache.avro:arvro-mapred</include>
++                  <include>org.apache.avro:avro-mapred</include>
+                   <include>org.apache.hive.shims:hive-shims-0.23</include>
+                   <include>org.apache.hive.shims:hive-shims-common</include>
+                   <include>org.apache.hive.shims:hive-shims-common-secure</include>
+-- 
+1.7.0.4
+

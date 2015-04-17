@@ -1,0 +1,37 @@
+From b4858867bc049c5a615cbe9937651c2bbec3d805 Mon Sep 17 00:00:00 2001
+From: Brock Noland <brock@apache.org>
+Date: Mon, 21 Oct 2013 15:49:57 +0000
+Subject: [PATCH 022/375] HIVE-5578 - hcat script doesn't include jars from HIVE_AUX_JARS_PATH (Mohammad Kamrul Islam via Brock Noland)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1534242 13f79535-47bb-0310-9956-ffa450edef68
+---
+ hcatalog/bin/hcat |   13 +++++++++++++
+ 1 files changed, 13 insertions(+), 0 deletions(-)
+
+diff --git a/src/hcatalog/bin/hcat b/src/hcatalog/bin/hcat
+index 6fb1a59..b4d4226 100644
+--- a/src/hcatalog/bin/hcat
++++ b/src/hcatalog/bin/hcat
+@@ -129,6 +129,19 @@ for jar in ${HIVE_LIB_DIR}/*.jar ; do
+ 	HADOOP_CLASSPATH=$HADOOP_CLASSPATH:$jar
+ done
+ 
++# add the auxillary jars such as serdes
++if [ -d "${HIVE_AUX_JARS_PATH}" ]; then
++  for f in ${HIVE_AUX_JARS_PATH}/*.jar; do
++    if [[ ! -f $f ]]; then
++        continue;
++    fi
++    HADOOP_CLASSPATH=${HADOOP_CLASSPATH}:$f
++  done
++elif [ "${HIVE_AUX_JARS_PATH}" != "" ]; then 
++  HIVE_AUX_JARS_PATH=`echo $HIVE_AUX_JARS_PATH | sed 's/,/:/g'`
++  HADOOP_CLASSPATH=$HADOOP_CLASSPATH:$HIVE_AUX_JARS_PATH
++fi
++
+ # Put external jars, hcat jar, and config file in the classpath
+ HADOOP_CLASSPATH=${HADOOP_CLASSPATH}:${HCAT_CLASSPATH}:${HCAT_JAR}:${HIVE_CONF_DIR}
+ 
+-- 
+1.7.0.4
+

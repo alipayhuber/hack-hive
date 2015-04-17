@@ -1,0 +1,115 @@
+From 3427f664c5de811f2289712cf48826fc64b46ddd Mon Sep 17 00:00:00 2001
+From: Ashutosh Chauhan <hashutosh@apache.org>
+Date: Wed, 30 Oct 2013 17:50:52 +0000
+Subject: [PATCH 134/375] HIVE-5698 : A few test file missing apache license header (Xuefu Zhang via Ashutosh Chauhan)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1537206 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../hadoop/hive/ql/testutil/BaseScalarUdfTest.java |   18 ++++++++++++++++++
+ .../apache/hadoop/hive/ql/udf/TestUDFRound.java    |   20 +++++++++++++++++++-
+ .../hive/ql/udf/generic/TestGenericUDFConcat.java  |   20 +++++++++++++++++++-
+ 3 files changed, 56 insertions(+), 2 deletions(-)
+
+diff --git a/src/ql/src/test/org/apache/hadoop/hive/ql/testutil/BaseScalarUdfTest.java b/src/ql/src/test/org/apache/hadoop/hive/ql/testutil/BaseScalarUdfTest.java
+index 5524444..f7a45f7 100644
+--- a/src/ql/src/test/org/apache/hadoop/hive/ql/testutil/BaseScalarUdfTest.java
++++ b/src/ql/src/test/org/apache/hadoop/hive/ql/testutil/BaseScalarUdfTest.java
+@@ -1,3 +1,21 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
+ package org.apache.hadoop.hive.ql.testutil;
+ 
+ import java.util.List;
+diff --git a/src/ql/src/test/org/apache/hadoop/hive/ql/udf/TestUDFRound.java b/src/ql/src/test/org/apache/hadoop/hive/ql/udf/TestUDFRound.java
+index f3b463d..992853d 100644
+--- a/src/ql/src/test/org/apache/hadoop/hive/ql/udf/TestUDFRound.java
++++ b/src/ql/src/test/org/apache/hadoop/hive/ql/udf/TestUDFRound.java
+@@ -1,3 +1,21 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
+ package org.apache.hadoop.hive.ql.udf;
+ 
+ import java.util.ArrayList;
+@@ -6,9 +24,9 @@
+ import org.apache.hadoop.hive.ql.exec.UDFArgumentException;
+ import org.apache.hadoop.hive.ql.parse.TypeCheckProcFactory;
+ import org.apache.hadoop.hive.ql.plan.ExprNodeDesc;
++import org.apache.hadoop.hive.ql.testutil.BaseScalarUdfTest;
+ import org.apache.hadoop.hive.ql.testutil.DataBuilder;
+ import org.apache.hadoop.hive.ql.testutil.OperatorTestUtils;
+-import org.apache.hadoop.hive.ql.testutil.BaseScalarUdfTest;
+ import org.apache.hadoop.hive.serde2.io.DoubleWritable;
+ import org.apache.hadoop.hive.serde2.objectinspector.InspectableObject;
+ import org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorFactory;
+diff --git a/src/ql/src/test/org/apache/hadoop/hive/ql/udf/generic/TestGenericUDFConcat.java b/src/ql/src/test/org/apache/hadoop/hive/ql/udf/generic/TestGenericUDFConcat.java
+index 19ab37f..5f32d5c 100644
+--- a/src/ql/src/test/org/apache/hadoop/hive/ql/udf/generic/TestGenericUDFConcat.java
++++ b/src/ql/src/test/org/apache/hadoop/hive/ql/udf/generic/TestGenericUDFConcat.java
+@@ -1,3 +1,21 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
+ package org.apache.hadoop.hive.ql.udf.generic;
+ 
+ import java.util.ArrayList;
+@@ -6,9 +24,9 @@
+ import org.apache.hadoop.hive.ql.exec.UDFArgumentException;
+ import org.apache.hadoop.hive.ql.parse.TypeCheckProcFactory;
+ import org.apache.hadoop.hive.ql.plan.ExprNodeDesc;
++import org.apache.hadoop.hive.ql.testutil.BaseScalarUdfTest;
+ import org.apache.hadoop.hive.ql.testutil.DataBuilder;
+ import org.apache.hadoop.hive.ql.testutil.OperatorTestUtils;
+-import org.apache.hadoop.hive.ql.testutil.BaseScalarUdfTest;
+ import org.apache.hadoop.hive.serde2.objectinspector.InspectableObject;
+ import org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorFactory;
+ 
+-- 
+1.7.0.4
+

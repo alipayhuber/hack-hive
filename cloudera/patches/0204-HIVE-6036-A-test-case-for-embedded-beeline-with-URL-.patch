@@ -1,0 +1,33 @@
+From 0c4bffa70a46e27318503837910d7af0cef78e69 Mon Sep 17 00:00:00 2001
+From: Prasad Suresh Mujumdar <prasadm@apache.org>
+Date: Thu, 19 Dec 2013 06:38:42 +0000
+Subject: [PATCH 204/375] HIVE-6036: A test case for embedded beeline - with URL jdbc:hive2:///default (Anandha L Ranganathan via Prasad Mujumdar)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1552242 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../hive/beeline/src/test/TestBeeLineWithArgs.java |   11 +++++++++++
+ 1 files changed, 11 insertions(+), 0 deletions(-)
+
+diff --git a/src/beeline/src/test/org/apache/hive/beeline/src/test/TestBeeLineWithArgs.java b/src/beeline/src/test/org/apache/hive/beeline/src/test/TestBeeLineWithArgs.java
+index e3c6a72..cd7a72a 100644
+--- a/src/beeline/src/test/org/apache/hive/beeline/src/test/TestBeeLineWithArgs.java
++++ b/src/beeline/src/test/org/apache/hive/beeline/src/test/TestBeeLineWithArgs.java
+@@ -284,4 +284,15 @@ public void testHiveVarSubstitution() throws Throwable {
+     testScriptFile(TEST_NAME, SCRIPT_TEXT, EXPECTED_PATTERN, true, argList);
+   }
+ 
++  @Test
++  public void testEmbeddedBeelineConnection() throws Throwable{
++    String embeddedJdbcURL = BeeLine.BEELINE_DEFAULT_JDBC_URL+"/Default";
++    List<String> argList = getBaseArgs(embeddedJdbcURL);
++	argList.add("--hivevar");
++    argList.add("DUMMY_TBL=embedded_table");
++    final String TEST_NAME = "testEmbeddedBeelineConnection";
++    final String SCRIPT_TEXT = "create table ${DUMMY_TBL} (d int);\nshow tables;\n";
++    final String EXPECTED_PATTERN = "embedded_table";
++    testScriptFile(TEST_NAME, SCRIPT_TEXT, EXPECTED_PATTERN, true, argList);
++  }
+ }
+-- 
+1.7.0.4
+

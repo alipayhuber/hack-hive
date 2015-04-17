@@ -1,0 +1,26 @@
+From c8c1ef3a89f935c7c574269a66e6a09b19220f5a Mon Sep 17 00:00:00 2001
+From: Navis Ryu <navis@apache.org>
+Date: Tue, 22 Oct 2013 08:02:07 +0000
+Subject: [PATCH 027/375] HIVE-5597 : Fix typo of previous patch
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1534530 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../hive/thrift/TUGIContainingTransport.java       |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+
+diff --git a/src/shims/src/common/java/org/apache/hadoop/hive/thrift/TUGIContainingTransport.java b/src/shims/src/common/java/org/apache/hadoop/hive/thrift/TUGIContainingTransport.java
+index 46057fa..75f7297 100644
+--- a/src/shims/src/common/java/org/apache/hadoop/hive/thrift/TUGIContainingTransport.java
++++ b/src/shims/src/common/java/org/apache/hadoop/hive/thrift/TUGIContainingTransport.java
+@@ -87,7 +87,7 @@ public TUGIContainingTransport getTransport(TTransport trans) {
+         tugiTrans = new TUGIContainingTransport(trans);
+         TUGIContainingTransport prev = transMap.putIfAbsent(trans, tugiTrans);
+         if (prev != null) {
+-          return prev
++          return prev;
+         }
+       }
+       return tugiTrans;
+-- 
+1.7.0.4
+

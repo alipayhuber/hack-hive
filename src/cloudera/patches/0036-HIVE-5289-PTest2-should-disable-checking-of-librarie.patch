@@ -1,0 +1,54 @@
+From 8a79bc06bd18e2f4f15011dee8b08387ee5d0345 Mon Sep 17 00:00:00 2001
+From: Brock Noland <brock@apache.org>
+Date: Fri, 13 Sep 2013 20:37:55 +0000
+Subject: [PATCH 036/375] HIVE-5289 - PTest2 should disable checking of libraries during batch exec (Brock Noland)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1523088 13f79535-47bb-0310-9956-ffa450edef68
+---
+ testutils/ptest2/src/main/resources/batch-exec.vm  |    7 ++++---
+ .../execution/TestScripts.testBatch.approved.txt   |    7 ++++---
+ 2 files changed, 8 insertions(+), 6 deletions(-)
+
+diff --git a/src/testutils/ptest2/src/main/resources/batch-exec.vm b/src/testutils/ptest2/src/main/resources/batch-exec.vm
+index 0fd27d0..e02e254 100644
+--- a/src/testutils/ptest2/src/main/resources/batch-exec.vm
++++ b/src/testutils/ptest2/src/main/resources/batch-exec.vm
+@@ -32,11 +32,12 @@ export ANT_OPTS="-Xmx1g -XX:MaxPermSize=256m -Djava.io.tmpdir=$logDir/tmp ${antE
+ export HADOOP_ROOT_LOGGER=INFO,console
+ export HADOOP_OPTS="-Dhive.log.dir=$logDir -Dhive.query.id=hadoop -Djava.io.tmpdir=$logDir/tmp"
+ cd $localDir/$instanceName/${repositoryName}-source && \
+-  timeout 2h ant -Divy.cache.ttl.default=eternal $antArgs \
++  timeout 2h ant test -Dtest.junit.output.format=xml $antArgs \
+    -Divy.default.ivy.user.dir=$localDir/$instanceName/ivy \
++   -Divy.default.always.check.exact.revision=false \
++   -Divy.cache.ttl.default=eternal -Divy.checkmodified=false \
+    -Dmvn.local.repo=$localDir/$instanceName/maven \
+-   -Dtest.junit.output.format=xml test \
+-   $testArguments 1>$logDir/ant-test.txt 2>&1
++   $antArgs $testArguments 1>$logDir/ant-test.txt 2>&1
+ ret=$?
+ if [[ $ret -ne 0 ]]
+ then
+diff --git a/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/TestScripts.testBatch.approved.txt b/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/TestScripts.testBatch.approved.txt
+index 993bf5d..e5ea0fd 100644
+--- a/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/TestScripts.testBatch.approved.txt
++++ b/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/TestScripts.testBatch.approved.txt
+@@ -31,11 +31,12 @@ export ANT_OPTS="-Xmx1g -XX:MaxPermSize=256m -Djava.io.tmpdir=/some/log/dir/tmp
+ export HADOOP_ROOT_LOGGER=INFO,console
+ export HADOOP_OPTS="-Dhive.log.dir=/some/log/dir -Dhive.query.id=hadoop -Djava.io.tmpdir=/some/log/dir/tmp"
+ cd /some/local/dir/instance-1/apache-source && \
+-  timeout 2h ant -Divy.cache.ttl.default=eternal -Dant=arg1 \
++  timeout 2h ant test -Dtest.junit.output.format=xml -Dant=arg1 \
+    -Divy.default.ivy.user.dir=/some/local/dir/instance-1/ivy \
++   -Divy.default.always.check.exact.revision=false \
++   -Divy.cache.ttl.default=eternal -Divy.checkmodified=false \
+    -Dmvn.local.repo=/some/local/dir/instance-1/maven \
+-   -Dtest.junit.output.format=xml test \
+-   -Dtest=arg1 1>/some/log/dir/ant-test.txt 2>&1
++   -Dant=arg1 -Dtest=arg1 1>/some/log/dir/ant-test.txt 2>&1
+ ret=$?
+ if [[ $ret -ne 0 ]]
+ then
+-- 
+1.7.0.4
+

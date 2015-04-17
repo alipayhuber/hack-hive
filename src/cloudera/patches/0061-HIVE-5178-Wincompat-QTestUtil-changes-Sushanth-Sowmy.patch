@@ -1,0 +1,40 @@
+From 60b9dad6d09480924fe2ddd203307b863127c234 Mon Sep 17 00:00:00 2001
+From: Ashutosh Chauhan <hashutosh@apache.org>
+Date: Sun, 29 Sep 2013 17:15:01 +0000
+Subject: [PATCH 061/375] HIVE-5178 : Wincompat : QTestUtil changes (Sushanth Sowmyan via Ashutosh Chauhan)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1527350 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../test/org/apache/hadoop/hive/ql/QTestUtil.java  |    9 +++++++++
+ 1 files changed, 9 insertions(+), 0 deletions(-)
+
+diff --git a/src/ql/src/test/org/apache/hadoop/hive/ql/QTestUtil.java b/src/ql/src/test/org/apache/hadoop/hive/ql/QTestUtil.java
+index fde2c02..2e6a500 100644
+--- a/src/ql/src/test/org/apache/hadoop/hive/ql/QTestUtil.java
++++ b/src/ql/src/test/org/apache/hadoop/hive/ql/QTestUtil.java
+@@ -260,6 +260,11 @@ private void convertPathsFromWindowsToHdfs() {
+ 
+     String orgScratchDir = conf.getVar(HiveConf.ConfVars.SCRATCHDIR);
+     conf.setVar(HiveConf.ConfVars.SCRATCHDIR, getHdfsUriString(orgScratchDir));
++
++    if (miniMr) {
++      String orgAuxJarFolder = conf.getAuxJars();
++      conf.setAuxJars(getHdfsUriString("file://" + orgAuxJarFolder));
++    }
+   }
+ 
+   private String getHdfsUriString(String uriStr) {
+@@ -1068,6 +1073,10 @@ private void maskPatterns(Pattern[] patterns, String fname) throws Exception {
+     in = new BufferedReader(new FileReader(fname));
+     out = new BufferedWriter(new FileWriter(fname + ".orig"));
+     while (null != (line = in.readLine())) {
++      // Ignore the empty lines on windows
++      if(line.isEmpty() && Shell.WINDOWS) {
++        continue;
++      }
+       out.write(line);
+       out.write('\n');
+     }
+-- 
+1.7.0.4
+

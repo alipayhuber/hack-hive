@@ -1,0 +1,150 @@
+From c86152bf051c7611ae60242fef5cf6af9c5313e7 Mon Sep 17 00:00:00 2001
+From: Ashutosh Chauhan <hashutosh@apache.org>
+Date: Sun, 29 Sep 2013 17:17:20 +0000
+Subject: [PATCH 062/375] HIVE-4837 : Union on void type fails with NPE (Navis via Ashutosh Chauhan)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1527354 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../apache/hadoop/hive/ql/exec/UnionOperator.java  |   11 ++++-
+ ql/src/test/queries/clientpositive/union_null.q    |    3 +
+ .../test/results/beelinepositive/union_null.q.out  |   37 +++++++++++++++++
+ .../test/results/clientpositive/union_null.q.out   |   42 ++++++++++++++++++++
+ 4 files changed, 90 insertions(+), 3 deletions(-)
+
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/UnionOperator.java b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/UnionOperator.java
+index dfc7c09..59c07c3 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/UnionOperator.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/UnionOperator.java
+@@ -80,15 +80,20 @@ protected void initializeOp(Configuration hconf) throws HiveException {
+     for (int p = 0; p < parents; p++) {
+       assert (parentFields[p].size() == columns);
+       for (int c = 0; c < columns; c++) {
+-        columnTypeResolvers[c].update(parentFields[p].get(c)
+-            .getFieldObjectInspector());
++        if (!columnTypeResolvers[c].update(parentFields[p].get(c)
++            .getFieldObjectInspector())) {
++          // checked in SemanticAnalyzer. Should not happen
++          throw new HiveException("Incompatible types for union operator");
++        }
+       }
+     }
+ 
+     ArrayList<ObjectInspector> outputFieldOIs = new ArrayList<ObjectInspector>(
+         columns);
+     for (int c = 0; c < columns; c++) {
+-      outputFieldOIs.add(columnTypeResolvers[c].get());
++      // can be null for void type
++      ObjectInspector oi = columnTypeResolvers[c].get();
++      outputFieldOIs.add(oi == null ? parentFields[0].get(c).getFieldObjectInspector() : oi);
+     }
+ 
+     // create output row ObjectInspector
+diff --git a/src/ql/src/test/queries/clientpositive/union_null.q b/src/ql/src/test/queries/clientpositive/union_null.q
+index 7014707..4368b8a 100644
+--- a/src/ql/src/test/queries/clientpositive/union_null.q
++++ b/src/ql/src/test/queries/clientpositive/union_null.q
+@@ -1,2 +1,5 @@
+ -- HIVE-2901
+ select x from (select value as x from src union all select NULL as x from src)a limit 10;
++
++-- HIVE-4837
++select * from (select null as N from src1 group by key UNION ALL select null as N from src1 group by key ) a;
+diff --git a/src/ql/src/test/results/beelinepositive/union_null.q.out b/src/ql/src/test/results/beelinepositive/union_null.q.out
+index 28d5aef..dc67e65 100644
+--- a/src/ql/src/test/results/beelinepositive/union_null.q.out
++++ b/src/ql/src/test/results/beelinepositive/union_null.q.out
+@@ -14,4 +14,41 @@ Saving all output to "!!{outputDirectory}!!/union_null.q.raw". Enter "record" wi
+ 'val_165'
+ ''
+ 10 rows selected 
++>>>  
++>>>  -- HIVE-4837
++>>>  select * from (select null as N from src1 group by key UNION ALL select null as N from src1 group by key ) a;
++'n'
++''
++''
++''
++''
++''
++''
++''
++''
++''
++''
++''
++''
++''
++''
++''
++''
++''
++''
++''
++''
++''
++''
++''
++''
++''
++''
++''
++''
++''
++''
++''
++''
++32 rows selected 
+ >>>  !record
+diff --git a/src/ql/src/test/results/clientpositive/union_null.q.out b/src/ql/src/test/results/clientpositive/union_null.q.out
+index 361f6b2..dad45ba 100644
+--- a/src/ql/src/test/results/clientpositive/union_null.q.out
++++ b/src/ql/src/test/results/clientpositive/union_null.q.out
+@@ -18,3 +18,45 @@ val_27
+ NULL
+ val_165
+ NULL
++PREHOOK: query: -- HIVE-4837
++select * from (select null as N from src1 group by key UNION ALL select null as N from src1 group by key ) a
++PREHOOK: type: QUERY
++PREHOOK: Input: default@src1
++#### A masked pattern was here ####
++POSTHOOK: query: -- HIVE-4837
++select * from (select null as N from src1 group by key UNION ALL select null as N from src1 group by key ) a
++POSTHOOK: type: QUERY
++POSTHOOK: Input: default@src1
++#### A masked pattern was here ####
++NULL
++NULL
++NULL
++NULL
++NULL
++NULL
++NULL
++NULL
++NULL
++NULL
++NULL
++NULL
++NULL
++NULL
++NULL
++NULL
++NULL
++NULL
++NULL
++NULL
++NULL
++NULL
++NULL
++NULL
++NULL
++NULL
++NULL
++NULL
++NULL
++NULL
++NULL
++NULL
+-- 
+1.7.0.4
+

@@ -1,0 +1,117 @@
+From ae661f2a1123b700470f9c7492ba92068b0d81dd Mon Sep 17 00:00:00 2001
+From: Szehon Ho <szehon@cloudera.com>
+Date: Wed, 15 Jan 2014 13:41:50 -0800
+Subject: [PATCH 232/375] CDH-16762: If Hive auto-determines local mode for job, does not reset framework to yarn
+
+---
+ ql/src/java/org/apache/hadoop/hive/ql/Context.java |    8 ++++++-
+ .../hadoop/hive/ql/parse/MapReduceCompiler.java    |    4 ++-
+ .../apache/hadoop/hive/shims/Hadoop23Shims.java    |   10 +++++++++
+ .../org/apache/hadoop/hive/shims/HadoopShims.java  |   22 ++++++++++++++++++++
+ 4 files changed, 42 insertions(+), 2 deletions(-)
+
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/Context.java b/src/ql/src/java/org/apache/hadoop/hive/ql/Context.java
+index fa79f53..c24cc49 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/Context.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/Context.java
+@@ -66,6 +66,7 @@
+   private int resDirFilesNum;
+   boolean initialized;
+   String originalTracker = null;
++  String originalMRFramework = null;
+   private final Map<String, ContentSummary> pathToCS = new ConcurrentHashMap<String, ContentSummary>();
+ 
+   // scratch path to use for all non-local (ie. hdfs) file system tmp folders
+@@ -563,14 +564,19 @@ public void setHiveLockMgr(HiveLockManager hiveLockMgr) {
+     this.hiveLockMgr = hiveLockMgr;
+   }
+ 
+-  public void setOriginalTracker(String originalTracker) {
++  public void setOriginalTracker(String originalTracker, String mrFramework) {
+     this.originalTracker = originalTracker;
++    this.originalMRFramework = mrFramework;
+   }
+ 
+   public void restoreOriginalTracker() {
+     if (originalTracker != null) {
+       ShimLoader.getHadoopShims().setJobLauncherRpcAddress(conf, originalTracker);
+       originalTracker = null;
++      if (originalMRFramework != null) {
++        ShimLoader.getHadoopShims().setMRFramework(conf, originalMRFramework);
++        originalMRFramework = null;
++      }
+     }
+   }
+ 
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/MapReduceCompiler.java b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/MapReduceCompiler.java
+index e67d73d..6cc3632 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/MapReduceCompiler.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/MapReduceCompiler.java
+@@ -651,7 +651,9 @@ public boolean accept(Path file) {
+     if (!hasNonLocalJob) {
+       // Entire query can be run locally.
+       // Save the current tracker value and restore it when done.
+-      ctx.setOriginalTracker(ShimLoader.getHadoopShims().getJobLauncherRpcAddress(conf));
++      // Also save the original mr framework to identify MR2 mode (CDH change).
++      ctx.setOriginalTracker(ShimLoader.getHadoopShims().getJobLauncherRpcAddress(conf),
++        ShimLoader.getHadoopShims().getMRFramework(conf));
+       ShimLoader.getHadoopShims().setJobLauncherRpcAddress(conf, "local");
+       console.printInfo("Automatically selecting local only mode for query");
+     }
+diff --git a/src/shims/0.23/src/main/java/org/apache/hadoop/hive/shims/Hadoop23Shims.java b/src/shims/0.23/src/main/java/org/apache/hadoop/hive/shims/Hadoop23Shims.java
+index f7edc0e..cc6e9c6 100644
+--- a/src/shims/0.23/src/main/java/org/apache/hadoop/hive/shims/Hadoop23Shims.java
++++ b/src/shims/0.23/src/main/java/org/apache/hadoop/hive/shims/Hadoop23Shims.java
+@@ -186,6 +186,16 @@ public String getJobLauncherHttpAddress(Configuration conf) {
+   }
+ 
+   @Override
++  public String getMRFramework(Configuration conf) {
++    return conf.get("mapreduce.framework.name");
++  }
++
++  @Override
++  public void setMRFramework(Configuration conf, String framework) {
++    conf.set("mapreduce.framework.name", framework);
++  }
++
++  @Override
+   public long getDefaultBlockSize(FileSystem fs, Path path) {
+     return fs.getDefaultBlockSize(path);
+   }
+diff --git a/src/shims/common/src/main/java/org/apache/hadoop/hive/shims/HadoopShims.java b/src/shims/common/src/main/java/org/apache/hadoop/hive/shims/HadoopShims.java
+index da827cc..b5852ca 100644
+--- a/src/shims/common/src/main/java/org/apache/hadoop/hive/shims/HadoopShims.java
++++ b/src/shims/common/src/main/java/org/apache/hadoop/hive/shims/HadoopShims.java
+@@ -361,6 +361,28 @@ public String addServiceToToken(String tokenStr, String tokenService)
+   public void setJobLauncherRpcAddress(Configuration conf, String val);
+ 
+   /**
++   * Return the MR framework if MR2 mode. (local or yarn)
++   * In upstream, 23shim automatically resets this value if address manager
++   * rpc address has changed.  In CDH, there is only one shim for both MR1/MR2,
++   * so it doesn't have the context to do so.  We need to explicitly track and
++   * reset this value.
++   * @param conf
++   * @return
++   */
++  public String getMRFramework(Configuration conf);
++
++  /**
++   * Set the MR framework as it is understood by MR2. (local or yarn)
++   * In upstream, 23shim automatically resets this value if address manager
++   * rpc address has changed.  In CDH, there is only one shim for both MR1/MR2,
++   * so it doesn't have the context to do so.  We need to explicitly track and
++   * reset this value.
++   * @param conf
++   * @param framework
++   */
++  public void setMRFramework(Configuration conf, String framework);
++
++  /**
+    * All references to jobtracker/resource manager http address
+    * in the configuration should be done through this shim
+    * @param conf
+-- 
+1.7.0.4
+

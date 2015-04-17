@@ -1,0 +1,344 @@
+From 3ea2e73052e8fa1d7f73cec386de6ba3583b4c35 Mon Sep 17 00:00:00 2001
+From: xzhang <xzhang@xzdt.(none)>
+Date: Tue, 24 Sep 2013 16:40:56 -0700
+Subject: [PATCH 123/375] CDH-14354: Hive, Pig, Mahout, Flume, and Sqoop should target Java 6 by default
+ CDH-14624: Hive shim test build fails
+
+---
+ ant/build.xml                                      |    2 ++
+ beeline/build.xml                                  |    2 ++
+ build-common.xml                                   |    6 ++++++
+ build.properties                                   |    1 +
+ build.xml                                          |    8 ++++++++
+ cli/build.xml                                      |    2 ++
+ common/build.xml                                   |    2 ++
+ hcatalog/build-support/ant/build-common.xml        |    2 ++
+ .../e2e/hcatalog/tools/generate/java/build.xml     |    2 ++
+ hcatalog/src/test/e2e/hcatalog/udfs/java/build.xml |    2 ++
+ hcatalog/storage-handlers/hbase/build.xml          |    4 ++++
+ hwi/build.xml                                      |    2 ++
+ jdbc/build.xml                                     |    2 ++
+ metastore/build.xml                                |    4 ++++
+ ql/build.xml                                       |    2 ++
+ serde/build.xml                                    |    2 ++
+ service/build.xml                                  |    2 ++
+ shims/build.xml                                    |    6 ++++++
+ 18 files changed, 53 insertions(+), 0 deletions(-)
+
+diff --git a/src/ant/build.xml b/src/ant/build.xml
+index e23d6dd..e982e3d 100644
+--- a/src/ant/build.xml
++++ b/src/ant/build.xml
+@@ -34,6 +34,8 @@ to call at top-level: ant deploy-contrib compile-core-test
+      srcdir="${src.dir}"
+      includes="**/*.java"
+      destdir="${build.classes}"
++     source="${sourceJavaVersion}"
++     target="${targetJavaVersion}"
+      debug="${javac.debug}"
+      deprecation="${javac.deprecation}">
+       <compilerarg line="${javac.args} ${javac.args.warnings}" />
+diff --git a/src/beeline/build.xml b/src/beeline/build.xml
+index d583915..b356204 100644
+--- a/src/beeline/build.xml
++++ b/src/beeline/build.xml
+@@ -36,6 +36,8 @@ to call at top-level: ant deploy-contrib compile-core-test
+      destdir="${build.classes}"
+      debug="${javac.debug}"
+      deprecation="${javac.deprecation}"
++     source="${sourceJavaVersion}"
++     target="${targetJavaVersion}"
+      includeantruntime="false">
+       <compilerarg line="${javac.args} ${javac.args.warnings}" />
+       <classpath refid="classpath"/>
+diff --git a/src/build-common.xml b/src/build-common.xml
+index a139820..3aaa9b0 100644
+--- a/src/build-common.xml
++++ b/src/build-common.xml
+@@ -257,6 +257,8 @@
+      srcdir="${src.dir}"
+      includes="**/*.java"
+      destdir="${build.classes}"
++     source="${sourceJavaVersion}"
++     target="${targetJavaVersion}"
+      debug="${javac.debug}"
+      deprecation="${javac.deprecation}"
+      includeantruntime="false">
+@@ -295,6 +297,8 @@
+      srcdir="${test.src.dir}"
+      includes="org/apache/**/hive/**/*.java"
+      destdir="${test.build.classes}"
++     source="${sourceJavaVersion}"
++     target="${targetJavaVersion}"
+      debug="${javac.debug}"
+      optimize="${javac.optimize}"
+      deprecation="${javac.deprecation}"
+@@ -307,6 +311,8 @@
+      srcdir="${test.build.src}"
+      includes="org/apache/**/hive/**/*.java"
+      destdir="${test.build.classes}"
++     source="${sourceJavaVersion}"
++     target="${targetJavaVersion}"
+      debug="${javac.debug}"
+      optimize="${javac.optimize}"
+      deprecation="${javac.deprecation}"
+diff --git a/src/build.properties b/src/build.properties
+index a88a304..9b404a9 100644
+--- a/src/build.properties
++++ b/src/build.properties
+@@ -22,6 +22,7 @@ hcatalog.version=${version}
+ year=2012
+ 
+ javac.debug=on
++javac.version=1.6
+ javac.optimize=on
+ javac.deprecation=off
+ javac.args=
+diff --git a/src/build.xml b/src/build.xml
+index 327e19f..d846ee3 100644
+--- a/src/build.xml
++++ b/src/build.xml
+@@ -50,6 +50,8 @@
+   <property name="images.src" value="${docs.src}/images"/>
+   <property name="javadoc.link.java"
+             value="http://java.sun.com/javase/6/docs/api/"/>
++  <property name="sourceJavaVersion" value="${javac.version}" />
++  <property name="targetJavaVersion" value="${javac.version}" />
+   <property name="final.name" value="${name}-${version}"/>
+   <property name="tar.final.name" value="${final.name}"/>
+   <property name="bin.final.name" value="${final.name}-bin"/>
+@@ -169,6 +171,8 @@
+             <property name="is-offline" value="${is-offline}"/>
+             <property name="thrift.home" value="${thrift.home}"/>
+             <property name="build.dir.hive" location="${build.dir.hive}"/>
++            <property name="sourceJavaVersion" value="${sourceJavaVersion}" />
++            <property name="targetJavaVersion" value="${targetJavaVersion}" />
+           </subant>
+         </sequential>
+       </for>
+@@ -275,6 +279,8 @@
+     <echo message="Project: ${ant.project.name}"/>
+     <subant target="compile">
+       <fileset dir="." includes="ant/build.xml"/>
++      <property name="sourceJavaVersion" value="${sourceJavaVersion}"/>
++      <property name="targetJavaVersion" value="${targetJavaVersion}"/>
+     </subant>
+   </target>
+ 
+@@ -370,6 +376,8 @@
+         <ant antfile="@{module}/build.xml" target="${test.target.name}" inheritAll="false" inheritRefs="true">
+           <property name="build.dir.hive" location="${build.dir.hive}"/>
+           <property name="is-offline" value="${is-offline}"/>
++          <property name="sourceJavaVersion" value="${sourceJavaVersion}" />
++          <property name="targetJavaVersion" value="${targetJavaVersion}" />
+         </ant>
+       </sequential>
+     </for>
+diff --git a/src/cli/build.xml b/src/cli/build.xml
+index 092a68b..4a8cd02 100755
+--- a/src/cli/build.xml
++++ b/src/cli/build.xml
+@@ -36,6 +36,8 @@ to call at top-level: ant deploy-contrib compile-core-test
+      destdir="${build.classes}"
+      debug="${javac.debug}"
+      deprecation="${javac.deprecation}"
++     source="${sourceJavaVersion}"
++     target="${targetJavaVersion}"
+      includeantruntime="false">
+       <compilerarg line="${javac.args} ${javac.args.warnings}" />
+       <classpath refid="classpath"/>
+diff --git a/src/common/build.xml b/src/common/build.xml
+index df0d4f3..ad66efa 100755
+--- a/src/common/build.xml
++++ b/src/common/build.xml
+@@ -43,6 +43,8 @@ to call at top-level: ant deploy-contrib compile-core-test
+      destdir="${build.classes}"
+      debug="${javac.debug}"
+      deprecation="${javac.deprecation}"
++     source="${sourceJavaVersion}"
++     target="${targetJavaVersion}"
+      includeantruntime="false">
+       <compilerarg line="${javac.args} ${javac.args.warnings}" />
+       <classpath refid="classpath"/>
+diff --git a/src/hcatalog/build-support/ant/build-common.xml b/src/hcatalog/build-support/ant/build-common.xml
+index 1f2d376..e48e6fd 100644
+--- a/src/hcatalog/build-support/ant/build-common.xml
++++ b/src/hcatalog/build-support/ant/build-common.xml
+@@ -47,6 +47,8 @@
+           deprecation="false"
+           sourcepath=""
+           includes="**/*.java"
++          source="${sourceJavaVersion}"
++          target="${targetJavaVersion}"
+           debug="${javac.debug}"
+           encoding="utf-8"
+           srcdir="@{srcDir}"
+diff --git a/src/hcatalog/src/test/e2e/hcatalog/tools/generate/java/build.xml b/src/hcatalog/src/test/e2e/hcatalog/tools/generate/java/build.xml
+index 80c1e35..faa610e 100644
+--- a/src/hcatalog/src/test/e2e/hcatalog/tools/generate/java/build.xml
++++ b/src/hcatalog/src/test/e2e/hcatalog/tools/generate/java/build.xml
+@@ -43,6 +43,8 @@
+             depends="init, serde.jar.check, ql.jar.check, hadoop.jar.check">
+         <echo>*** Compiling UDFs ***</echo>
+         <javac srcdir="${generator.src.dir}" destdir="${generator.build.dir}" debug="on" includeantruntime="false"
++		source="${sourceJavaVersion}"
++		target="${targetJavaVersion}"
+                includes="**/*.java">
+             <classpath refid="generator-classpath"/>
+         </javac>
+diff --git a/src/hcatalog/src/test/e2e/hcatalog/udfs/java/build.xml b/src/hcatalog/src/test/e2e/hcatalog/udfs/java/build.xml
+index 50b9e4e..b94a053 100644
+--- a/src/hcatalog/src/test/e2e/hcatalog/udfs/java/build.xml
++++ b/src/hcatalog/src/test/e2e/hcatalog/udfs/java/build.xml
+@@ -45,6 +45,8 @@
+     <target name="udf-compile" depends="init">
+         <echo>*** Compiling UDFs ***</echo>
+         <javac srcdir="${udfs.src.dir}" destdir="${udfs.build.dir}" debug="on">
++		source="${sourceJavaVersion}"
++		target="${targetJavaVersion}"
+             <classpath refid="udf-classpath"/>
+         </javac>
+     </target>
+diff --git a/src/hcatalog/storage-handlers/hbase/build.xml b/src/hcatalog/storage-handlers/hbase/build.xml
+index 872deed..f902ce7 100644
+--- a/src/hcatalog/storage-handlers/hbase/build.xml
++++ b/src/hcatalog/storage-handlers/hbase/build.xml
+@@ -91,6 +91,8 @@
+         <javac encoding="${build.encoding}" srcdir="${src.dir}:${basedir}/src/gen-java:${basedir}/src/resources" excludes="${excludes}"
+                includes="**/*.java" destdir="${build.classes}" debug="${javac.debug}"
+                optimize="${javac.optimize}"
++               source="${sourceJavaVersion}"
++               target="${targetJavaVersion}"
+                deprecation="${javac.deprecation}"
+                includeantruntime="false">
+             <compilerarg line="${javac.args}"/>
+@@ -118,6 +120,8 @@
+         <javac encoding="${build.encoding}" srcdir="${test.src.dir}" excludes="${excludes}"
+                includes="**/*.java" destdir="${test.build.classes}" debug="${javac.debug}"
+                optimize="${javac.optimize}"
++               source="${sourceJavaVersion}"
++               target="${targetJavaVersion}"
+                deprecation="${javac.deprecation}"
+                includeantruntime="false">
+             <compilerarg line="${javac.args}"/>
+diff --git a/src/hwi/build.xml b/src/hwi/build.xml
+index e982ebe..5e32554 100644
+--- a/src/hwi/build.xml
++++ b/src/hwi/build.xml
+@@ -62,6 +62,8 @@
+      encoding="${build.encoding}"
+      srcdir="${src.dir}"
+      includes="**/*.java"
++     source="${sourceJavaVersion}"
++     target="${targetJavaVersion}"
+      destdir="${build.classes}"
+      debug="${javac.debug}"
+      deprecation="${javac.deprecation}">
+diff --git a/src/jdbc/build.xml b/src/jdbc/build.xml
+index d3c0f0c..ed99f28 100644
+--- a/src/jdbc/build.xml
++++ b/src/jdbc/build.xml
+@@ -46,6 +46,8 @@
+         srcdir="${src.dir}/java"
+         includes="**/*.java"
+         destdir="${build.classes}"
++        source="${sourceJavaVersion}"
++        target="${targetJavaVersion}"
+         debug="${javac.debug}"
+         deprecation="${javac.deprecation}"
+         includeantruntime="false"
+diff --git a/src/metastore/build.xml b/src/metastore/build.xml
+index 40d4d7f..55e9bd7 100755
+--- a/src/metastore/build.xml
++++ b/src/metastore/build.xml
+@@ -49,6 +49,8 @@
+      srcdir="${src.dir}/java:${src.dir}/gen/thrift/gen-javabean:${build.dir}/gen/antlr/gen-java"
+      includes="**/*.java"
+      destdir="${build.classes}"
++     source="${sourceJavaVersion}"
++     target="${targetJavaVersion}"
+      debug="${javac.debug}"
+      deprecation="${javac.deprecation}"
+      includeantruntime="false">
+@@ -65,6 +67,8 @@
+     <javac
+         srcdir="${model.dir}"
+         destdir="${build.classes}"
++        source="${sourceJavaVersion}"
++        target="${targetJavaVersion}"
+         debug="${javac.debug}"
+         includeantruntime="false">
+        <classpath refid="classpath"/>
+diff --git a/src/ql/build.xml b/src/ql/build.xml
+index ac2b7b0..277909c 100644
+--- a/src/ql/build.xml
++++ b/src/ql/build.xml
+@@ -194,6 +194,8 @@
+      includes="**/*.java"
+      destdir="${build.classes}"
+      debug="${javac.debug}"
++     source="${sourceJavaVersion}"
++     target="${targetJavaVersion}"
+      deprecation="${javac.deprecation}"
+      includeantruntime="false">
+       <compilerarg line="${javac.args} ${javac.args.warnings}" />
+diff --git a/src/serde/build.xml b/src/serde/build.xml
+index a2c23d1..0122786 100644
+--- a/src/serde/build.xml
++++ b/src/serde/build.xml
+@@ -44,6 +44,8 @@
+      srcdir="${src.dir}/java/:${src.dir}/gen/thrift/gen-javabean/:${src.dir}/gen/protobuf/gen-java/"
+      destdir="${build.classes}"
+      debug="${javac.debug}"
++     source="${sourceJavaVersion}"
++     target="${targetJavaVersion}"
+      deprecation="${javac.deprecation}"
+      includeantruntime="false">
+       <compilerarg line="${javac.args} ${javac.args.warnings}" />
+diff --git a/src/service/build.xml b/src/service/build.xml
+index cb0beb4..f49456d 100644
+--- a/src/service/build.xml
++++ b/src/service/build.xml
+@@ -30,6 +30,8 @@
+      includes="**/*.java"
+      destdir="${build.classes}"
+      debug="${javac.debug}"
++     source="${sourceJavaVersion}"
++     target="${targetJavaVersion}"
+      deprecation="${javac.deprecation}"
+      includeantruntime="false">
+       <classpath refid="classpath"/>
+diff --git a/src/shims/build.xml b/src/shims/build.xml
+index cbfba5a..0f0648a 100644
+--- a/src/shims/build.xml
++++ b/src/shims/build.xml
+@@ -39,6 +39,8 @@ to call at top-level: ant deploy-contrib compile-core-test
+   <property name="shims.0.20.hadoop.ivy.dir" value="${hive.root}/build/ivy/lib/hadoop0.20.shim" />
+   <property name="shims.0.20S.hadoop.ivy.dir" value="${hive.root}/build/ivy/lib/hadoop0.20S.shim" />
+   <property name="shims.0.23.hadoop.ivy.dir" value="${hive.root}/build/ivy/lib/hadoop0.23.shim" />
++  <property name="sourceJavaVersion" value="${javac.version}" />
++  <property name="targetJavaVersion" value="${javac.version}" />
+ 
+   <target name="build-shims"
+           description="Build shims against a particular hadoop version">
+@@ -60,6 +62,8 @@ to call at top-level: ant deploy-contrib compile-core-test
+      includes="**/*.java"
+      destdir="${build.classes}"
+      debug="${javac.debug}"
++     source="${sourceJavaVersion}"
++     target="${targetJavaVersion}"
+      deprecation="${javac.deprecation}"
+      srcdir="${sources}"
+      includeantruntime="false">
+@@ -98,6 +102,8 @@ to call at top-level: ant deploy-contrib compile-core-test
+          includes="org/apache/hadoop/**/*.java"
+          excludes="**/TestSerDe.java"
+          destdir="${test.build.classes}"
++         source="${sourceJavaVersion}"
++         target="${targetJavaVersion}"
+          debug="${javac.debug}"
+          optimize="${javac.optimize}"
+          deprecation="${javac.deprecation}"
+-- 
+1.7.0.4
+

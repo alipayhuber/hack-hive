@@ -1,0 +1,39 @@
+From 85350107e8d8403ccbcf6b33ebadae189b297be7 Mon Sep 17 00:00:00 2001
+From: Brock Noland <brock@apache.org>
+Date: Tue, 10 Dec 2013 03:21:45 +0000
+Subject: [PATCH 193/375] CDH-16091: HIVE-5983 - Fix name of ColumnProjectionUtils.appendReadColumnIDs (Brock Noland reviewed by Navis)
+
+---
+ .../hadoop/hive/serde2/ColumnProjectionUtils.java  |    2 +-
+ .../hive/serde2/TestColumnProjectionUtils.java     |    2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/ColumnProjectionUtils.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/ColumnProjectionUtils.java
+index a118eb0..108badc 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/ColumnProjectionUtils.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/ColumnProjectionUtils.java
+@@ -58,7 +58,7 @@ public static void setReadColumnIDs(Configuration conf, List<Integer> ids) {
+    * @deprecated for backwards compatibility with <= 0.12, use appendReadColumns
+    */
+   @Deprecated
+-  public static void appendReadColumnID(Configuration conf, List<Integer> ids) {
++  public static void appendReadColumnIDs(Configuration conf, List<Integer> ids) {
+     appendReadColumns(conf, ids);
+   }
+ 
+diff --git a/src/serde/src/test/org/apache/hadoop/hive/serde2/TestColumnProjectionUtils.java b/src/serde/src/test/org/apache/hadoop/hive/serde2/TestColumnProjectionUtils.java
+index ddd4ca3..2b81b54 100644
+--- a/src/serde/src/test/org/apache/hadoop/hive/serde2/TestColumnProjectionUtils.java
++++ b/src/serde/src/test/org/apache/hadoop/hive/serde2/TestColumnProjectionUtils.java
+@@ -105,7 +105,7 @@ public void testDeprecatedMethods() {
+     Collections.sort(actual);
+     assertEquals(columnIds, actual);
+     columnIds.add(2);
+-    ColumnProjectionUtils.appendReadColumnID(conf, Collections.singletonList(2));
++    ColumnProjectionUtils.appendReadColumnIDs(conf, Collections.singletonList(2));
+     actual = ColumnProjectionUtils.getReadColumnIDs(conf);
+     Collections.sort(actual);
+     assertEquals(columnIds, actual);
+-- 
+1.7.0.4
+

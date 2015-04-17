@@ -1,0 +1,77 @@
+From fbb504037e3e3f5e35fe06d39e94fb5de2feb7ae Mon Sep 17 00:00:00 2001
+From: Szehon Ho <szehon@cloudera.com>
+Date: Fri, 28 Feb 2014 11:42:03 -0800
+Subject: [PATCH 298/375] CLOUDERA-BUILD: CDH-17734: Investigate disappearance of commons-collections from Hive's dependencies
+
+---
+ hcatalog/core/pom.xml        |    3 +++
+ hcatalog/webhcat/svr/pom.xml |    7 +++++--
+ serde/pom.xml                |    1 +
+ 3 files changed, 9 insertions(+), 2 deletions(-)
+
+diff --git a/src/hcatalog/core/pom.xml b/src/hcatalog/core/pom.xml
+index e776fc3..2d53e28 100644
+--- a/src/hcatalog/core/pom.xml
++++ b/src/hcatalog/core/pom.xml
+@@ -82,16 +82,19 @@
+       <groupId>org.apache.hadoop</groupId>
+       <artifactId>hadoop-annotations</artifactId>
+       <version>${hadoop-23.version}</version>
++      <optional>true</optional>
+     </dependency>
+     <dependency>
+       <groupId>org.apache.hadoop</groupId>
+       <artifactId>hadoop-archives</artifactId>
+       <version>${hadoop-23.version}</version>
++      <optional>true</optional>
+     </dependency>
+     <dependency>
+       <groupId>org.apache.hadoop</groupId>
+       <artifactId>hadoop-common</artifactId>
+       <version>${hadoop-23.version}</version>
++      <optional>true</optional>
+     </dependency>
+     <dependency>
+       <groupId>org.apache.hadoop</groupId>
+diff --git a/src/hcatalog/webhcat/svr/pom.xml b/src/hcatalog/webhcat/svr/pom.xml
+index a3ada75..a594840 100644
+--- a/src/hcatalog/webhcat/svr/pom.xml
++++ b/src/hcatalog/webhcat/svr/pom.xml
+@@ -104,17 +104,20 @@
+       <groupId>org.apache.hadoop</groupId>
+       <artifactId>hadoop-auth</artifactId>
+       <version>${hadoop-23.version}</version>
++      <optional>true</optional>
+     </dependency>
+     <dependency>
+       <groupId>org.apache.hadoop</groupId>
+       <artifactId>hadoop-common</artifactId>
+       <version>${hadoop-23.version}</version>
++      <optional>true</optional>
+     </dependency>
+-      <dependency>
++    <dependency>
+       <groupId>org.apache.hadoop</groupId>
+       <artifactId>hadoop-hdfs</artifactId>
+       <version>${hadoop-23.version}</version>
+-      </dependency>
++      <optional>true</optional>
++    </dependency>
+   </dependencies>
+ 
+ 
+diff --git a/src/serde/pom.xml b/src/serde/pom.xml
+index cb46870..2b23146 100644
+--- a/src/serde/pom.xml
++++ b/src/serde/pom.xml
+@@ -87,6 +87,7 @@
+       <groupId>com.sun.jersey</groupId>
+       <artifactId>jersey-servlet</artifactId>
+       <version>${jersey.version}</version>
++      <scope>test</scope>
+     </dependency>
+     <!-- Following have only one version, which is cdh.hadoop.version -->
+     <dependency>
+-- 
+1.7.0.4
+

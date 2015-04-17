@@ -1,0 +1,30 @@
+From b465d951f909bb707ca86a980a0e0254889c8354 Mon Sep 17 00:00:00 2001
+From: Navis Ryu <navis@apache.org>
+Date: Wed, 11 Sep 2013 00:46:19 +0000
+Subject: [PATCH 033/375] HIVE-5225 : There is no database named nonexistentdatabaseusedforhealthcheck (Sergey Shelukhin via Navis)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1521704 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../hive/hcatalog/common/HiveClientCache.java      |    6 +-----
+ 1 files changed, 1 insertions(+), 5 deletions(-)
+
+diff --git a/src/hcatalog/core/src/main/java/org/apache/hive/hcatalog/common/HiveClientCache.java b/src/hcatalog/core/src/main/java/org/apache/hive/hcatalog/common/HiveClientCache.java
+index 01a2723..8f89293 100644
+--- a/src/hcatalog/core/src/main/java/org/apache/hive/hcatalog/common/HiveClientCache.java
++++ b/src/hcatalog/core/src/main/java/org/apache/hive/hcatalog/common/HiveClientCache.java
+@@ -273,11 +273,7 @@ public boolean isClosed() {
+     protected boolean isOpen() {
+       try {
+         // Look for an unlikely database name and see if either MetaException or TException is thrown
+-        this.getDatabase("NonExistentDatabaseUsedForHealthCheck");
+-      } catch (NoSuchObjectException e) {
+-        return true; // It is okay if the database doesn't exist
+-      } catch (MetaException e) {
+-        return false;
++        this.getDatabases("NonExistentDatabaseUsedForHealthCheck");
+       } catch (TException e) {
+         return false;
+       }
+-- 
+1.7.0.4
+

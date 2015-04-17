@@ -1,0 +1,4343 @@
+From 9ae348d63da572dd17c93f94f9697eeac9a1f1dd Mon Sep 17 00:00:00 2001
+From: Prasad Mujumdar <prasadm@cloudera.com>
+Date: Mon, 9 Dec 2013 11:05:32 -0800
+Subject: [PATCH 188/375] CLOUDERA-BUILD: CDH-16092: GetLog() support
+
+---
+ .../java/org/apache/hadoop/hive/conf/HiveConf.java |    2 +
+ conf/hive-default.xml.template                     |   16 +
+ .../java/org/apache/hive/jdbc/TestJdbcDriver2.java |   24 +
+ .../java/org/apache/hive/jdbc/HiveStatement.java   |   21 +
+ service/if/TCLIService.thrift                      |   18 +
+ service/src/gen/thrift/gen-cpp/TCLIService.cpp     |  274 +++++++
+ service/src/gen/thrift/gen-cpp/TCLIService.h       |  127 +++
+ .../thrift/gen-cpp/TCLIService_server.skeleton.cpp |    5 +
+ .../src/gen/thrift/gen-cpp/TCLIService_types.cpp   |  144 ++++
+ service/src/gen/thrift/gen-cpp/TCLIService_types.h |   81 ++
+ .../hive/service/cli/thrift/TCLIService.java       |  806 ++++++++++++++++++++
+ .../apache/hive/service/cli/thrift/TGetLogReq.java |  390 ++++++++++
+ .../hive/service/cli/thrift/TGetLogResp.java       |  491 ++++++++++++
+ service/src/gen/thrift/gen-php/TCLIService.php     |  206 +++++
+ .../thrift/gen-py/TCLIService/TCLIService-remote   |    7 +
+ .../gen/thrift/gen-py/TCLIService/TCLIService.py   |  170 ++++
+ .../src/gen/thrift/gen-py/TCLIService/ttypes.py    |  140 ++++
+ service/src/gen/thrift/gen-rb/t_c_l_i_service.rb   |   54 ++
+ .../src/gen/thrift/gen-rb/t_c_l_i_service_types.rb |   37 +
+ .../org/apache/hive/service/cli/CLIService.java    |   35 +
+ .../apache/hive/service/cli/CLIServiceClient.java  |    3 +
+ .../hive/service/cli/EmbeddedCLIServiceClient.java |    6 +
+ .../org/apache/hive/service/cli/ICLIService.java   |    2 +
+ .../hive/service/cli/log/LinkedStringBuffer.java   |   80 ++
+ .../hive/service/cli/log/LogDivertAppender.java    |   92 +++
+ .../apache/hive/service/cli/log/LogManager.java    |  184 +++++
+ .../apache/hive/service/cli/log/OperationLog.java  |   92 +++
+ .../service/cli/operation/OperationManager.java    |   11 +-
+ .../hive/service/cli/session/HiveSession.java      |    6 +
+ .../hive/service/cli/session/HiveSessionImpl.java  |   42 +-
+ .../hive/service/cli/session/SessionManager.java   |   11 +
+ .../hive/service/cli/thrift/ThriftCLIService.java  |   14 +
+ .../service/cli/thrift/ThriftCLIServiceClient.java |   15 +
+ 33 files changed, 3594 insertions(+), 12 deletions(-)
+ create mode 100644 service/src/gen/thrift/gen-javabean/org/apache/hive/service/cli/thrift/TGetLogReq.java
+ create mode 100644 service/src/gen/thrift/gen-javabean/org/apache/hive/service/cli/thrift/TGetLogResp.java
+ create mode 100644 service/src/java/org/apache/hive/service/cli/log/LinkedStringBuffer.java
+ create mode 100644 service/src/java/org/apache/hive/service/cli/log/LogDivertAppender.java
+ create mode 100644 service/src/java/org/apache/hive/service/cli/log/LogManager.java
+ create mode 100644 service/src/java/org/apache/hive/service/cli/log/OperationLog.java
+
+diff --git a/src/common/src/java/org/apache/hadoop/hive/conf/HiveConf.java b/src/common/src/java/org/apache/hadoop/hive/conf/HiveConf.java
+index f452f5d..492dbf3 100644
+--- a/src/common/src/java/org/apache/hadoop/hive/conf/HiveConf.java
++++ b/src/common/src/java/org/apache/hadoop/hive/conf/HiveConf.java
+@@ -773,6 +773,8 @@
+     HIVE_SERVER2_SSL_KEYSTORE_PASSWORD("hive.server2.keystore.password", ""),
+     HIVE_SERVER2_ALLOW_USER_SUBSTITUTION("hive.server2.allow.user.substitution", true),
+ 
++    HIVE_SERVER2_IN_MEM_LOGGING("hive.server2.in.mem.logging", true),
++    HIVE_SERVER2_IN_MEM_LOG_SIZE("hive.server2.in.mem.log.size", 128 * 1024),
+     HIVE_SECURITY_COMMAND_WHITELIST("hive.security.command.whitelist", "set,reset,dfs,add,delete"),
+ 
+     HIVE_CONF_RESTRICTED_LIST("hive.conf.restricted.list", ""),
+diff --git a/src/conf/hive-default.xml.template b/src/conf/hive-default.xml.template
+index 5d69577..6811de2 100644
+--- a/src/conf/hive-default.xml.template
++++ b/src/conf/hive-default.xml.template
+@@ -1823,6 +1823,22 @@
+ </property>
+ 
+ <property>
++  <name>hive.server2.in.mem.logging</name>
++  <value>true</value>
++  <description>
++    Whether to turn on hiveserver2 in memory logging
++  </description>
++</property>
++
++<property>
++  <name>hive.server2.in.mem.log.size</name>
++  <value>131072</value>
++  <description>
++    Maximum size of the hiveserver2 in memory query log. Note that the size is per query.
++  </description>
++</property>
++
++<property>
+    <name>hive.decode.partition.name</name>
+    <value>false</value>
+    <description>Whether to show the unquoted partition names in query results.</description>
+diff --git a/src/itests/hive-unit/src/test/java/org/apache/hive/jdbc/TestJdbcDriver2.java b/src/itests/hive-unit/src/test/java/org/apache/hive/jdbc/TestJdbcDriver2.java
+index 4ab9be4..70b3c54 100644
+--- a/src/itests/hive-unit/src/test/java/org/apache/hive/jdbc/TestJdbcDriver2.java
++++ b/src/itests/hive-unit/src/test/java/org/apache/hive/jdbc/TestJdbcDriver2.java
+@@ -1744,6 +1744,30 @@ public void testImportedKeys() throws SQLException {
+     assertFalse(res.next());
+   }
+ 
++  public void testGetLog() throws Exception {
++    HiveStatement stmt = (HiveStatement)con.createStatement();
++    assertNotNull("Statement is null", stmt);
++
++    ResultSet res = stmt.executeQuery("select count(*) from " + tableName);
++    ResultSetMetaData meta = res.getMetaData();
++
++    boolean moreRow = res.next();
++    while (moreRow) {
++      try {
++        moreRow = res.next();
++      } catch (SQLException e) {
++        throw e;
++      }
++    }
++
++    String log = stmt.getLog();
++    assertTrue("Operation Log looks incorrect" ,
++        log.contains("Parsing command: select count(*) from testHiveJdbcDriver_Table"));
++    assertTrue("Operation Log looks incorrect",
++        log.contains( "select count(*) from testHiveJdbcDriver_Table"));
++
++  }
++
+   /**
+    * If the Driver implementation understands the URL, it will return a Connection object;
+    * otherwise it returns null
+diff --git a/src/jdbc/src/java/org/apache/hive/jdbc/HiveStatement.java b/src/jdbc/src/java/org/apache/hive/jdbc/HiveStatement.java
+index fce19bf..6bf69ca 100644
+--- a/src/jdbc/src/java/org/apache/hive/jdbc/HiveStatement.java
++++ b/src/jdbc/src/java/org/apache/hive/jdbc/HiveStatement.java
+@@ -32,6 +32,8 @@
+ import org.apache.hive.service.cli.thrift.TCloseOperationResp;
+ import org.apache.hive.service.cli.thrift.TExecuteStatementReq;
+ import org.apache.hive.service.cli.thrift.TExecuteStatementResp;
++import org.apache.hive.service.cli.thrift.TGetLogReq;
++import org.apache.hive.service.cli.thrift.TGetLogResp;
+ import org.apache.hive.service.cli.thrift.TGetOperationStatusReq;
+ import org.apache.hive.service.cli.thrift.TGetOperationStatusResp;
+ import org.apache.hive.service.cli.thrift.TOperationHandle;
+@@ -283,6 +285,25 @@ public boolean execute(String sql, String[] columnNames) throws SQLException {
+     throw new SQLException("Method not supported");
+   }
+ 
++  public String getLog() throws SQLException {
++    if (isClosed) {
++      throw new SQLException("Can't get log for statement after statement has been closed");
++    }
++
++    TGetLogReq getLogReq = new TGetLogReq();
++    TGetLogResp getLogResp;
++    getLogReq.setOperationHandle(stmtHandle);
++    try {
++      getLogResp = client.GetLog(getLogReq);
++      Utils.verifySuccessWithInfo(getLogResp.getStatus());
++    } catch (SQLException e) {
++      throw e;
++    } catch (Exception e) {
++      throw new SQLException(e.toString(), "08S01", e);
++    }
++    return getLogResp.getLog();
++  }
++
+   /*
+    * (non-Javadoc)
+    *
+diff --git a/src/service/if/TCLIService.thrift b/src/service/if/TCLIService.thrift
+index ae65096..f32346a 100644
+--- a/src/service/if/TCLIService.thrift
++++ b/src/service/if/TCLIService.thrift
+@@ -1056,6 +1056,22 @@ struct TRenewDelegationTokenResp {
+   1: required TStatus status
+ }
+ 
++// GetLog()
++//
++// Fetch operation log from the server corresponding to
++// a particular OperationHandle.
++struct TGetLogReq {
++  // Operation whose log is requested
++  1: required TOperationHandle operationHandle
++}
++
++struct TGetLogResp {
++  1: required TStatus status
++
++  2: required string log
++
++}
++
+ service TCLIService {
+ 
+   TOpenSessionResp OpenSession(1:TOpenSessionReq req);
+@@ -1095,4 +1111,6 @@ service TCLIService {
+   TCancelDelegationTokenResp CancelDelegationToken(1:TCancelDelegationTokenReq req);
+ 
+   TRenewDelegationTokenResp RenewDelegationToken(1:TRenewDelegationTokenReq req);
++
++  TGetLogResp GetLog(1:TGetLogReq req);
+ }
+diff --git a/src/service/src/gen/thrift/gen-cpp/TCLIService.cpp b/src/service/src/gen/thrift/gen-cpp/TCLIService.cpp
+index 209ce63..c6a173b 100644
+--- a/src/service/src/gen/thrift/gen-cpp/TCLIService.cpp
++++ b/src/service/src/gen/thrift/gen-cpp/TCLIService.cpp
+@@ -3086,6 +3086,168 @@ uint32_t TCLIService_RenewDelegationToken_presult::read(::apache::thrift::protoc
+   return xfer;
+ }
+ 
++uint32_t TCLIService_GetLog_args::read(::apache::thrift::protocol::TProtocol* iprot) {
++
++  uint32_t xfer = 0;
++  std::string fname;
++  ::apache::thrift::protocol::TType ftype;
++  int16_t fid;
++
++  xfer += iprot->readStructBegin(fname);
++
++  using ::apache::thrift::protocol::TProtocolException;
++
++
++  while (true)
++  {
++    xfer += iprot->readFieldBegin(fname, ftype, fid);
++    if (ftype == ::apache::thrift::protocol::T_STOP) {
++      break;
++    }
++    switch (fid)
++    {
++      case 1:
++        if (ftype == ::apache::thrift::protocol::T_STRUCT) {
++          xfer += this->req.read(iprot);
++          this->__isset.req = true;
++        } else {
++          xfer += iprot->skip(ftype);
++        }
++        break;
++      default:
++        xfer += iprot->skip(ftype);
++        break;
++    }
++    xfer += iprot->readFieldEnd();
++  }
++
++  xfer += iprot->readStructEnd();
++
++  return xfer;
++}
++
++uint32_t TCLIService_GetLog_args::write(::apache::thrift::protocol::TProtocol* oprot) const {
++  uint32_t xfer = 0;
++  xfer += oprot->writeStructBegin("TCLIService_GetLog_args");
++
++  xfer += oprot->writeFieldBegin("req", ::apache::thrift::protocol::T_STRUCT, 1);
++  xfer += this->req.write(oprot);
++  xfer += oprot->writeFieldEnd();
++
++  xfer += oprot->writeFieldStop();
++  xfer += oprot->writeStructEnd();
++  return xfer;
++}
++
++uint32_t TCLIService_GetLog_pargs::write(::apache::thrift::protocol::TProtocol* oprot) const {
++  uint32_t xfer = 0;
++  xfer += oprot->writeStructBegin("TCLIService_GetLog_pargs");
++
++  xfer += oprot->writeFieldBegin("req", ::apache::thrift::protocol::T_STRUCT, 1);
++  xfer += (*(this->req)).write(oprot);
++  xfer += oprot->writeFieldEnd();
++
++  xfer += oprot->writeFieldStop();
++  xfer += oprot->writeStructEnd();
++  return xfer;
++}
++
++uint32_t TCLIService_GetLog_result::read(::apache::thrift::protocol::TProtocol* iprot) {
++
++  uint32_t xfer = 0;
++  std::string fname;
++  ::apache::thrift::protocol::TType ftype;
++  int16_t fid;
++
++  xfer += iprot->readStructBegin(fname);
++
++  using ::apache::thrift::protocol::TProtocolException;
++
++
++  while (true)
++  {
++    xfer += iprot->readFieldBegin(fname, ftype, fid);
++    if (ftype == ::apache::thrift::protocol::T_STOP) {
++      break;
++    }
++    switch (fid)
++    {
++      case 0:
++        if (ftype == ::apache::thrift::protocol::T_STRUCT) {
++          xfer += this->success.read(iprot);
++          this->__isset.success = true;
++        } else {
++          xfer += iprot->skip(ftype);
++        }
++        break;
++      default:
++        xfer += iprot->skip(ftype);
++        break;
++    }
++    xfer += iprot->readFieldEnd();
++  }
++
++  xfer += iprot->readStructEnd();
++
++  return xfer;
++}
++
++uint32_t TCLIService_GetLog_result::write(::apache::thrift::protocol::TProtocol* oprot) const {
++
++  uint32_t xfer = 0;
++
++  xfer += oprot->writeStructBegin("TCLIService_GetLog_result");
++
++  if (this->__isset.success) {
++    xfer += oprot->writeFieldBegin("success", ::apache::thrift::protocol::T_STRUCT, 0);
++    xfer += this->success.write(oprot);
++    xfer += oprot->writeFieldEnd();
++  }
++  xfer += oprot->writeFieldStop();
++  xfer += oprot->writeStructEnd();
++  return xfer;
++}
++
++uint32_t TCLIService_GetLog_presult::read(::apache::thrift::protocol::TProtocol* iprot) {
++
++  uint32_t xfer = 0;
++  std::string fname;
++  ::apache::thrift::protocol::TType ftype;
++  int16_t fid;
++
++  xfer += iprot->readStructBegin(fname);
++
++  using ::apache::thrift::protocol::TProtocolException;
++
++
++  while (true)
++  {
++    xfer += iprot->readFieldBegin(fname, ftype, fid);
++    if (ftype == ::apache::thrift::protocol::T_STOP) {
++      break;
++    }
++    switch (fid)
++    {
++      case 0:
++        if (ftype == ::apache::thrift::protocol::T_STRUCT) {
++          xfer += (*(this->success)).read(iprot);
++          this->__isset.success = true;
++        } else {
++          xfer += iprot->skip(ftype);
++        }
++        break;
++      default:
++        xfer += iprot->skip(ftype);
++        break;
++    }
++    xfer += iprot->readFieldEnd();
++  }
++
++  xfer += iprot->readStructEnd();
++
++  return xfer;
++}
++
+ void TCLIServiceClient::OpenSession(TOpenSessionResp& _return, const TOpenSessionReq& req)
+ {
+   send_OpenSession(req);
+@@ -4188,6 +4350,64 @@ void TCLIServiceClient::recv_RenewDelegationToken(TRenewDelegationTokenResp& _re
+   throw ::apache::thrift::TApplicationException(::apache::thrift::TApplicationException::MISSING_RESULT, "RenewDelegationToken failed: unknown result");
+ }
+ 
++void TCLIServiceClient::GetLog(TGetLogResp& _return, const TGetLogReq& req)
++{
++  send_GetLog(req);
++  recv_GetLog(_return);
++}
++
++void TCLIServiceClient::send_GetLog(const TGetLogReq& req)
++{
++  int32_t cseqid = 0;
++  oprot_->writeMessageBegin("GetLog", ::apache::thrift::protocol::T_CALL, cseqid);
++
++  TCLIService_GetLog_pargs args;
++  args.req = &req;
++  args.write(oprot_);
++
++  oprot_->writeMessageEnd();
++  oprot_->getTransport()->writeEnd();
++  oprot_->getTransport()->flush();
++}
++
++void TCLIServiceClient::recv_GetLog(TGetLogResp& _return)
++{
++
++  int32_t rseqid = 0;
++  std::string fname;
++  ::apache::thrift::protocol::TMessageType mtype;
++
++  iprot_->readMessageBegin(fname, mtype, rseqid);
++  if (mtype == ::apache::thrift::protocol::T_EXCEPTION) {
++    ::apache::thrift::TApplicationException x;
++    x.read(iprot_);
++    iprot_->readMessageEnd();
++    iprot_->getTransport()->readEnd();
++    throw x;
++  }
++  if (mtype != ::apache::thrift::protocol::T_REPLY) {
++    iprot_->skip(::apache::thrift::protocol::T_STRUCT);
++    iprot_->readMessageEnd();
++    iprot_->getTransport()->readEnd();
++  }
++  if (fname.compare("GetLog") != 0) {
++    iprot_->skip(::apache::thrift::protocol::T_STRUCT);
++    iprot_->readMessageEnd();
++    iprot_->getTransport()->readEnd();
++  }
++  TCLIService_GetLog_presult result;
++  result.success = &_return;
++  result.read(iprot_);
++  iprot_->readMessageEnd();
++  iprot_->getTransport()->readEnd();
++
++  if (result.__isset.success) {
++    // _return pointer has now been filled
++    return;
++  }
++  throw ::apache::thrift::TApplicationException(::apache::thrift::TApplicationException::MISSING_RESULT, "GetLog failed: unknown result");
++}
++
+ bool TCLIServiceProcessor::dispatchCall(::apache::thrift::protocol::TProtocol* iprot, ::apache::thrift::protocol::TProtocol* oprot, const std::string& fname, int32_t seqid, void* callContext) {
+   ProcessMap::iterator pfn;
+   pfn = processMap_.find(fname);
+@@ -5233,6 +5453,60 @@ void TCLIServiceProcessor::process_RenewDelegationToken(int32_t seqid, ::apache:
+   }
+ }
+ 
++void TCLIServiceProcessor::process_GetLog(int32_t seqid, ::apache::thrift::protocol::TProtocol* iprot, ::apache::thrift::protocol::TProtocol* oprot, void* callContext)
++{
++  void* ctx = NULL;
++  if (this->eventHandler_.get() != NULL) {
++    ctx = this->eventHandler_->getContext("TCLIService.GetLog", callContext);
++  }
++  ::apache::thrift::TProcessorContextFreer freer(this->eventHandler_.get(), ctx, "TCLIService.GetLog");
++
++  if (this->eventHandler_.get() != NULL) {
++    this->eventHandler_->preRead(ctx, "TCLIService.GetLog");
++  }
++
++  TCLIService_GetLog_args args;
++  args.read(iprot);
++  iprot->readMessageEnd();
++  uint32_t bytes = iprot->getTransport()->readEnd();
++
++  if (this->eventHandler_.get() != NULL) {
++    this->eventHandler_->postRead(ctx, "TCLIService.GetLog", bytes);
++  }
++
++  TCLIService_GetLog_result result;
++  try {
++    iface_->GetLog(result.success, args.req);
++    result.__isset.success = true;
++  } catch (const std::exception& e) {
++    if (this->eventHandler_.get() != NULL) {
++      this->eventHandler_->handlerError(ctx, "TCLIService.GetLog");
++    }
++
++    ::apache::thrift::TApplicationException x(e.what());
++    oprot->writeMessageBegin("GetLog", ::apache::thrift::protocol::T_EXCEPTION, seqid);
++    x.write(oprot);
++    oprot->writeMessageEnd();
++    oprot->getTransport()->writeEnd();
++    oprot->getTransport()->flush();
++    return;
++  }
++
++  if (this->eventHandler_.get() != NULL) {
++    this->eventHandler_->preWrite(ctx, "TCLIService.GetLog");
++  }
++
++  oprot->writeMessageBegin("GetLog", ::apache::thrift::protocol::T_REPLY, seqid);
++  result.write(oprot);
++  oprot->writeMessageEnd();
++  bytes = oprot->getTransport()->writeEnd();
++  oprot->getTransport()->flush();
++
++  if (this->eventHandler_.get() != NULL) {
++    this->eventHandler_->postWrite(ctx, "TCLIService.GetLog", bytes);
++  }
++}
++
+ ::boost::shared_ptr< ::apache::thrift::TProcessor > TCLIServiceProcessorFactory::getProcessor(const ::apache::thrift::TConnectionInfo& connInfo) {
+   ::apache::thrift::ReleaseHandler< TCLIServiceIfFactory > cleanup(handlerFactory_);
+   ::boost::shared_ptr< TCLIServiceIf > handler(handlerFactory_->getHandler(connInfo), cleanup);
+diff --git a/src/service/src/gen/thrift/gen-cpp/TCLIService.h b/src/service/src/gen/thrift/gen-cpp/TCLIService.h
+index 030475b..bd1c276 100644
+--- a/src/service/src/gen/thrift/gen-cpp/TCLIService.h
++++ b/src/service/src/gen/thrift/gen-cpp/TCLIService.h
+@@ -34,6 +34,7 @@ class TCLIServiceIf {
+   virtual void GetDelegationToken(TGetDelegationTokenResp& _return, const TGetDelegationTokenReq& req) = 0;
+   virtual void CancelDelegationToken(TCancelDelegationTokenResp& _return, const TCancelDelegationTokenReq& req) = 0;
+   virtual void RenewDelegationToken(TRenewDelegationTokenResp& _return, const TRenewDelegationTokenReq& req) = 0;
++  virtual void GetLog(TGetLogResp& _return, const TGetLogReq& req) = 0;
+ };
+ 
+ class TCLIServiceIfFactory {
+@@ -120,6 +121,9 @@ class TCLIServiceNull : virtual public TCLIServiceIf {
+   void RenewDelegationToken(TRenewDelegationTokenResp& /* _return */, const TRenewDelegationTokenReq& /* req */) {
+     return;
+   }
++  void GetLog(TGetLogResp& /* _return */, const TGetLogReq& /* req */) {
++    return;
++  }
+ };
+ 
+ typedef struct _TCLIService_OpenSession_args__isset {
+@@ -2174,6 +2178,114 @@ class TCLIService_RenewDelegationToken_presult {
+ 
+ };
+ 
++typedef struct _TCLIService_GetLog_args__isset {
++  _TCLIService_GetLog_args__isset() : req(false) {}
++  bool req;
++} _TCLIService_GetLog_args__isset;
++
++class TCLIService_GetLog_args {
++ public:
++
++  TCLIService_GetLog_args() {
++  }
++
++  virtual ~TCLIService_GetLog_args() throw() {}
++
++  TGetLogReq req;
++
++  _TCLIService_GetLog_args__isset __isset;
++
++  void __set_req(const TGetLogReq& val) {
++    req = val;
++  }
++
++  bool operator == (const TCLIService_GetLog_args & rhs) const
++  {
++    if (!(req == rhs.req))
++      return false;
++    return true;
++  }
++  bool operator != (const TCLIService_GetLog_args &rhs) const {
++    return !(*this == rhs);
++  }
++
++  bool operator < (const TCLIService_GetLog_args & ) const;
++
++  uint32_t read(::apache::thrift::protocol::TProtocol* iprot);
++  uint32_t write(::apache::thrift::protocol::TProtocol* oprot) const;
++
++};
++
++
++class TCLIService_GetLog_pargs {
++ public:
++
++
++  virtual ~TCLIService_GetLog_pargs() throw() {}
++
++  const TGetLogReq* req;
++
++  uint32_t write(::apache::thrift::protocol::TProtocol* oprot) const;
++
++};
++
++typedef struct _TCLIService_GetLog_result__isset {
++  _TCLIService_GetLog_result__isset() : success(false) {}
++  bool success;
++} _TCLIService_GetLog_result__isset;
++
++class TCLIService_GetLog_result {
++ public:
++
++  TCLIService_GetLog_result() {
++  }
++
++  virtual ~TCLIService_GetLog_result() throw() {}
++
++  TGetLogResp success;
++
++  _TCLIService_GetLog_result__isset __isset;
++
++  void __set_success(const TGetLogResp& val) {
++    success = val;
++  }
++
++  bool operator == (const TCLIService_GetLog_result & rhs) const
++  {
++    if (!(success == rhs.success))
++      return false;
++    return true;
++  }
++  bool operator != (const TCLIService_GetLog_result &rhs) const {
++    return !(*this == rhs);
++  }
++
++  bool operator < (const TCLIService_GetLog_result & ) const;
++
++  uint32_t read(::apache::thrift::protocol::TProtocol* iprot);
++  uint32_t write(::apache::thrift::protocol::TProtocol* oprot) const;
++
++};
++
++typedef struct _TCLIService_GetLog_presult__isset {
++  _TCLIService_GetLog_presult__isset() : success(false) {}
++  bool success;
++} _TCLIService_GetLog_presult__isset;
++
++class TCLIService_GetLog_presult {
++ public:
++
++
++  virtual ~TCLIService_GetLog_presult() throw() {}
++
++  TGetLogResp* success;
++
++  _TCLIService_GetLog_presult__isset __isset;
++
++  uint32_t read(::apache::thrift::protocol::TProtocol* iprot);
++
++};
++
+ class TCLIServiceClient : virtual public TCLIServiceIf {
+  public:
+   TCLIServiceClient(boost::shared_ptr< ::apache::thrift::protocol::TProtocol> prot) :
+@@ -2251,6 +2363,9 @@ class TCLIServiceClient : virtual public TCLIServiceIf {
+   void RenewDelegationToken(TRenewDelegationTokenResp& _return, const TRenewDelegationTokenReq& req);
+   void send_RenewDelegationToken(const TRenewDelegationTokenReq& req);
+   void recv_RenewDelegationToken(TRenewDelegationTokenResp& _return);
++  void GetLog(TGetLogResp& _return, const TGetLogReq& req);
++  void send_GetLog(const TGetLogReq& req);
++  void recv_GetLog(TGetLogResp& _return);
+  protected:
+   boost::shared_ptr< ::apache::thrift::protocol::TProtocol> piprot_;
+   boost::shared_ptr< ::apache::thrift::protocol::TProtocol> poprot_;
+@@ -2285,6 +2400,7 @@ class TCLIServiceProcessor : public ::apache::thrift::TDispatchProcessor {
+   void process_GetDelegationToken(int32_t seqid, ::apache::thrift::protocol::TProtocol* iprot, ::apache::thrift::protocol::TProtocol* oprot, void* callContext);
+   void process_CancelDelegationToken(int32_t seqid, ::apache::thrift::protocol::TProtocol* iprot, ::apache::thrift::protocol::TProtocol* oprot, void* callContext);
+   void process_RenewDelegationToken(int32_t seqid, ::apache::thrift::protocol::TProtocol* iprot, ::apache::thrift::protocol::TProtocol* oprot, void* callContext);
++  void process_GetLog(int32_t seqid, ::apache::thrift::protocol::TProtocol* iprot, ::apache::thrift::protocol::TProtocol* oprot, void* callContext);
+  public:
+   TCLIServiceProcessor(boost::shared_ptr<TCLIServiceIf> iface) :
+     iface_(iface) {
+@@ -2307,6 +2423,7 @@ class TCLIServiceProcessor : public ::apache::thrift::TDispatchProcessor {
+     processMap_["GetDelegationToken"] = &TCLIServiceProcessor::process_GetDelegationToken;
+     processMap_["CancelDelegationToken"] = &TCLIServiceProcessor::process_CancelDelegationToken;
+     processMap_["RenewDelegationToken"] = &TCLIServiceProcessor::process_RenewDelegationToken;
++    processMap_["GetLog"] = &TCLIServiceProcessor::process_GetLog;
+   }
+ 
+   virtual ~TCLIServiceProcessor() {}
+@@ -2525,6 +2642,16 @@ class TCLIServiceMultiface : virtual public TCLIServiceIf {
+     return;
+   }
+ 
++  void GetLog(TGetLogResp& _return, const TGetLogReq& req) {
++    size_t sz = ifaces_.size();
++    size_t i = 0;
++    for (; i < (sz - 1); ++i) {
++      ifaces_[i]->GetLog(_return, req);
++    }
++    ifaces_[i]->GetLog(_return, req);
++    return;
++  }
++
+ };
+ 
+ }}}}} // namespace
+diff --git a/src/service/src/gen/thrift/gen-cpp/TCLIService_server.skeleton.cpp b/src/service/src/gen/thrift/gen-cpp/TCLIService_server.skeleton.cpp
+index 988bb4c..3d24e17 100644
+--- a/src/service/src/gen/thrift/gen-cpp/TCLIService_server.skeleton.cpp
++++ b/src/service/src/gen/thrift/gen-cpp/TCLIService_server.skeleton.cpp
+@@ -117,6 +117,11 @@ class TCLIServiceHandler : virtual public TCLIServiceIf {
+     printf("RenewDelegationToken\n");
+   }
+ 
++  void GetLog(TGetLogResp& _return, const TGetLogReq& req) {
++    // Your implementation goes here
++    printf("GetLog\n");
++  }
++
+ };
+ 
+ int main(int argc, char **argv) {
+diff --git a/src/service/src/gen/thrift/gen-cpp/TCLIService_types.cpp b/src/service/src/gen/thrift/gen-cpp/TCLIService_types.cpp
+index 6d5d3be..798be08 100644
+--- a/src/service/src/gen/thrift/gen-cpp/TCLIService_types.cpp
++++ b/src/service/src/gen/thrift/gen-cpp/TCLIService_types.cpp
+@@ -6070,4 +6070,148 @@ void swap(TRenewDelegationTokenResp &a, TRenewDelegationTokenResp &b) {
+   swap(a.status, b.status);
+ }
+ 
++const char* TGetLogReq::ascii_fingerprint = "414FA38522AE6B9CEC1438B56CA1DE5A";
++const uint8_t TGetLogReq::binary_fingerprint[16] = {0x41,0x4F,0xA3,0x85,0x22,0xAE,0x6B,0x9C,0xEC,0x14,0x38,0xB5,0x6C,0xA1,0xDE,0x5A};
++
++uint32_t TGetLogReq::read(::apache::thrift::protocol::TProtocol* iprot) {
++
++  uint32_t xfer = 0;
++  std::string fname;
++  ::apache::thrift::protocol::TType ftype;
++  int16_t fid;
++
++  xfer += iprot->readStructBegin(fname);
++
++  using ::apache::thrift::protocol::TProtocolException;
++
++  bool isset_operationHandle = false;
++
++  while (true)
++  {
++    xfer += iprot->readFieldBegin(fname, ftype, fid);
++    if (ftype == ::apache::thrift::protocol::T_STOP) {
++      break;
++    }
++    switch (fid)
++    {
++      case 1:
++        if (ftype == ::apache::thrift::protocol::T_STRUCT) {
++          xfer += this->operationHandle.read(iprot);
++          isset_operationHandle = true;
++        } else {
++          xfer += iprot->skip(ftype);
++        }
++        break;
++      default:
++        xfer += iprot->skip(ftype);
++        break;
++    }
++    xfer += iprot->readFieldEnd();
++  }
++
++  xfer += iprot->readStructEnd();
++
++  if (!isset_operationHandle)
++    throw TProtocolException(TProtocolException::INVALID_DATA);
++  return xfer;
++}
++
++uint32_t TGetLogReq::write(::apache::thrift::protocol::TProtocol* oprot) const {
++  uint32_t xfer = 0;
++  xfer += oprot->writeStructBegin("TGetLogReq");
++
++  xfer += oprot->writeFieldBegin("operationHandle", ::apache::thrift::protocol::T_STRUCT, 1);
++  xfer += this->operationHandle.write(oprot);
++  xfer += oprot->writeFieldEnd();
++
++  xfer += oprot->writeFieldStop();
++  xfer += oprot->writeStructEnd();
++  return xfer;
++}
++
++void swap(TGetLogReq &a, TGetLogReq &b) {
++  using ::std::swap;
++  swap(a.operationHandle, b.operationHandle);
++}
++
++const char* TGetLogResp::ascii_fingerprint = "08A7F68AF7400F358E5CF08185165CB7";
++const uint8_t TGetLogResp::binary_fingerprint[16] = {0x08,0xA7,0xF6,0x8A,0xF7,0x40,0x0F,0x35,0x8E,0x5C,0xF0,0x81,0x85,0x16,0x5C,0xB7};
++
++uint32_t TGetLogResp::read(::apache::thrift::protocol::TProtocol* iprot) {
++
++  uint32_t xfer = 0;
++  std::string fname;
++  ::apache::thrift::protocol::TType ftype;
++  int16_t fid;
++
++  xfer += iprot->readStructBegin(fname);
++
++  using ::apache::thrift::protocol::TProtocolException;
++
++  bool isset_status = false;
++  bool isset_log = false;
++
++  while (true)
++  {
++    xfer += iprot->readFieldBegin(fname, ftype, fid);
++    if (ftype == ::apache::thrift::protocol::T_STOP) {
++      break;
++    }
++    switch (fid)
++    {
++      case 1:
++        if (ftype == ::apache::thrift::protocol::T_STRUCT) {
++          xfer += this->status.read(iprot);
++          isset_status = true;
++        } else {
++          xfer += iprot->skip(ftype);
++        }
++        break;
++      case 2:
++        if (ftype == ::apache::thrift::protocol::T_STRING) {
++          xfer += iprot->readString(this->log);
++          isset_log = true;
++        } else {
++          xfer += iprot->skip(ftype);
++        }
++        break;
++      default:
++        xfer += iprot->skip(ftype);
++        break;
++    }
++    xfer += iprot->readFieldEnd();
++  }
++
++  xfer += iprot->readStructEnd();
++
++  if (!isset_status)
++    throw TProtocolException(TProtocolException::INVALID_DATA);
++  if (!isset_log)
++    throw TProtocolException(TProtocolException::INVALID_DATA);
++  return xfer;
++}
++
++uint32_t TGetLogResp::write(::apache::thrift::protocol::TProtocol* oprot) const {
++  uint32_t xfer = 0;
++  xfer += oprot->writeStructBegin("TGetLogResp");
++
++  xfer += oprot->writeFieldBegin("status", ::apache::thrift::protocol::T_STRUCT, 1);
++  xfer += this->status.write(oprot);
++  xfer += oprot->writeFieldEnd();
++
++  xfer += oprot->writeFieldBegin("log", ::apache::thrift::protocol::T_STRING, 2);
++  xfer += oprot->writeString(this->log);
++  xfer += oprot->writeFieldEnd();
++
++  xfer += oprot->writeFieldStop();
++  xfer += oprot->writeStructEnd();
++  return xfer;
++}
++
++void swap(TGetLogResp &a, TGetLogResp &b) {
++  using ::std::swap;
++  swap(a.status, b.status);
++  swap(a.log, b.log);
++}
++
+ }}}}} // namespace
+diff --git a/src/service/src/gen/thrift/gen-cpp/TCLIService_types.h b/src/service/src/gen/thrift/gen-cpp/TCLIService_types.h
+index 32bb3f2..6c50f4a 100644
+--- a/src/service/src/gen/thrift/gen-cpp/TCLIService_types.h
++++ b/src/service/src/gen/thrift/gen-cpp/TCLIService_types.h
+@@ -3589,6 +3589,87 @@ class TRenewDelegationTokenResp {
+ 
+ void swap(TRenewDelegationTokenResp &a, TRenewDelegationTokenResp &b);
+ 
++
++class TGetLogReq {
++ public:
++
++  static const char* ascii_fingerprint; // = "414FA38522AE6B9CEC1438B56CA1DE5A";
++  static const uint8_t binary_fingerprint[16]; // = {0x41,0x4F,0xA3,0x85,0x22,0xAE,0x6B,0x9C,0xEC,0x14,0x38,0xB5,0x6C,0xA1,0xDE,0x5A};
++
++  TGetLogReq() {
++  }
++
++  virtual ~TGetLogReq() throw() {}
++
++  TOperationHandle operationHandle;
++
++  void __set_operationHandle(const TOperationHandle& val) {
++    operationHandle = val;
++  }
++
++  bool operator == (const TGetLogReq & rhs) const
++  {
++    if (!(operationHandle == rhs.operationHandle))
++      return false;
++    return true;
++  }
++  bool operator != (const TGetLogReq &rhs) const {
++    return !(*this == rhs);
++  }
++
++  bool operator < (const TGetLogReq & ) const;
++
++  uint32_t read(::apache::thrift::protocol::TProtocol* iprot);
++  uint32_t write(::apache::thrift::protocol::TProtocol* oprot) const;
++
++};
++
++void swap(TGetLogReq &a, TGetLogReq &b);
++
++
++class TGetLogResp {
++ public:
++
++  static const char* ascii_fingerprint; // = "08A7F68AF7400F358E5CF08185165CB7";
++  static const uint8_t binary_fingerprint[16]; // = {0x08,0xA7,0xF6,0x8A,0xF7,0x40,0x0F,0x35,0x8E,0x5C,0xF0,0x81,0x85,0x16,0x5C,0xB7};
++
++  TGetLogResp() : log() {
++  }
++
++  virtual ~TGetLogResp() throw() {}
++
++  TStatus status;
++  std::string log;
++
++  void __set_status(const TStatus& val) {
++    status = val;
++  }
++
++  void __set_log(const std::string& val) {
++    log = val;
++  }
++
++  bool operator == (const TGetLogResp & rhs) const
++  {
++    if (!(status == rhs.status))
++      return false;
++    if (!(log == rhs.log))
++      return false;
++    return true;
++  }
++  bool operator != (const TGetLogResp &rhs) const {
++    return !(*this == rhs);
++  }
++
++  bool operator < (const TGetLogResp & ) const;
++
++  uint32_t read(::apache::thrift::protocol::TProtocol* iprot);
++  uint32_t write(::apache::thrift::protocol::TProtocol* oprot) const;
++
++};
++
++void swap(TGetLogResp &a, TGetLogResp &b);
++
+ }}}}} // namespace
+ 
+ #endif
+diff --git a/src/service/src/gen/thrift/gen-javabean/org/apache/hive/service/cli/thrift/TCLIService.java b/src/service/src/gen/thrift/gen-javabean/org/apache/hive/service/cli/thrift/TCLIService.java
+index 54851b8..e012e29 100644
+--- a/src/service/src/gen/thrift/gen-javabean/org/apache/hive/service/cli/thrift/TCLIService.java
++++ b/src/service/src/gen/thrift/gen-javabean/org/apache/hive/service/cli/thrift/TCLIService.java
+@@ -73,6 +73,8 @@
+ 
+     public TRenewDelegationTokenResp RenewDelegationToken(TRenewDelegationTokenReq req) throws org.apache.thrift.TException;
+ 
++    public TGetLogResp GetLog(TGetLogReq req) throws org.apache.thrift.TException;
++
+   }
+ 
+   public interface AsyncIface {
+@@ -115,6 +117,8 @@
+ 
+     public void RenewDelegationToken(TRenewDelegationTokenReq req, org.apache.thrift.async.AsyncMethodCallback<AsyncClient.RenewDelegationToken_call> resultHandler) throws org.apache.thrift.TException;
+ 
++    public void GetLog(TGetLogReq req, org.apache.thrift.async.AsyncMethodCallback<AsyncClient.GetLog_call> resultHandler) throws org.apache.thrift.TException;
++
+   }
+ 
+   public static class Client extends org.apache.thrift.TServiceClient implements Iface {
+@@ -574,6 +578,29 @@ public TRenewDelegationTokenResp recv_RenewDelegationToken() throws org.apache.t
+       throw new org.apache.thrift.TApplicationException(org.apache.thrift.TApplicationException.MISSING_RESULT, "RenewDelegationToken failed: unknown result");
+     }
+ 
++    public TGetLogResp GetLog(TGetLogReq req) throws org.apache.thrift.TException
++    {
++      send_GetLog(req);
++      return recv_GetLog();
++    }
++
++    public void send_GetLog(TGetLogReq req) throws org.apache.thrift.TException
++    {
++      GetLog_args args = new GetLog_args();
++      args.setReq(req);
++      sendBase("GetLog", args);
++    }
++
++    public TGetLogResp recv_GetLog() throws org.apache.thrift.TException
++    {
++      GetLog_result result = new GetLog_result();
++      receiveBase(result, "GetLog");
++      if (result.isSetSuccess()) {
++        return result.success;
++      }
++      throw new org.apache.thrift.TApplicationException(org.apache.thrift.TApplicationException.MISSING_RESULT, "GetLog failed: unknown result");
++    }
++
+   }
+   public static class AsyncClient extends org.apache.thrift.async.TAsyncClient implements AsyncIface {
+     public static class Factory implements org.apache.thrift.async.TAsyncClientFactory<AsyncClient> {
+@@ -1200,6 +1227,38 @@ public TRenewDelegationTokenResp getResult() throws org.apache.thrift.TException
+       }
+     }
+ 
++    public void GetLog(TGetLogReq req, org.apache.thrift.async.AsyncMethodCallback<GetLog_call> resultHandler) throws org.apache.thrift.TException {
++      checkReady();
++      GetLog_call method_call = new GetLog_call(req, resultHandler, this, ___protocolFactory, ___transport);
++      this.___currentMethod = method_call;
++      ___manager.call(method_call);
++    }
++
++    public static class GetLog_call extends org.apache.thrift.async.TAsyncMethodCall {
++      private TGetLogReq req;
++      public GetLog_call(TGetLogReq req, org.apache.thrift.async.AsyncMethodCallback<GetLog_call> resultHandler, org.apache.thrift.async.TAsyncClient client, org.apache.thrift.protocol.TProtocolFactory protocolFactory, org.apache.thrift.transport.TNonblockingTransport transport) throws org.apache.thrift.TException {
++        super(client, protocolFactory, transport, resultHandler, false);
++        this.req = req;
++      }
++
++      public void write_args(org.apache.thrift.protocol.TProtocol prot) throws org.apache.thrift.TException {
++        prot.writeMessageBegin(new org.apache.thrift.protocol.TMessage("GetLog", org.apache.thrift.protocol.TMessageType.CALL, 0));
++        GetLog_args args = new GetLog_args();
++        args.setReq(req);
++        args.write(prot);
++        prot.writeMessageEnd();
++      }
++
++      public TGetLogResp getResult() throws org.apache.thrift.TException {
++        if (getState() != org.apache.thrift.async.TAsyncMethodCall.State.RESPONSE_READ) {
++          throw new IllegalStateException("Method call not finished!");
++        }
++        org.apache.thrift.transport.TMemoryInputTransport memoryTransport = new org.apache.thrift.transport.TMemoryInputTransport(getFrameBuffer().array());
++        org.apache.thrift.protocol.TProtocol prot = client.getProtocolFactory().getProtocol(memoryTransport);
++        return (new Client(prot)).recv_GetLog();
++      }
++    }
++
+   }
+ 
+   public static class Processor<I extends Iface> extends org.apache.thrift.TBaseProcessor<I> implements org.apache.thrift.TProcessor {
+@@ -1232,6 +1291,7 @@ protected Processor(I iface, Map<String,  org.apache.thrift.ProcessFunction<I, ?
+       processMap.put("GetDelegationToken", new GetDelegationToken());
+       processMap.put("CancelDelegationToken", new CancelDelegationToken());
+       processMap.put("RenewDelegationToken", new RenewDelegationToken());
++      processMap.put("GetLog", new GetLog());
+       return processMap;
+     }
+ 
+@@ -1615,6 +1675,26 @@ public RenewDelegationToken_result getResult(I iface, RenewDelegationToken_args 
+       }
+     }
+ 
++    public static class GetLog<I extends Iface> extends org.apache.thrift.ProcessFunction<I, GetLog_args> {
++      public GetLog() {
++        super("GetLog");
++      }
++
++      public GetLog_args getEmptyArgsInstance() {
++        return new GetLog_args();
++      }
++
++      protected boolean isOneway() {
++        return false;
++      }
++
++      public GetLog_result getResult(I iface, GetLog_args args) throws org.apache.thrift.TException {
++        GetLog_result result = new GetLog_result();
++        result.success = iface.GetLog(args.req);
++        return result;
++      }
++    }
++
+   }
+ 
+   public static class OpenSession_args implements org.apache.thrift.TBase<OpenSession_args, OpenSession_args._Fields>, java.io.Serializable, Cloneable   {
+@@ -15411,4 +15491,730 @@ public void read(org.apache.thrift.protocol.TProtocol prot, RenewDelegationToken
+ 
+   }
+ 
++  public static class GetLog_args implements org.apache.thrift.TBase<GetLog_args, GetLog_args._Fields>, java.io.Serializable, Cloneable   {
++    private static final org.apache.thrift.protocol.TStruct STRUCT_DESC = new org.apache.thrift.protocol.TStruct("GetLog_args");
++
++    private static final org.apache.thrift.protocol.TField REQ_FIELD_DESC = new org.apache.thrift.protocol.TField("req", org.apache.thrift.protocol.TType.STRUCT, (short)1);
++
++    private static final Map<Class<? extends IScheme>, SchemeFactory> schemes = new HashMap<Class<? extends IScheme>, SchemeFactory>();
++    static {
++      schemes.put(StandardScheme.class, new GetLog_argsStandardSchemeFactory());
++      schemes.put(TupleScheme.class, new GetLog_argsTupleSchemeFactory());
++    }
++
++    private TGetLogReq req; // required
++
++    /** The set of fields this struct contains, along with convenience methods for finding and manipulating them. */
++    public enum _Fields implements org.apache.thrift.TFieldIdEnum {
++      REQ((short)1, "req");
++
++      private static final Map<String, _Fields> byName = new HashMap<String, _Fields>();
++
++      static {
++        for (_Fields field : EnumSet.allOf(_Fields.class)) {
++          byName.put(field.getFieldName(), field);
++        }
++      }
++
++      /**
++       * Find the _Fields constant that matches fieldId, or null if its not found.
++       */
++      public static _Fields findByThriftId(int fieldId) {
++        switch(fieldId) {
++          case 1: // REQ
++            return REQ;
++          default:
++            return null;
++        }
++      }
++
++      /**
++       * Find the _Fields constant that matches fieldId, throwing an exception
++       * if it is not found.
++       */
++      public static _Fields findByThriftIdOrThrow(int fieldId) {
++        _Fields fields = findByThriftId(fieldId);
++        if (fields == null) throw new IllegalArgumentException("Field " + fieldId + " doesn't exist!");
++        return fields;
++      }
++
++      /**
++       * Find the _Fields constant that matches name, or null if its not found.
++       */
++      public static _Fields findByName(String name) {
++        return byName.get(name);
++      }
++
++      private final short _thriftId;
++      private final String _fieldName;
++
++      _Fields(short thriftId, String fieldName) {
++        _thriftId = thriftId;
++        _fieldName = fieldName;
++      }
++
++      public short getThriftFieldId() {
++        return _thriftId;
++      }
++
++      public String getFieldName() {
++        return _fieldName;
++      }
++    }
++
++    // isset id assignments
++    public static final Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> metaDataMap;
++    static {
++      Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> tmpMap = new EnumMap<_Fields, org.apache.thrift.meta_data.FieldMetaData>(_Fields.class);
++      tmpMap.put(_Fields.REQ, new org.apache.thrift.meta_data.FieldMetaData("req", org.apache.thrift.TFieldRequirementType.DEFAULT, 
++          new org.apache.thrift.meta_data.StructMetaData(org.apache.thrift.protocol.TType.STRUCT, TGetLogReq.class)));
++      metaDataMap = Collections.unmodifiableMap(tmpMap);
++      org.apache.thrift.meta_data.FieldMetaData.addStructMetaDataMap(GetLog_args.class, metaDataMap);
++    }
++
++    public GetLog_args() {
++    }
++
++    public GetLog_args(
++      TGetLogReq req)
++    {
++      this();
++      this.req = req;
++    }
++
++    /**
++     * Performs a deep copy on <i>other</i>.
++     */
++    public GetLog_args(GetLog_args other) {
++      if (other.isSetReq()) {
++        this.req = new TGetLogReq(other.req);
++      }
++    }
++
++    public GetLog_args deepCopy() {
++      return new GetLog_args(this);
++    }
++
++    @Override
++    public void clear() {
++      this.req = null;
++    }
++
++    public TGetLogReq getReq() {
++      return this.req;
++    }
++
++    public void setReq(TGetLogReq req) {
++      this.req = req;
++    }
++
++    public void unsetReq() {
++      this.req = null;
++    }
++
++    /** Returns true if field req is set (has been assigned a value) and false otherwise */
++    public boolean isSetReq() {
++      return this.req != null;
++    }
++
++    public void setReqIsSet(boolean value) {
++      if (!value) {
++        this.req = null;
++      }
++    }
++
++    public void setFieldValue(_Fields field, Object value) {
++      switch (field) {
++      case REQ:
++        if (value == null) {
++          unsetReq();
++        } else {
++          setReq((TGetLogReq)value);
++        }
++        break;
++
++      }
++    }
++
++    public Object getFieldValue(_Fields field) {
++      switch (field) {
++      case REQ:
++        return getReq();
++
++      }
++      throw new IllegalStateException();
++    }
++
++    /** Returns true if field corresponding to fieldID is set (has been assigned a value) and false otherwise */
++    public boolean isSet(_Fields field) {
++      if (field == null) {
++        throw new IllegalArgumentException();
++      }
++
++      switch (field) {
++      case REQ:
++        return isSetReq();
++      }
++      throw new IllegalStateException();
++    }
++
++    @Override
++    public boolean equals(Object that) {
++      if (that == null)
++        return false;
++      if (that instanceof GetLog_args)
++        return this.equals((GetLog_args)that);
++      return false;
++    }
++
++    public boolean equals(GetLog_args that) {
++      if (that == null)
++        return false;
++
++      boolean this_present_req = true && this.isSetReq();
++      boolean that_present_req = true && that.isSetReq();
++      if (this_present_req || that_present_req) {
++        if (!(this_present_req && that_present_req))
++          return false;
++        if (!this.req.equals(that.req))
++          return false;
++      }
++
++      return true;
++    }
++
++    @Override
++    public int hashCode() {
++      HashCodeBuilder builder = new HashCodeBuilder();
++
++      boolean present_req = true && (isSetReq());
++      builder.append(present_req);
++      if (present_req)
++        builder.append(req);
++
++      return builder.toHashCode();
++    }
++
++    public int compareTo(GetLog_args other) {
++      if (!getClass().equals(other.getClass())) {
++        return getClass().getName().compareTo(other.getClass().getName());
++      }
++
++      int lastComparison = 0;
++      GetLog_args typedOther = (GetLog_args)other;
++
++      lastComparison = Boolean.valueOf(isSetReq()).compareTo(typedOther.isSetReq());
++      if (lastComparison != 0) {
++        return lastComparison;
++      }
++      if (isSetReq()) {
++        lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.req, typedOther.req);
++        if (lastComparison != 0) {
++          return lastComparison;
++        }
++      }
++      return 0;
++    }
++
++    public _Fields fieldForId(int fieldId) {
++      return _Fields.findByThriftId(fieldId);
++    }
++
++    public void read(org.apache.thrift.protocol.TProtocol iprot) throws org.apache.thrift.TException {
++      schemes.get(iprot.getScheme()).getScheme().read(iprot, this);
++    }
++
++    public void write(org.apache.thrift.protocol.TProtocol oprot) throws org.apache.thrift.TException {
++      schemes.get(oprot.getScheme()).getScheme().write(oprot, this);
++    }
++
++    @Override
++    public String toString() {
++      StringBuilder sb = new StringBuilder("GetLog_args(");
++      boolean first = true;
++
++      sb.append("req:");
++      if (this.req == null) {
++        sb.append("null");
++      } else {
++        sb.append(this.req);
++      }
++      first = false;
++      sb.append(")");
++      return sb.toString();
++    }
++
++    public void validate() throws org.apache.thrift.TException {
++      // check for required fields
++      // check for sub-struct validity
++      if (req != null) {
++        req.validate();
++      }
++    }
++
++    private void writeObject(java.io.ObjectOutputStream out) throws java.io.IOException {
++      try {
++        write(new org.apache.thrift.protocol.TCompactProtocol(new org.apache.thrift.transport.TIOStreamTransport(out)));
++      } catch (org.apache.thrift.TException te) {
++        throw new java.io.IOException(te);
++      }
++    }
++
++    private void readObject(java.io.ObjectInputStream in) throws java.io.IOException, ClassNotFoundException {
++      try {
++        read(new org.apache.thrift.protocol.TCompactProtocol(new org.apache.thrift.transport.TIOStreamTransport(in)));
++      } catch (org.apache.thrift.TException te) {
++        throw new java.io.IOException(te);
++      }
++    }
++
++    private static class GetLog_argsStandardSchemeFactory implements SchemeFactory {
++      public GetLog_argsStandardScheme getScheme() {
++        return new GetLog_argsStandardScheme();
++      }
++    }
++
++    private static class GetLog_argsStandardScheme extends StandardScheme<GetLog_args> {
++
++      public void read(org.apache.thrift.protocol.TProtocol iprot, GetLog_args struct) throws org.apache.thrift.TException {
++        org.apache.thrift.protocol.TField schemeField;
++        iprot.readStructBegin();
++        while (true)
++        {
++          schemeField = iprot.readFieldBegin();
++          if (schemeField.type == org.apache.thrift.protocol.TType.STOP) { 
++            break;
++          }
++          switch (schemeField.id) {
++            case 1: // REQ
++              if (schemeField.type == org.apache.thrift.protocol.TType.STRUCT) {
++                struct.req = new TGetLogReq();
++                struct.req.read(iprot);
++                struct.setReqIsSet(true);
++              } else { 
++                org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
++              }
++              break;
++            default:
++              org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
++          }
++          iprot.readFieldEnd();
++        }
++        iprot.readStructEnd();
++        struct.validate();
++      }
++
++      public void write(org.apache.thrift.protocol.TProtocol oprot, GetLog_args struct) throws org.apache.thrift.TException {
++        struct.validate();
++
++        oprot.writeStructBegin(STRUCT_DESC);
++        if (struct.req != null) {
++          oprot.writeFieldBegin(REQ_FIELD_DESC);
++          struct.req.write(oprot);
++          oprot.writeFieldEnd();
++        }
++        oprot.writeFieldStop();
++        oprot.writeStructEnd();
++      }
++
++    }
++
++    private static class GetLog_argsTupleSchemeFactory implements SchemeFactory {
++      public GetLog_argsTupleScheme getScheme() {
++        return new GetLog_argsTupleScheme();
++      }
++    }
++
++    private static class GetLog_argsTupleScheme extends TupleScheme<GetLog_args> {
++
++      @Override
++      public void write(org.apache.thrift.protocol.TProtocol prot, GetLog_args struct) throws org.apache.thrift.TException {
++        TTupleProtocol oprot = (TTupleProtocol) prot;
++        BitSet optionals = new BitSet();
++        if (struct.isSetReq()) {
++          optionals.set(0);
++        }
++        oprot.writeBitSet(optionals, 1);
++        if (struct.isSetReq()) {
++          struct.req.write(oprot);
++        }
++      }
++
++      @Override
++      public void read(org.apache.thrift.protocol.TProtocol prot, GetLog_args struct) throws org.apache.thrift.TException {
++        TTupleProtocol iprot = (TTupleProtocol) prot;
++        BitSet incoming = iprot.readBitSet(1);
++        if (incoming.get(0)) {
++          struct.req = new TGetLogReq();
++          struct.req.read(iprot);
++          struct.setReqIsSet(true);
++        }
++      }
++    }
++
++  }
++
++  public static class GetLog_result implements org.apache.thrift.TBase<GetLog_result, GetLog_result._Fields>, java.io.Serializable, Cloneable   {
++    private static final org.apache.thrift.protocol.TStruct STRUCT_DESC = new org.apache.thrift.protocol.TStruct("GetLog_result");
++
++    private static final org.apache.thrift.protocol.TField SUCCESS_FIELD_DESC = new org.apache.thrift.protocol.TField("success", org.apache.thrift.protocol.TType.STRUCT, (short)0);
++
++    private static final Map<Class<? extends IScheme>, SchemeFactory> schemes = new HashMap<Class<? extends IScheme>, SchemeFactory>();
++    static {
++      schemes.put(StandardScheme.class, new GetLog_resultStandardSchemeFactory());
++      schemes.put(TupleScheme.class, new GetLog_resultTupleSchemeFactory());
++    }
++
++    private TGetLogResp success; // required
++
++    /** The set of fields this struct contains, along with convenience methods for finding and manipulating them. */
++    public enum _Fields implements org.apache.thrift.TFieldIdEnum {
++      SUCCESS((short)0, "success");
++
++      private static final Map<String, _Fields> byName = new HashMap<String, _Fields>();
++
++      static {
++        for (_Fields field : EnumSet.allOf(_Fields.class)) {
++          byName.put(field.getFieldName(), field);
++        }
++      }
++
++      /**
++       * Find the _Fields constant that matches fieldId, or null if its not found.
++       */
++      public static _Fields findByThriftId(int fieldId) {
++        switch(fieldId) {
++          case 0: // SUCCESS
++            return SUCCESS;
++          default:
++            return null;
++        }
++      }
++
++      /**
++       * Find the _Fields constant that matches fieldId, throwing an exception
++       * if it is not found.
++       */
++      public static _Fields findByThriftIdOrThrow(int fieldId) {
++        _Fields fields = findByThriftId(fieldId);
++        if (fields == null) throw new IllegalArgumentException("Field " + fieldId + " doesn't exist!");
++        return fields;
++      }
++
++      /**
++       * Find the _Fields constant that matches name, or null if its not found.
++       */
++      public static _Fields findByName(String name) {
++        return byName.get(name);
++      }
++
++      private final short _thriftId;
++      private final String _fieldName;
++
++      _Fields(short thriftId, String fieldName) {
++        _thriftId = thriftId;
++        _fieldName = fieldName;
++      }
++
++      public short getThriftFieldId() {
++        return _thriftId;
++      }
++
++      public String getFieldName() {
++        return _fieldName;
++      }
++    }
++
++    // isset id assignments
++    public static final Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> metaDataMap;
++    static {
++      Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> tmpMap = new EnumMap<_Fields, org.apache.thrift.meta_data.FieldMetaData>(_Fields.class);
++      tmpMap.put(_Fields.SUCCESS, new org.apache.thrift.meta_data.FieldMetaData("success", org.apache.thrift.TFieldRequirementType.DEFAULT, 
++          new org.apache.thrift.meta_data.StructMetaData(org.apache.thrift.protocol.TType.STRUCT, TGetLogResp.class)));
++      metaDataMap = Collections.unmodifiableMap(tmpMap);
++      org.apache.thrift.meta_data.FieldMetaData.addStructMetaDataMap(GetLog_result.class, metaDataMap);
++    }
++
++    public GetLog_result() {
++    }
++
++    public GetLog_result(
++      TGetLogResp success)
++    {
++      this();
++      this.success = success;
++    }
++
++    /**
++     * Performs a deep copy on <i>other</i>.
++     */
++    public GetLog_result(GetLog_result other) {
++      if (other.isSetSuccess()) {
++        this.success = new TGetLogResp(other.success);
++      }
++    }
++
++    public GetLog_result deepCopy() {
++      return new GetLog_result(this);
++    }
++
++    @Override
++    public void clear() {
++      this.success = null;
++    }
++
++    public TGetLogResp getSuccess() {
++      return this.success;
++    }
++
++    public void setSuccess(TGetLogResp success) {
++      this.success = success;
++    }
++
++    public void unsetSuccess() {
++      this.success = null;
++    }
++
++    /** Returns true if field success is set (has been assigned a value) and false otherwise */
++    public boolean isSetSuccess() {
++      return this.success != null;
++    }
++
++    public void setSuccessIsSet(boolean value) {
++      if (!value) {
++        this.success = null;
++      }
++    }
++
++    public void setFieldValue(_Fields field, Object value) {
++      switch (field) {
++      case SUCCESS:
++        if (value == null) {
++          unsetSuccess();
++        } else {
++          setSuccess((TGetLogResp)value);
++        }
++        break;
++
++      }
++    }
++
++    public Object getFieldValue(_Fields field) {
++      switch (field) {
++      case SUCCESS:
++        return getSuccess();
++
++      }
++      throw new IllegalStateException();
++    }
++
++    /** Returns true if field corresponding to fieldID is set (has been assigned a value) and false otherwise */
++    public boolean isSet(_Fields field) {
++      if (field == null) {
++        throw new IllegalArgumentException();
++      }
++
++      switch (field) {
++      case SUCCESS:
++        return isSetSuccess();
++      }
++      throw new IllegalStateException();
++    }
++
++    @Override
++    public boolean equals(Object that) {
++      if (that == null)
++        return false;
++      if (that instanceof GetLog_result)
++        return this.equals((GetLog_result)that);
++      return false;
++    }
++
++    public boolean equals(GetLog_result that) {
++      if (that == null)
++        return false;
++
++      boolean this_present_success = true && this.isSetSuccess();
++      boolean that_present_success = true && that.isSetSuccess();
++      if (this_present_success || that_present_success) {
++        if (!(this_present_success && that_present_success))
++          return false;
++        if (!this.success.equals(that.success))
++          return false;
++      }
++
++      return true;
++    }
++
++    @Override
++    public int hashCode() {
++      HashCodeBuilder builder = new HashCodeBuilder();
++
++      boolean present_success = true && (isSetSuccess());
++      builder.append(present_success);
++      if (present_success)
++        builder.append(success);
++
++      return builder.toHashCode();
++    }
++
++    public int compareTo(GetLog_result other) {
++      if (!getClass().equals(other.getClass())) {
++        return getClass().getName().compareTo(other.getClass().getName());
++      }
++
++      int lastComparison = 0;
++      GetLog_result typedOther = (GetLog_result)other;
++
++      lastComparison = Boolean.valueOf(isSetSuccess()).compareTo(typedOther.isSetSuccess());
++      if (lastComparison != 0) {
++        return lastComparison;
++      }
++      if (isSetSuccess()) {
++        lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.success, typedOther.success);
++        if (lastComparison != 0) {
++          return lastComparison;
++        }
++      }
++      return 0;
++    }
++
++    public _Fields fieldForId(int fieldId) {
++      return _Fields.findByThriftId(fieldId);
++    }
++
++    public void read(org.apache.thrift.protocol.TProtocol iprot) throws org.apache.thrift.TException {
++      schemes.get(iprot.getScheme()).getScheme().read(iprot, this);
++    }
++
++    public void write(org.apache.thrift.protocol.TProtocol oprot) throws org.apache.thrift.TException {
++      schemes.get(oprot.getScheme()).getScheme().write(oprot, this);
++      }
++
++    @Override
++    public String toString() {
++      StringBuilder sb = new StringBuilder("GetLog_result(");
++      boolean first = true;
++
++      sb.append("success:");
++      if (this.success == null) {
++        sb.append("null");
++      } else {
++        sb.append(this.success);
++      }
++      first = false;
++      sb.append(")");
++      return sb.toString();
++    }
++
++    public void validate() throws org.apache.thrift.TException {
++      // check for required fields
++      // check for sub-struct validity
++      if (success != null) {
++        success.validate();
++      }
++    }
++
++    private void writeObject(java.io.ObjectOutputStream out) throws java.io.IOException {
++      try {
++        write(new org.apache.thrift.protocol.TCompactProtocol(new org.apache.thrift.transport.TIOStreamTransport(out)));
++      } catch (org.apache.thrift.TException te) {
++        throw new java.io.IOException(te);
++      }
++    }
++
++    private void readObject(java.io.ObjectInputStream in) throws java.io.IOException, ClassNotFoundException {
++      try {
++        read(new org.apache.thrift.protocol.TCompactProtocol(new org.apache.thrift.transport.TIOStreamTransport(in)));
++      } catch (org.apache.thrift.TException te) {
++        throw new java.io.IOException(te);
++      }
++    }
++
++    private static class GetLog_resultStandardSchemeFactory implements SchemeFactory {
++      public GetLog_resultStandardScheme getScheme() {
++        return new GetLog_resultStandardScheme();
++      }
++    }
++
++    private static class GetLog_resultStandardScheme extends StandardScheme<GetLog_result> {
++
++      public void read(org.apache.thrift.protocol.TProtocol iprot, GetLog_result struct) throws org.apache.thrift.TException {
++        org.apache.thrift.protocol.TField schemeField;
++        iprot.readStructBegin();
++        while (true)
++        {
++          schemeField = iprot.readFieldBegin();
++          if (schemeField.type == org.apache.thrift.protocol.TType.STOP) { 
++            break;
++          }
++          switch (schemeField.id) {
++            case 0: // SUCCESS
++              if (schemeField.type == org.apache.thrift.protocol.TType.STRUCT) {
++                struct.success = new TGetLogResp();
++                struct.success.read(iprot);
++                struct.setSuccessIsSet(true);
++              } else { 
++                org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
++              }
++              break;
++            default:
++              org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
++          }
++          iprot.readFieldEnd();
++        }
++        iprot.readStructEnd();
++        struct.validate();
++      }
++
++      public void write(org.apache.thrift.protocol.TProtocol oprot, GetLog_result struct) throws org.apache.thrift.TException {
++        struct.validate();
++
++        oprot.writeStructBegin(STRUCT_DESC);
++        if (struct.success != null) {
++          oprot.writeFieldBegin(SUCCESS_FIELD_DESC);
++          struct.success.write(oprot);
++          oprot.writeFieldEnd();
++        }
++        oprot.writeFieldStop();
++        oprot.writeStructEnd();
++      }
++
++    }
++
++    private static class GetLog_resultTupleSchemeFactory implements SchemeFactory {
++      public GetLog_resultTupleScheme getScheme() {
++        return new GetLog_resultTupleScheme();
++      }
++    }
++
++    private static class GetLog_resultTupleScheme extends TupleScheme<GetLog_result> {
++
++      @Override
++      public void write(org.apache.thrift.protocol.TProtocol prot, GetLog_result struct) throws org.apache.thrift.TException {
++        TTupleProtocol oprot = (TTupleProtocol) prot;
++        BitSet optionals = new BitSet();
++        if (struct.isSetSuccess()) {
++          optionals.set(0);
++        }
++        oprot.writeBitSet(optionals, 1);
++        if (struct.isSetSuccess()) {
++          struct.success.write(oprot);
++        }
++      }
++
++      @Override
++      public void read(org.apache.thrift.protocol.TProtocol prot, GetLog_result struct) throws org.apache.thrift.TException {
++        TTupleProtocol iprot = (TTupleProtocol) prot;
++        BitSet incoming = iprot.readBitSet(1);
++        if (incoming.get(0)) {
++          struct.success = new TGetLogResp();
++          struct.success.read(iprot);
++          struct.setSuccessIsSet(true);
++        }
++      }
++    }
++
++  }
++
+ }
+diff --git a/src/service/src/gen/thrift/gen-javabean/org/apache/hive/service/cli/thrift/TGetLogReq.java b/src/service/src/gen/thrift/gen-javabean/org/apache/hive/service/cli/thrift/TGetLogReq.java
+new file mode 100644
+index 0000000..48cd64f
+--- /dev/null
++++ b/src/service/src/gen/thrift/gen-javabean/org/apache/hive/service/cli/thrift/TGetLogReq.java
+@@ -0,0 +1,390 @@
++/**
++ * Autogenerated by Thrift Compiler (0.9.0)
++ *
++ * DO NOT EDIT UNLESS YOU ARE SURE THAT YOU KNOW WHAT YOU ARE DOING
++ *  @generated
++ */
++package org.apache.hive.service.cli.thrift;
++
++import org.apache.commons.lang.builder.HashCodeBuilder;
++import org.apache.thrift.scheme.IScheme;
++import org.apache.thrift.scheme.SchemeFactory;
++import org.apache.thrift.scheme.StandardScheme;
++
++import org.apache.thrift.scheme.TupleScheme;
++import org.apache.thrift.protocol.TTupleProtocol;
++import org.apache.thrift.protocol.TProtocolException;
++import org.apache.thrift.EncodingUtils;
++import org.apache.thrift.TException;
++import java.util.List;
++import java.util.ArrayList;
++import java.util.Map;
++import java.util.HashMap;
++import java.util.EnumMap;
++import java.util.Set;
++import java.util.HashSet;
++import java.util.EnumSet;
++import java.util.Collections;
++import java.util.BitSet;
++import java.nio.ByteBuffer;
++import java.util.Arrays;
++import org.slf4j.Logger;
++import org.slf4j.LoggerFactory;
++
++public class TGetLogReq implements org.apache.thrift.TBase<TGetLogReq, TGetLogReq._Fields>, java.io.Serializable, Cloneable {
++  private static final org.apache.thrift.protocol.TStruct STRUCT_DESC = new org.apache.thrift.protocol.TStruct("TGetLogReq");
++
++  private static final org.apache.thrift.protocol.TField OPERATION_HANDLE_FIELD_DESC = new org.apache.thrift.protocol.TField("operationHandle", org.apache.thrift.protocol.TType.STRUCT, (short)1);
++
++  private static final Map<Class<? extends IScheme>, SchemeFactory> schemes = new HashMap<Class<? extends IScheme>, SchemeFactory>();
++  static {
++    schemes.put(StandardScheme.class, new TGetLogReqStandardSchemeFactory());
++    schemes.put(TupleScheme.class, new TGetLogReqTupleSchemeFactory());
++  }
++
++  private TOperationHandle operationHandle; // required
++
++  /** The set of fields this struct contains, along with convenience methods for finding and manipulating them. */
++  public enum _Fields implements org.apache.thrift.TFieldIdEnum {
++    OPERATION_HANDLE((short)1, "operationHandle");
++
++    private static final Map<String, _Fields> byName = new HashMap<String, _Fields>();
++
++    static {
++      for (_Fields field : EnumSet.allOf(_Fields.class)) {
++        byName.put(field.getFieldName(), field);
++      }
++    }
++
++    /**
++     * Find the _Fields constant that matches fieldId, or null if its not found.
++     */
++    public static _Fields findByThriftId(int fieldId) {
++      switch(fieldId) {
++        case 1: // OPERATION_HANDLE
++          return OPERATION_HANDLE;
++        default:
++          return null;
++      }
++    }
++
++    /**
++     * Find the _Fields constant that matches fieldId, throwing an exception
++     * if it is not found.
++     */
++    public static _Fields findByThriftIdOrThrow(int fieldId) {
++      _Fields fields = findByThriftId(fieldId);
++      if (fields == null) throw new IllegalArgumentException("Field " + fieldId + " doesn't exist!");
++      return fields;
++    }
++
++    /**
++     * Find the _Fields constant that matches name, or null if its not found.
++     */
++    public static _Fields findByName(String name) {
++      return byName.get(name);
++    }
++
++    private final short _thriftId;
++    private final String _fieldName;
++
++    _Fields(short thriftId, String fieldName) {
++      _thriftId = thriftId;
++      _fieldName = fieldName;
++    }
++
++    public short getThriftFieldId() {
++      return _thriftId;
++    }
++
++    public String getFieldName() {
++      return _fieldName;
++    }
++  }
++
++  // isset id assignments
++  public static final Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> metaDataMap;
++  static {
++    Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> tmpMap = new EnumMap<_Fields, org.apache.thrift.meta_data.FieldMetaData>(_Fields.class);
++    tmpMap.put(_Fields.OPERATION_HANDLE, new org.apache.thrift.meta_data.FieldMetaData("operationHandle", org.apache.thrift.TFieldRequirementType.REQUIRED, 
++        new org.apache.thrift.meta_data.StructMetaData(org.apache.thrift.protocol.TType.STRUCT, TOperationHandle.class)));
++    metaDataMap = Collections.unmodifiableMap(tmpMap);
++    org.apache.thrift.meta_data.FieldMetaData.addStructMetaDataMap(TGetLogReq.class, metaDataMap);
++  }
++
++  public TGetLogReq() {
++  }
++
++  public TGetLogReq(
++    TOperationHandle operationHandle)
++  {
++    this();
++    this.operationHandle = operationHandle;
++  }
++
++  /**
++   * Performs a deep copy on <i>other</i>.
++   */
++  public TGetLogReq(TGetLogReq other) {
++    if (other.isSetOperationHandle()) {
++      this.operationHandle = new TOperationHandle(other.operationHandle);
++    }
++  }
++
++  public TGetLogReq deepCopy() {
++    return new TGetLogReq(this);
++  }
++
++  @Override
++  public void clear() {
++    this.operationHandle = null;
++  }
++
++  public TOperationHandle getOperationHandle() {
++    return this.operationHandle;
++  }
++
++  public void setOperationHandle(TOperationHandle operationHandle) {
++    this.operationHandle = operationHandle;
++  }
++
++  public void unsetOperationHandle() {
++    this.operationHandle = null;
++  }
++
++  /** Returns true if field operationHandle is set (has been assigned a value) and false otherwise */
++  public boolean isSetOperationHandle() {
++    return this.operationHandle != null;
++  }
++
++  public void setOperationHandleIsSet(boolean value) {
++    if (!value) {
++      this.operationHandle = null;
++    }
++  }
++
++  public void setFieldValue(_Fields field, Object value) {
++    switch (field) {
++    case OPERATION_HANDLE:
++      if (value == null) {
++        unsetOperationHandle();
++      } else {
++        setOperationHandle((TOperationHandle)value);
++      }
++      break;
++
++    }
++  }
++
++  public Object getFieldValue(_Fields field) {
++    switch (field) {
++    case OPERATION_HANDLE:
++      return getOperationHandle();
++
++    }
++    throw new IllegalStateException();
++  }
++
++  /** Returns true if field corresponding to fieldID is set (has been assigned a value) and false otherwise */
++  public boolean isSet(_Fields field) {
++    if (field == null) {
++      throw new IllegalArgumentException();
++    }
++
++    switch (field) {
++    case OPERATION_HANDLE:
++      return isSetOperationHandle();
++    }
++    throw new IllegalStateException();
++  }
++
++  @Override
++  public boolean equals(Object that) {
++    if (that == null)
++      return false;
++    if (that instanceof TGetLogReq)
++      return this.equals((TGetLogReq)that);
++    return false;
++  }
++
++  public boolean equals(TGetLogReq that) {
++    if (that == null)
++      return false;
++
++    boolean this_present_operationHandle = true && this.isSetOperationHandle();
++    boolean that_present_operationHandle = true && that.isSetOperationHandle();
++    if (this_present_operationHandle || that_present_operationHandle) {
++      if (!(this_present_operationHandle && that_present_operationHandle))
++        return false;
++      if (!this.operationHandle.equals(that.operationHandle))
++        return false;
++    }
++
++    return true;
++  }
++
++  @Override
++  public int hashCode() {
++    HashCodeBuilder builder = new HashCodeBuilder();
++
++    boolean present_operationHandle = true && (isSetOperationHandle());
++    builder.append(present_operationHandle);
++    if (present_operationHandle)
++      builder.append(operationHandle);
++
++    return builder.toHashCode();
++  }
++
++  public int compareTo(TGetLogReq other) {
++    if (!getClass().equals(other.getClass())) {
++      return getClass().getName().compareTo(other.getClass().getName());
++    }
++
++    int lastComparison = 0;
++    TGetLogReq typedOther = (TGetLogReq)other;
++
++    lastComparison = Boolean.valueOf(isSetOperationHandle()).compareTo(typedOther.isSetOperationHandle());
++    if (lastComparison != 0) {
++      return lastComparison;
++    }
++    if (isSetOperationHandle()) {
++      lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.operationHandle, typedOther.operationHandle);
++      if (lastComparison != 0) {
++        return lastComparison;
++      }
++    }
++    return 0;
++  }
++
++  public _Fields fieldForId(int fieldId) {
++    return _Fields.findByThriftId(fieldId);
++  }
++
++  public void read(org.apache.thrift.protocol.TProtocol iprot) throws org.apache.thrift.TException {
++    schemes.get(iprot.getScheme()).getScheme().read(iprot, this);
++  }
++
++  public void write(org.apache.thrift.protocol.TProtocol oprot) throws org.apache.thrift.TException {
++    schemes.get(oprot.getScheme()).getScheme().write(oprot, this);
++  }
++
++  @Override
++  public String toString() {
++    StringBuilder sb = new StringBuilder("TGetLogReq(");
++    boolean first = true;
++
++    sb.append("operationHandle:");
++    if (this.operationHandle == null) {
++      sb.append("null");
++    } else {
++      sb.append(this.operationHandle);
++    }
++    first = false;
++    sb.append(")");
++    return sb.toString();
++  }
++
++  public void validate() throws org.apache.thrift.TException {
++    // check for required fields
++    if (!isSetOperationHandle()) {
++      throw new org.apache.thrift.protocol.TProtocolException("Required field 'operationHandle' is unset! Struct:" + toString());
++    }
++
++    // check for sub-struct validity
++    if (operationHandle != null) {
++      operationHandle.validate();
++    }
++  }
++
++  private void writeObject(java.io.ObjectOutputStream out) throws java.io.IOException {
++    try {
++      write(new org.apache.thrift.protocol.TCompactProtocol(new org.apache.thrift.transport.TIOStreamTransport(out)));
++    } catch (org.apache.thrift.TException te) {
++      throw new java.io.IOException(te);
++    }
++  }
++
++  private void readObject(java.io.ObjectInputStream in) throws java.io.IOException, ClassNotFoundException {
++    try {
++      read(new org.apache.thrift.protocol.TCompactProtocol(new org.apache.thrift.transport.TIOStreamTransport(in)));
++    } catch (org.apache.thrift.TException te) {
++      throw new java.io.IOException(te);
++    }
++  }
++
++  private static class TGetLogReqStandardSchemeFactory implements SchemeFactory {
++    public TGetLogReqStandardScheme getScheme() {
++      return new TGetLogReqStandardScheme();
++    }
++  }
++
++  private static class TGetLogReqStandardScheme extends StandardScheme<TGetLogReq> {
++
++    public void read(org.apache.thrift.protocol.TProtocol iprot, TGetLogReq struct) throws org.apache.thrift.TException {
++      org.apache.thrift.protocol.TField schemeField;
++      iprot.readStructBegin();
++      while (true)
++      {
++        schemeField = iprot.readFieldBegin();
++        if (schemeField.type == org.apache.thrift.protocol.TType.STOP) { 
++          break;
++        }
++        switch (schemeField.id) {
++          case 1: // OPERATION_HANDLE
++            if (schemeField.type == org.apache.thrift.protocol.TType.STRUCT) {
++              struct.operationHandle = new TOperationHandle();
++              struct.operationHandle.read(iprot);
++              struct.setOperationHandleIsSet(true);
++            } else { 
++              org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
++            }
++            break;
++          default:
++            org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
++        }
++        iprot.readFieldEnd();
++      }
++      iprot.readStructEnd();
++      struct.validate();
++    }
++
++    public void write(org.apache.thrift.protocol.TProtocol oprot, TGetLogReq struct) throws org.apache.thrift.TException {
++      struct.validate();
++
++      oprot.writeStructBegin(STRUCT_DESC);
++      if (struct.operationHandle != null) {
++        oprot.writeFieldBegin(OPERATION_HANDLE_FIELD_DESC);
++        struct.operationHandle.write(oprot);
++        oprot.writeFieldEnd();
++      }
++      oprot.writeFieldStop();
++      oprot.writeStructEnd();
++    }
++
++  }
++
++  private static class TGetLogReqTupleSchemeFactory implements SchemeFactory {
++    public TGetLogReqTupleScheme getScheme() {
++      return new TGetLogReqTupleScheme();
++    }
++  }
++
++  private static class TGetLogReqTupleScheme extends TupleScheme<TGetLogReq> {
++
++    @Override
++    public void write(org.apache.thrift.protocol.TProtocol prot, TGetLogReq struct) throws org.apache.thrift.TException {
++      TTupleProtocol oprot = (TTupleProtocol) prot;
++      struct.operationHandle.write(oprot);
++    }
++
++    @Override
++    public void read(org.apache.thrift.protocol.TProtocol prot, TGetLogReq struct) throws org.apache.thrift.TException {
++      TTupleProtocol iprot = (TTupleProtocol) prot;
++      struct.operationHandle = new TOperationHandle();
++      struct.operationHandle.read(iprot);
++      struct.setOperationHandleIsSet(true);
++    }
++  }
++
++}
++
+diff --git a/src/service/src/gen/thrift/gen-javabean/org/apache/hive/service/cli/thrift/TGetLogResp.java b/src/service/src/gen/thrift/gen-javabean/org/apache/hive/service/cli/thrift/TGetLogResp.java
+new file mode 100644
+index 0000000..a9e5a4b
+--- /dev/null
++++ b/src/service/src/gen/thrift/gen-javabean/org/apache/hive/service/cli/thrift/TGetLogResp.java
+@@ -0,0 +1,491 @@
++/**
++ * Autogenerated by Thrift Compiler (0.9.0)
++ *
++ * DO NOT EDIT UNLESS YOU ARE SURE THAT YOU KNOW WHAT YOU ARE DOING
++ *  @generated
++ */
++package org.apache.hive.service.cli.thrift;
++
++import org.apache.commons.lang.builder.HashCodeBuilder;
++import org.apache.thrift.scheme.IScheme;
++import org.apache.thrift.scheme.SchemeFactory;
++import org.apache.thrift.scheme.StandardScheme;
++
++import org.apache.thrift.scheme.TupleScheme;
++import org.apache.thrift.protocol.TTupleProtocol;
++import org.apache.thrift.protocol.TProtocolException;
++import org.apache.thrift.EncodingUtils;
++import org.apache.thrift.TException;
++import java.util.List;
++import java.util.ArrayList;
++import java.util.Map;
++import java.util.HashMap;
++import java.util.EnumMap;
++import java.util.Set;
++import java.util.HashSet;
++import java.util.EnumSet;
++import java.util.Collections;
++import java.util.BitSet;
++import java.nio.ByteBuffer;
++import java.util.Arrays;
++import org.slf4j.Logger;
++import org.slf4j.LoggerFactory;
++
++public class TGetLogResp implements org.apache.thrift.TBase<TGetLogResp, TGetLogResp._Fields>, java.io.Serializable, Cloneable {
++  private static final org.apache.thrift.protocol.TStruct STRUCT_DESC = new org.apache.thrift.protocol.TStruct("TGetLogResp");
++
++  private static final org.apache.thrift.protocol.TField STATUS_FIELD_DESC = new org.apache.thrift.protocol.TField("status", org.apache.thrift.protocol.TType.STRUCT, (short)1);
++  private static final org.apache.thrift.protocol.TField LOG_FIELD_DESC = new org.apache.thrift.protocol.TField("log", org.apache.thrift.protocol.TType.STRING, (short)2);
++
++  private static final Map<Class<? extends IScheme>, SchemeFactory> schemes = new HashMap<Class<? extends IScheme>, SchemeFactory>();
++  static {
++    schemes.put(StandardScheme.class, new TGetLogRespStandardSchemeFactory());
++    schemes.put(TupleScheme.class, new TGetLogRespTupleSchemeFactory());
++  }
++
++  private TStatus status; // required
++  private String log; // required
++
++  /** The set of fields this struct contains, along with convenience methods for finding and manipulating them. */
++  public enum _Fields implements org.apache.thrift.TFieldIdEnum {
++    STATUS((short)1, "status"),
++    LOG((short)2, "log");
++
++    private static final Map<String, _Fields> byName = new HashMap<String, _Fields>();
++
++    static {
++      for (_Fields field : EnumSet.allOf(_Fields.class)) {
++        byName.put(field.getFieldName(), field);
++      }
++    }
++
++    /**
++     * Find the _Fields constant that matches fieldId, or null if its not found.
++     */
++    public static _Fields findByThriftId(int fieldId) {
++      switch(fieldId) {
++        case 1: // STATUS
++          return STATUS;
++        case 2: // LOG
++          return LOG;
++        default:
++          return null;
++      }
++    }
++
++    /**
++     * Find the _Fields constant that matches fieldId, throwing an exception
++     * if it is not found.
++     */
++    public static _Fields findByThriftIdOrThrow(int fieldId) {
++      _Fields fields = findByThriftId(fieldId);
++      if (fields == null) throw new IllegalArgumentException("Field " + fieldId + " doesn't exist!");
++      return fields;
++    }
++
++    /**
++     * Find the _Fields constant that matches name, or null if its not found.
++     */
++    public static _Fields findByName(String name) {
++      return byName.get(name);
++    }
++
++    private final short _thriftId;
++    private final String _fieldName;
++
++    _Fields(short thriftId, String fieldName) {
++      _thriftId = thriftId;
++      _fieldName = fieldName;
++    }
++
++    public short getThriftFieldId() {
++      return _thriftId;
++    }
++
++    public String getFieldName() {
++      return _fieldName;
++    }
++  }
++
++  // isset id assignments
++  public static final Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> metaDataMap;
++  static {
++    Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> tmpMap = new EnumMap<_Fields, org.apache.thrift.meta_data.FieldMetaData>(_Fields.class);
++    tmpMap.put(_Fields.STATUS, new org.apache.thrift.meta_data.FieldMetaData("status", org.apache.thrift.TFieldRequirementType.REQUIRED, 
++        new org.apache.thrift.meta_data.StructMetaData(org.apache.thrift.protocol.TType.STRUCT, TStatus.class)));
++    tmpMap.put(_Fields.LOG, new org.apache.thrift.meta_data.FieldMetaData("log", org.apache.thrift.TFieldRequirementType.REQUIRED, 
++        new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.STRING)));
++    metaDataMap = Collections.unmodifiableMap(tmpMap);
++    org.apache.thrift.meta_data.FieldMetaData.addStructMetaDataMap(TGetLogResp.class, metaDataMap);
++  }
++
++  public TGetLogResp() {
++  }
++
++  public TGetLogResp(
++    TStatus status,
++    String log)
++  {
++    this();
++    this.status = status;
++    this.log = log;
++  }
++
++  /**
++   * Performs a deep copy on <i>other</i>.
++   */
++  public TGetLogResp(TGetLogResp other) {
++    if (other.isSetStatus()) {
++      this.status = new TStatus(other.status);
++    }
++    if (other.isSetLog()) {
++      this.log = other.log;
++    }
++  }
++
++  public TGetLogResp deepCopy() {
++    return new TGetLogResp(this);
++  }
++
++  @Override
++  public void clear() {
++    this.status = null;
++    this.log = null;
++  }
++
++  public TStatus getStatus() {
++    return this.status;
++  }
++
++  public void setStatus(TStatus status) {
++    this.status = status;
++  }
++
++  public void unsetStatus() {
++    this.status = null;
++  }
++
++  /** Returns true if field status is set (has been assigned a value) and false otherwise */
++  public boolean isSetStatus() {
++    return this.status != null;
++  }
++
++  public void setStatusIsSet(boolean value) {
++    if (!value) {
++      this.status = null;
++    }
++  }
++
++  public String getLog() {
++    return this.log;
++  }
++
++  public void setLog(String log) {
++    this.log = log;
++  }
++
++  public void unsetLog() {
++    this.log = null;
++  }
++
++  /** Returns true if field log is set (has been assigned a value) and false otherwise */
++  public boolean isSetLog() {
++    return this.log != null;
++  }
++
++  public void setLogIsSet(boolean value) {
++    if (!value) {
++      this.log = null;
++    }
++  }
++
++  public void setFieldValue(_Fields field, Object value) {
++    switch (field) {
++    case STATUS:
++      if (value == null) {
++        unsetStatus();
++      } else {
++        setStatus((TStatus)value);
++      }
++      break;
++
++    case LOG:
++      if (value == null) {
++        unsetLog();
++      } else {
++        setLog((String)value);
++      }
++      break;
++
++    }
++  }
++
++  public Object getFieldValue(_Fields field) {
++    switch (field) {
++    case STATUS:
++      return getStatus();
++
++    case LOG:
++      return getLog();
++
++    }
++    throw new IllegalStateException();
++  }
++
++  /** Returns true if field corresponding to fieldID is set (has been assigned a value) and false otherwise */
++  public boolean isSet(_Fields field) {
++    if (field == null) {
++      throw new IllegalArgumentException();
++    }
++
++    switch (field) {
++    case STATUS:
++      return isSetStatus();
++    case LOG:
++      return isSetLog();
++    }
++    throw new IllegalStateException();
++  }
++
++  @Override
++  public boolean equals(Object that) {
++    if (that == null)
++      return false;
++    if (that instanceof TGetLogResp)
++      return this.equals((TGetLogResp)that);
++    return false;
++  }
++
++  public boolean equals(TGetLogResp that) {
++    if (that == null)
++      return false;
++
++    boolean this_present_status = true && this.isSetStatus();
++    boolean that_present_status = true && that.isSetStatus();
++    if (this_present_status || that_present_status) {
++      if (!(this_present_status && that_present_status))
++        return false;
++      if (!this.status.equals(that.status))
++        return false;
++    }
++
++    boolean this_present_log = true && this.isSetLog();
++    boolean that_present_log = true && that.isSetLog();
++    if (this_present_log || that_present_log) {
++      if (!(this_present_log && that_present_log))
++        return false;
++      if (!this.log.equals(that.log))
++        return false;
++    }
++
++    return true;
++  }
++
++  @Override
++  public int hashCode() {
++    HashCodeBuilder builder = new HashCodeBuilder();
++
++    boolean present_status = true && (isSetStatus());
++    builder.append(present_status);
++    if (present_status)
++      builder.append(status);
++
++    boolean present_log = true && (isSetLog());
++    builder.append(present_log);
++    if (present_log)
++      builder.append(log);
++
++    return builder.toHashCode();
++  }
++
++  public int compareTo(TGetLogResp other) {
++    if (!getClass().equals(other.getClass())) {
++      return getClass().getName().compareTo(other.getClass().getName());
++    }
++
++    int lastComparison = 0;
++    TGetLogResp typedOther = (TGetLogResp)other;
++
++    lastComparison = Boolean.valueOf(isSetStatus()).compareTo(typedOther.isSetStatus());
++    if (lastComparison != 0) {
++      return lastComparison;
++    }
++    if (isSetStatus()) {
++      lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.status, typedOther.status);
++      if (lastComparison != 0) {
++        return lastComparison;
++      }
++    }
++    lastComparison = Boolean.valueOf(isSetLog()).compareTo(typedOther.isSetLog());
++    if (lastComparison != 0) {
++      return lastComparison;
++    }
++    if (isSetLog()) {
++      lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.log, typedOther.log);
++      if (lastComparison != 0) {
++        return lastComparison;
++      }
++    }
++    return 0;
++  }
++
++  public _Fields fieldForId(int fieldId) {
++    return _Fields.findByThriftId(fieldId);
++  }
++
++  public void read(org.apache.thrift.protocol.TProtocol iprot) throws org.apache.thrift.TException {
++    schemes.get(iprot.getScheme()).getScheme().read(iprot, this);
++  }
++
++  public void write(org.apache.thrift.protocol.TProtocol oprot) throws org.apache.thrift.TException {
++    schemes.get(oprot.getScheme()).getScheme().write(oprot, this);
++  }
++
++  @Override
++  public String toString() {
++    StringBuilder sb = new StringBuilder("TGetLogResp(");
++    boolean first = true;
++
++    sb.append("status:");
++    if (this.status == null) {
++      sb.append("null");
++    } else {
++      sb.append(this.status);
++    }
++    first = false;
++    if (!first) sb.append(", ");
++    sb.append("log:");
++    if (this.log == null) {
++      sb.append("null");
++    } else {
++      sb.append(this.log);
++    }
++    first = false;
++    sb.append(")");
++    return sb.toString();
++  }
++
++  public void validate() throws org.apache.thrift.TException {
++    // check for required fields
++    if (!isSetStatus()) {
++      throw new org.apache.thrift.protocol.TProtocolException("Required field 'status' is unset! Struct:" + toString());
++    }
++
++    if (!isSetLog()) {
++      throw new org.apache.thrift.protocol.TProtocolException("Required field 'log' is unset! Struct:" + toString());
++    }
++
++    // check for sub-struct validity
++    if (status != null) {
++      status.validate();
++    }
++  }
++
++  private void writeObject(java.io.ObjectOutputStream out) throws java.io.IOException {
++    try {
++      write(new org.apache.thrift.protocol.TCompactProtocol(new org.apache.thrift.transport.TIOStreamTransport(out)));
++    } catch (org.apache.thrift.TException te) {
++      throw new java.io.IOException(te);
++    }
++  }
++
++  private void readObject(java.io.ObjectInputStream in) throws java.io.IOException, ClassNotFoundException {
++    try {
++      read(new org.apache.thrift.protocol.TCompactProtocol(new org.apache.thrift.transport.TIOStreamTransport(in)));
++    } catch (org.apache.thrift.TException te) {
++      throw new java.io.IOException(te);
++    }
++  }
++
++  private static class TGetLogRespStandardSchemeFactory implements SchemeFactory {
++    public TGetLogRespStandardScheme getScheme() {
++      return new TGetLogRespStandardScheme();
++    }
++  }
++
++  private static class TGetLogRespStandardScheme extends StandardScheme<TGetLogResp> {
++
++    public void read(org.apache.thrift.protocol.TProtocol iprot, TGetLogResp struct) throws org.apache.thrift.TException {
++      org.apache.thrift.protocol.TField schemeField;
++      iprot.readStructBegin();
++      while (true)
++      {
++        schemeField = iprot.readFieldBegin();
++        if (schemeField.type == org.apache.thrift.protocol.TType.STOP) { 
++          break;
++        }
++        switch (schemeField.id) {
++          case 1: // STATUS
++            if (schemeField.type == org.apache.thrift.protocol.TType.STRUCT) {
++              struct.status = new TStatus();
++              struct.status.read(iprot);
++              struct.setStatusIsSet(true);
++            } else { 
++              org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
++            }
++            break;
++          case 2: // LOG
++            if (schemeField.type == org.apache.thrift.protocol.TType.STRING) {
++              struct.log = iprot.readString();
++              struct.setLogIsSet(true);
++            } else { 
++              org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
++            }
++            break;
++          default:
++            org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
++        }
++        iprot.readFieldEnd();
++      }
++      iprot.readStructEnd();
++      struct.validate();
++    }
++
++    public void write(org.apache.thrift.protocol.TProtocol oprot, TGetLogResp struct) throws org.apache.thrift.TException {
++      struct.validate();
++
++      oprot.writeStructBegin(STRUCT_DESC);
++      if (struct.status != null) {
++        oprot.writeFieldBegin(STATUS_FIELD_DESC);
++        struct.status.write(oprot);
++        oprot.writeFieldEnd();
++      }
++      if (struct.log != null) {
++        oprot.writeFieldBegin(LOG_FIELD_DESC);
++        oprot.writeString(struct.log);
++        oprot.writeFieldEnd();
++      }
++      oprot.writeFieldStop();
++      oprot.writeStructEnd();
++    }
++
++  }
++
++  private static class TGetLogRespTupleSchemeFactory implements SchemeFactory {
++    public TGetLogRespTupleScheme getScheme() {
++      return new TGetLogRespTupleScheme();
++    }
++  }
++
++  private static class TGetLogRespTupleScheme extends TupleScheme<TGetLogResp> {
++
++    @Override
++    public void write(org.apache.thrift.protocol.TProtocol prot, TGetLogResp struct) throws org.apache.thrift.TException {
++      TTupleProtocol oprot = (TTupleProtocol) prot;
++      struct.status.write(oprot);
++      oprot.writeString(struct.log);
++    }
++
++    @Override
++    public void read(org.apache.thrift.protocol.TProtocol prot, TGetLogResp struct) throws org.apache.thrift.TException {
++      TTupleProtocol iprot = (TTupleProtocol) prot;
++      struct.status = new TStatus();
++      struct.status.read(iprot);
++      struct.setStatusIsSet(true);
++      struct.log = iprot.readString();
++      struct.setLogIsSet(true);
++    }
++  }
++
++}
++
+diff --git a/src/service/src/gen/thrift/gen-php/TCLIService.php b/src/service/src/gen/thrift/gen-php/TCLIService.php
+index d246296..da47993 100644
+--- a/src/service/src/gen/thrift/gen-php/TCLIService.php
++++ b/src/service/src/gen/thrift/gen-php/TCLIService.php
+@@ -35,6 +35,7 @@ interface TCLIServiceIf {
+   public function GetDelegationToken(\TGetDelegationTokenReq $req);
+   public function CancelDelegationToken(\TCancelDelegationTokenReq $req);
+   public function RenewDelegationToken(\TRenewDelegationTokenReq $req);
++  public function GetLog(\TGetLogReq $req);
+ }
+ 
+ class TCLIServiceClient implements \TCLIServiceIf {
+@@ -1017,6 +1018,57 @@ class TCLIServiceClient implements \TCLIServiceIf {
+     throw new \Exception("RenewDelegationToken failed: unknown result");
+   }
+ 
++  public function GetLog(\TGetLogReq $req)
++  {
++    $this->send_GetLog($req);
++    return $this->recv_GetLog();
++  }
++
++  public function send_GetLog(\TGetLogReq $req)
++  {
++    $args = new \TCLIService_GetLog_args();
++    $args->req = $req;
++    $bin_accel = ($this->output_ instanceof TProtocol::$TBINARYPROTOCOLACCELERATED) && function_exists('thrift_protocol_write_binary');
++    if ($bin_accel)
++    {
++      thrift_protocol_write_binary($this->output_, 'GetLog', TMessageType::CALL, $args, $this->seqid_, $this->output_->isStrictWrite());
++    }
++    else
++    {
++      $this->output_->writeMessageBegin('GetLog', TMessageType::CALL, $this->seqid_);
++      $args->write($this->output_);
++      $this->output_->writeMessageEnd();
++      $this->output_->getTransport()->flush();
++    }
++  }
++
++  public function recv_GetLog()
++  {
++    $bin_accel = ($this->input_ instanceof TProtocol::$TBINARYPROTOCOLACCELERATED) && function_exists('thrift_protocol_read_binary');
++    if ($bin_accel) $result = thrift_protocol_read_binary($this->input_, '\TCLIService_GetLog_result', $this->input_->isStrictRead());
++    else
++    {
++      $rseqid = 0;
++      $fname = null;
++      $mtype = 0;
++
++      $this->input_->readMessageBegin($fname, $mtype, $rseqid);
++      if ($mtype == TMessageType::EXCEPTION) {
++        $x = new TApplicationException();
++        $x->read($this->input_);
++        $this->input_->readMessageEnd();
++        throw $x;
++      }
++      $result = new \TCLIService_GetLog_result();
++      $result->read($this->input_);
++      $this->input_->readMessageEnd();
++    }
++    if ($result->success !== null) {
++      return $result->success;
++    }
++    throw new \Exception("GetLog failed: unknown result");
++  }
++
+ }
+ 
+ // HELPER FUNCTIONS AND STRUCTURES
+@@ -3947,4 +3999,158 @@ class TCLIService_RenewDelegationToken_result {
+ 
+ }
+ 
++class TCLIService_GetLog_args {
++  static $_TSPEC;
++
++  public $req = null;
++
++  public function __construct($vals=null) {
++    if (!isset(self::$_TSPEC)) {
++      self::$_TSPEC = array(
++        1 => array(
++          'var' => 'req',
++          'type' => TType::STRUCT,
++          'class' => '\TGetLogReq',
++          ),
++        );
++    }
++    if (is_array($vals)) {
++      if (isset($vals['req'])) {
++        $this->req = $vals['req'];
++      }
++    }
++  }
++
++  public function getName() {
++    return 'TCLIService_GetLog_args';
++  }
++
++  public function read($input)
++  {
++    $xfer = 0;
++    $fname = null;
++    $ftype = 0;
++    $fid = 0;
++    $xfer += $input->readStructBegin($fname);
++    while (true)
++    {
++      $xfer += $input->readFieldBegin($fname, $ftype, $fid);
++      if ($ftype == TType::STOP) {
++        break;
++      }
++      switch ($fid)
++      {
++        case 1:
++          if ($ftype == TType::STRUCT) {
++            $this->req = new \TGetLogReq();
++            $xfer += $this->req->read($input);
++          } else {
++            $xfer += $input->skip($ftype);
++          }
++          break;
++        default:
++          $xfer += $input->skip($ftype);
++          break;
++      }
++      $xfer += $input->readFieldEnd();
++    }
++    $xfer += $input->readStructEnd();
++    return $xfer;
++  }
++
++  public function write($output) {
++    $xfer = 0;
++    $xfer += $output->writeStructBegin('TCLIService_GetLog_args');
++    if ($this->req !== null) {
++      if (!is_object($this->req)) {
++        throw new TProtocolException('Bad type in structure.', TProtocolException::INVALID_DATA);
++      }
++      $xfer += $output->writeFieldBegin('req', TType::STRUCT, 1);
++      $xfer += $this->req->write($output);
++      $xfer += $output->writeFieldEnd();
++    }
++    $xfer += $output->writeFieldStop();
++    $xfer += $output->writeStructEnd();
++    return $xfer;
++  }
++
++}
++
++class TCLIService_GetLog_result {
++  static $_TSPEC;
++
++  public $success = null;
++
++  public function __construct($vals=null) {
++    if (!isset(self::$_TSPEC)) {
++      self::$_TSPEC = array(
++        0 => array(
++          'var' => 'success',
++          'type' => TType::STRUCT,
++          'class' => '\TGetLogResp',
++          ),
++        );
++    }
++    if (is_array($vals)) {
++      if (isset($vals['success'])) {
++        $this->success = $vals['success'];
++      }
++    }
++  }
++
++  public function getName() {
++    return 'TCLIService_GetLog_result';
++  }
++
++  public function read($input)
++  {
++    $xfer = 0;
++    $fname = null;
++    $ftype = 0;
++    $fid = 0;
++    $xfer += $input->readStructBegin($fname);
++    while (true)
++    {
++      $xfer += $input->readFieldBegin($fname, $ftype, $fid);
++      if ($ftype == TType::STOP) {
++        break;
++      }
++      switch ($fid)
++      {
++        case 0:
++          if ($ftype == TType::STRUCT) {
++            $this->success = new \TGetLogResp();
++            $xfer += $this->success->read($input);
++          } else {
++            $xfer += $input->skip($ftype);
++          }
++          break;
++        default:
++          $xfer += $input->skip($ftype);
++          break;
++      }
++      $xfer += $input->readFieldEnd();
++    }
++    $xfer += $input->readStructEnd();
++    return $xfer;
++  }
++
++  public function write($output) {
++    $xfer = 0;
++    $xfer += $output->writeStructBegin('TCLIService_GetLog_result');
++    if ($this->success !== null) {
++      if (!is_object($this->success)) {
++        throw new TProtocolException('Bad type in structure.', TProtocolException::INVALID_DATA);
++      }
++      $xfer += $output->writeFieldBegin('success', TType::STRUCT, 0);
++      $xfer += $this->success->write($output);
++      $xfer += $output->writeFieldEnd();
++    }
++    $xfer += $output->writeFieldStop();
++    $xfer += $output->writeStructEnd();
++    return $xfer;
++  }
++
++}
++
+ 
+diff --git a/src/service/src/gen/thrift/gen-py/TCLIService/TCLIService-remote b/src/service/src/gen/thrift/gen-py/TCLIService/TCLIService-remote
+index f6ff43f..2562ef2 100755
+--- a/src/service/src/gen/thrift/gen-py/TCLIService/TCLIService-remote
++++ b/src/service/src/gen/thrift/gen-py/TCLIService/TCLIService-remote
+@@ -42,6 +42,7 @@ if len(sys.argv) <= 1 or sys.argv[1] == '--help':
+   print '  TGetDelegationTokenResp GetDelegationToken(TGetDelegationTokenReq req)'
+   print '  TCancelDelegationTokenResp CancelDelegationToken(TCancelDelegationTokenReq req)'
+   print '  TRenewDelegationTokenResp RenewDelegationToken(TRenewDelegationTokenReq req)'
++  print '  TGetLogResp GetLog(TGetLogReq req)'
+   print ''
+   sys.exit(0)
+ 
+@@ -207,6 +208,12 @@ elif cmd == 'RenewDelegationToken':
+     sys.exit(1)
+   pp.pprint(client.RenewDelegationToken(eval(args[0]),))
+ 
++elif cmd == 'GetLog':
++  if len(args) != 1:
++    print 'GetLog requires 1 args'
++    sys.exit(1)
++  pp.pprint(client.GetLog(eval(args[0]),))
++
+ else:
+   print 'Unrecognized method %s' % cmd
+   sys.exit(1)
+diff --git a/src/service/src/gen/thrift/gen-py/TCLIService/TCLIService.py b/src/service/src/gen/thrift/gen-py/TCLIService/TCLIService.py
+index ebc6574..ef1a25b 100644
+--- a/src/service/src/gen/thrift/gen-py/TCLIService/TCLIService.py
++++ b/src/service/src/gen/thrift/gen-py/TCLIService/TCLIService.py
+@@ -151,6 +151,13 @@ def RenewDelegationToken(self, req):
+     """
+     pass
+ 
++  def GetLog(self, req):
++    """
++    Parameters:
++     - req
++    """
++    pass
++
+ 
+ class Client(Iface):
+   def __init__(self, iprot, oprot=None):
+@@ -729,6 +736,36 @@ def recv_RenewDelegationToken(self, ):
+       return result.success
+     raise TApplicationException(TApplicationException.MISSING_RESULT, "RenewDelegationToken failed: unknown result");
+ 
++  def GetLog(self, req):
++    """
++    Parameters:
++     - req
++    """
++    self.send_GetLog(req)
++    return self.recv_GetLog()
++
++  def send_GetLog(self, req):
++    self._oprot.writeMessageBegin('GetLog', TMessageType.CALL, self._seqid)
++    args = GetLog_args()
++    args.req = req
++    args.write(self._oprot)
++    self._oprot.writeMessageEnd()
++    self._oprot.trans.flush()
++
++  def recv_GetLog(self, ):
++    (fname, mtype, rseqid) = self._iprot.readMessageBegin()
++    if mtype == TMessageType.EXCEPTION:
++      x = TApplicationException()
++      x.read(self._iprot)
++      self._iprot.readMessageEnd()
++      raise x
++    result = GetLog_result()
++    result.read(self._iprot)
++    self._iprot.readMessageEnd()
++    if result.success is not None:
++      return result.success
++    raise TApplicationException(TApplicationException.MISSING_RESULT, "GetLog failed: unknown result");
++
+ 
+ class Processor(Iface, TProcessor):
+   def __init__(self, handler):
+@@ -753,6 +790,7 @@ def __init__(self, handler):
+     self._processMap["GetDelegationToken"] = Processor.process_GetDelegationToken
+     self._processMap["CancelDelegationToken"] = Processor.process_CancelDelegationToken
+     self._processMap["RenewDelegationToken"] = Processor.process_RenewDelegationToken
++    self._processMap["GetLog"] = Processor.process_GetLog
+ 
+   def process(self, iprot, oprot):
+     (name, type, seqid) = iprot.readMessageBegin()
+@@ -978,6 +1016,17 @@ def process_RenewDelegationToken(self, seqid, iprot, oprot):
+     oprot.writeMessageEnd()
+     oprot.trans.flush()
+ 
++  def process_GetLog(self, seqid, iprot, oprot):
++    args = GetLog_args()
++    args.read(iprot)
++    iprot.readMessageEnd()
++    result = GetLog_result()
++    result.success = self._handler.GetLog(args.req)
++    oprot.writeMessageBegin("GetLog", TMessageType.REPLY, seqid)
++    result.write(oprot)
++    oprot.writeMessageEnd()
++    oprot.trans.flush()
++
+ 
+ # HELPER FUNCTIONS AND STRUCTURES
+ 
+@@ -3279,3 +3328,124 @@ def __eq__(self, other):
+ 
+   def __ne__(self, other):
+     return not (self == other)
++
++class GetLog_args:
++  """
++  Attributes:
++   - req
++  """
++
++  thrift_spec = (
++    None, # 0
++    (1, TType.STRUCT, 'req', (TGetLogReq, TGetLogReq.thrift_spec), None, ), # 1
++  )
++
++  def __init__(self, req=None,):
++    self.req = req
++
++  def read(self, iprot):
++    if iprot.__class__ == TBinaryProtocol.TBinaryProtocolAccelerated and isinstance(iprot.trans, TTransport.CReadableTransport) and self.thrift_spec is not None and fastbinary is not None:
++      fastbinary.decode_binary(self, iprot.trans, (self.__class__, self.thrift_spec))
++      return
++    iprot.readStructBegin()
++    while True:
++      (fname, ftype, fid) = iprot.readFieldBegin()
++      if ftype == TType.STOP:
++        break
++      if fid == 1:
++        if ftype == TType.STRUCT:
++          self.req = TGetLogReq()
++          self.req.read(iprot)
++        else:
++          iprot.skip(ftype)
++      else:
++        iprot.skip(ftype)
++      iprot.readFieldEnd()
++    iprot.readStructEnd()
++
++  def write(self, oprot):
++    if oprot.__class__ == TBinaryProtocol.TBinaryProtocolAccelerated and self.thrift_spec is not None and fastbinary is not None:
++      oprot.trans.write(fastbinary.encode_binary(self, (self.__class__, self.thrift_spec)))
++      return
++    oprot.writeStructBegin('GetLog_args')
++    if self.req is not None:
++      oprot.writeFieldBegin('req', TType.STRUCT, 1)
++      self.req.write(oprot)
++      oprot.writeFieldEnd()
++    oprot.writeFieldStop()
++    oprot.writeStructEnd()
++
++  def validate(self):
++    return
++
++
++  def __repr__(self):
++    L = ['%s=%r' % (key, value)
++      for key, value in self.__dict__.iteritems()]
++    return '%s(%s)' % (self.__class__.__name__, ', '.join(L))
++
++  def __eq__(self, other):
++    return isinstance(other, self.__class__) and self.__dict__ == other.__dict__
++
++  def __ne__(self, other):
++    return not (self == other)
++
++class GetLog_result:
++  """
++  Attributes:
++   - success
++  """
++
++  thrift_spec = (
++    (0, TType.STRUCT, 'success', (TGetLogResp, TGetLogResp.thrift_spec), None, ), # 0
++  )
++
++  def __init__(self, success=None,):
++    self.success = success
++
++  def read(self, iprot):
++    if iprot.__class__ == TBinaryProtocol.TBinaryProtocolAccelerated and isinstance(iprot.trans, TTransport.CReadableTransport) and self.thrift_spec is not None and fastbinary is not None:
++      fastbinary.decode_binary(self, iprot.trans, (self.__class__, self.thrift_spec))
++      return
++    iprot.readStructBegin()
++    while True:
++      (fname, ftype, fid) = iprot.readFieldBegin()
++      if ftype == TType.STOP:
++        break
++      if fid == 0:
++        if ftype == TType.STRUCT:
++          self.success = TGetLogResp()
++          self.success.read(iprot)
++        else:
++          iprot.skip(ftype)
++      else:
++        iprot.skip(ftype)
++      iprot.readFieldEnd()
++    iprot.readStructEnd()
++
++  def write(self, oprot):
++    if oprot.__class__ == TBinaryProtocol.TBinaryProtocolAccelerated and self.thrift_spec is not None and fastbinary is not None:
++      oprot.trans.write(fastbinary.encode_binary(self, (self.__class__, self.thrift_spec)))
++      return
++    oprot.writeStructBegin('GetLog_result')
++    if self.success is not None:
++      oprot.writeFieldBegin('success', TType.STRUCT, 0)
++      self.success.write(oprot)
++      oprot.writeFieldEnd()
++    oprot.writeFieldStop()
++    oprot.writeStructEnd()
++
++  def validate(self):
++    return
++
++
++  def __repr__(self):
++    L = ['%s=%r' % (key, value)
++      for key, value in self.__dict__.iteritems()]
++    return '%s(%s)' % (self.__class__.__name__, ', '.join(L))
++
++  def __eq__(self, other):
++    return isinstance(other, self.__class__) and self.__dict__ == other.__dict__
++
++  def __ne__(self, other):
++    return not (self == other)
+diff --git a/src/service/src/gen/thrift/gen-py/TCLIService/ttypes.py b/src/service/src/gen/thrift/gen-py/TCLIService/ttypes.py
+index b1c0b40..ae26061 100644
+--- a/src/service/src/gen/thrift/gen-py/TCLIService/ttypes.py
++++ b/src/service/src/gen/thrift/gen-py/TCLIService/ttypes.py
+@@ -5696,3 +5696,143 @@ def __eq__(self, other):
+ 
+   def __ne__(self, other):
+     return not (self == other)
++
++class TGetLogReq:
++  """
++  Attributes:
++   - operationHandle
++  """
++
++  thrift_spec = (
++    None, # 0
++    (1, TType.STRUCT, 'operationHandle', (TOperationHandle, TOperationHandle.thrift_spec), None, ), # 1
++  )
++
++  def __init__(self, operationHandle=None,):
++    self.operationHandle = operationHandle
++
++  def read(self, iprot):
++    if iprot.__class__ == TBinaryProtocol.TBinaryProtocolAccelerated and isinstance(iprot.trans, TTransport.CReadableTransport) and self.thrift_spec is not None and fastbinary is not None:
++      fastbinary.decode_binary(self, iprot.trans, (self.__class__, self.thrift_spec))
++      return
++    iprot.readStructBegin()
++    while True:
++      (fname, ftype, fid) = iprot.readFieldBegin()
++      if ftype == TType.STOP:
++        break
++      if fid == 1:
++        if ftype == TType.STRUCT:
++          self.operationHandle = TOperationHandle()
++          self.operationHandle.read(iprot)
++        else:
++          iprot.skip(ftype)
++      else:
++        iprot.skip(ftype)
++      iprot.readFieldEnd()
++    iprot.readStructEnd()
++
++  def write(self, oprot):
++    if oprot.__class__ == TBinaryProtocol.TBinaryProtocolAccelerated and self.thrift_spec is not None and fastbinary is not None:
++      oprot.trans.write(fastbinary.encode_binary(self, (self.__class__, self.thrift_spec)))
++      return
++    oprot.writeStructBegin('TGetLogReq')
++    if self.operationHandle is not None:
++      oprot.writeFieldBegin('operationHandle', TType.STRUCT, 1)
++      self.operationHandle.write(oprot)
++      oprot.writeFieldEnd()
++    oprot.writeFieldStop()
++    oprot.writeStructEnd()
++
++  def validate(self):
++    if self.operationHandle is None:
++      raise TProtocol.TProtocolException(message='Required field operationHandle is unset!')
++    return
++
++
++  def __repr__(self):
++    L = ['%s=%r' % (key, value)
++      for key, value in self.__dict__.iteritems()]
++    return '%s(%s)' % (self.__class__.__name__, ', '.join(L))
++
++  def __eq__(self, other):
++    return isinstance(other, self.__class__) and self.__dict__ == other.__dict__
++
++  def __ne__(self, other):
++    return not (self == other)
++
++class TGetLogResp:
++  """
++  Attributes:
++   - status
++   - log
++  """
++
++  thrift_spec = (
++    None, # 0
++    (1, TType.STRUCT, 'status', (TStatus, TStatus.thrift_spec), None, ), # 1
++    (2, TType.STRING, 'log', None, None, ), # 2
++  )
++
++  def __init__(self, status=None, log=None,):
++    self.status = status
++    self.log = log
++
++  def read(self, iprot):
++    if iprot.__class__ == TBinaryProtocol.TBinaryProtocolAccelerated and isinstance(iprot.trans, TTransport.CReadableTransport) and self.thrift_spec is not None and fastbinary is not None:
++      fastbinary.decode_binary(self, iprot.trans, (self.__class__, self.thrift_spec))
++      return
++    iprot.readStructBegin()
++    while True:
++      (fname, ftype, fid) = iprot.readFieldBegin()
++      if ftype == TType.STOP:
++        break
++      if fid == 1:
++        if ftype == TType.STRUCT:
++          self.status = TStatus()
++          self.status.read(iprot)
++        else:
++          iprot.skip(ftype)
++      elif fid == 2:
++        if ftype == TType.STRING:
++          self.log = iprot.readString();
++        else:
++          iprot.skip(ftype)
++      else:
++        iprot.skip(ftype)
++      iprot.readFieldEnd()
++    iprot.readStructEnd()
++
++  def write(self, oprot):
++    if oprot.__class__ == TBinaryProtocol.TBinaryProtocolAccelerated and self.thrift_spec is not None and fastbinary is not None:
++      oprot.trans.write(fastbinary.encode_binary(self, (self.__class__, self.thrift_spec)))
++      return
++    oprot.writeStructBegin('TGetLogResp')
++    if self.status is not None:
++      oprot.writeFieldBegin('status', TType.STRUCT, 1)
++      self.status.write(oprot)
++      oprot.writeFieldEnd()
++    if self.log is not None:
++      oprot.writeFieldBegin('log', TType.STRING, 2)
++      oprot.writeString(self.log)
++      oprot.writeFieldEnd()
++    oprot.writeFieldStop()
++    oprot.writeStructEnd()
++
++  def validate(self):
++    if self.status is None:
++      raise TProtocol.TProtocolException(message='Required field status is unset!')
++    if self.log is None:
++      raise TProtocol.TProtocolException(message='Required field log is unset!')
++    return
++
++
++  def __repr__(self):
++    L = ['%s=%r' % (key, value)
++      for key, value in self.__dict__.iteritems()]
++    return '%s(%s)' % (self.__class__.__name__, ', '.join(L))
++
++  def __eq__(self, other):
++    return isinstance(other, self.__class__) and self.__dict__ == other.__dict__
++
++  def __ne__(self, other):
++    return not (self == other)
+diff --git a/src/service/src/gen/thrift/gen-rb/t_c_l_i_service.rb b/src/service/src/gen/thrift/gen-rb/t_c_l_i_service.rb
+index fd1ca9a..00fb2b4 100644
+--- a/src/service/src/gen/thrift/gen-rb/t_c_l_i_service.rb
++++ b/src/service/src/gen/thrift/gen-rb/t_c_l_i_service.rb
+@@ -296,6 +296,21 @@ module TCLIService
+       raise ::Thrift::ApplicationException.new(::Thrift::ApplicationException::MISSING_RESULT, 'RenewDelegationToken failed: unknown result')
+     end
+ 
++    def GetLog(req)
++      send_GetLog(req)
++      return recv_GetLog()
++    end
++
++    def send_GetLog(req)
++      send_message('GetLog', GetLog_args, :req => req)
++    end
++
++    def recv_GetLog()
++      result = receive_message(GetLog_result)
++      return result.success unless result.success.nil?
++      raise ::Thrift::ApplicationException.new(::Thrift::ApplicationException::MISSING_RESULT, 'GetLog failed: unknown result')
++    end
++
+   end
+ 
+   class Processor
+@@ -434,6 +449,13 @@ module TCLIService
+       write_result(result, oprot, 'RenewDelegationToken', seqid)
+     end
+ 
++    def process_GetLog(seqid, iprot, oprot)
++      args = read_args(iprot, GetLog_args)
++      result = GetLog_result.new()
++      result.success = @handler.GetLog(args.req)
++      write_result(result, oprot, 'GetLog', seqid)
++    end
++
+   end
+ 
+   # HELPER FUNCTIONS AND STRUCTURES
+@@ -1046,5 +1068,37 @@ module TCLIService
+     ::Thrift::Struct.generate_accessors self
+   end
+ 
++  class GetLog_args
++    include ::Thrift::Struct, ::Thrift::Struct_Union
++    REQ = 1
++
++    FIELDS = {
++      REQ => {:type => ::Thrift::Types::STRUCT, :name => 'req', :class => ::TGetLogReq}
++    }
++
++    def struct_fields; FIELDS; end
++
++    def validate
++    end
++
++    ::Thrift::Struct.generate_accessors self
++  end
++
++  class GetLog_result
++    include ::Thrift::Struct, ::Thrift::Struct_Union
++    SUCCESS = 0
++
++    FIELDS = {
++      SUCCESS => {:type => ::Thrift::Types::STRUCT, :name => 'success', :class => ::TGetLogResp}
++    }
++
++    def struct_fields; FIELDS; end
++
++    def validate
++    end
++
++    ::Thrift::Struct.generate_accessors self
++  end
++
+ end
+ 
+diff --git a/src/service/src/gen/thrift/gen-rb/t_c_l_i_service_types.rb b/src/service/src/gen/thrift/gen-rb/t_c_l_i_service_types.rb
+index ce015a0..7bbb388 100644
+--- a/src/service/src/gen/thrift/gen-rb/t_c_l_i_service_types.rb
++++ b/src/service/src/gen/thrift/gen-rb/t_c_l_i_service_types.rb
+@@ -1581,3 +1581,40 @@ class TRenewDelegationTokenResp
+   ::Thrift::Struct.generate_accessors self
+ end
+ 
++class TGetLogReq
++  include ::Thrift::Struct, ::Thrift::Struct_Union
++  OPERATIONHANDLE = 1
++
++  FIELDS = {
++    OPERATIONHANDLE => {:type => ::Thrift::Types::STRUCT, :name => 'operationHandle', :class => ::TOperationHandle}
++  }
++
++  def struct_fields; FIELDS; end
++
++  def validate
++    raise ::Thrift::ProtocolException.new(::Thrift::ProtocolException::UNKNOWN, 'Required field operationHandle is unset!') unless @operationHandle
++  end
++
++  ::Thrift::Struct.generate_accessors self
++end
++
++class TGetLogResp
++  include ::Thrift::Struct, ::Thrift::Struct_Union
++  STATUS = 1
++  LOG = 2
++
++  FIELDS = {
++    STATUS => {:type => ::Thrift::Types::STRUCT, :name => 'status', :class => ::TStatus},
++    LOG => {:type => ::Thrift::Types::STRING, :name => 'log'}
++  }
++
++  def struct_fields; FIELDS; end
++
++  def validate
++    raise ::Thrift::ProtocolException.new(::Thrift::ProtocolException::UNKNOWN, 'Required field status is unset!') unless @status
++    raise ::Thrift::ProtocolException.new(::Thrift::ProtocolException::UNKNOWN, 'Required field log is unset!') unless @log
++  end
++
++  ::Thrift::Struct.generate_accessors self
++end
++
+diff --git a/src/service/src/java/org/apache/hive/service/cli/CLIService.java b/src/service/src/java/org/apache/hive/service/cli/CLIService.java
+index b1f6f1a..cfbd3e8 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/CLIService.java
++++ b/src/service/src/java/org/apache/hive/service/cli/CLIService.java
+@@ -38,6 +38,7 @@
+ import org.apache.hive.service.CompositeService;
+ import org.apache.hive.service.ServiceException;
+ import org.apache.hive.service.auth.HiveAuthFactory;
++import org.apache.hive.service.cli.log.OperationLog;
+ import org.apache.hive.service.cli.session.HiveSession;
+ import org.apache.hive.service.cli.session.SessionManager;
+ 
+@@ -282,9 +283,11 @@ public OperationHandle getFunctions(SessionHandle sessionHandle,
+   @Override
+   public OperationState getOperationStatus(OperationHandle opHandle)
+       throws HiveSQLException {
++    startLogCapture(opHandle);
+     OperationState opState = sessionManager.getOperationManager().getOperationState(opHandle);
+     LOG.info(opHandle + ": getOperationStatus()");
+     sessionManager.clearIpAddress();
++    stopLogCapture();
+     return opState;
+   }
+ 
+@@ -294,10 +297,12 @@ public OperationState getOperationStatus(OperationHandle opHandle)
+   @Override
+   public void cancelOperation(OperationHandle opHandle)
+       throws HiveSQLException {
++    startLogCapture(opHandle);
+     sessionManager.getOperationManager().getOperation(opHandle).
+         getParentSession().cancelOperation(opHandle);
+     LOG.info(opHandle + ": cancelOperation()");
+     sessionManager.clearIpAddress();
++    stopLogCapture();
+   }
+ 
+   /* (non-Javadoc)
+@@ -306,10 +311,13 @@ public void cancelOperation(OperationHandle opHandle)
+   @Override
+   public void closeOperation(OperationHandle opHandle)
+       throws HiveSQLException {
++    startLogCapture(opHandle);
+     sessionManager.getOperationManager().getOperation(opHandle).
+         getParentSession().closeOperation(opHandle);
+     LOG.info(opHandle + ": closeOperation");
+     sessionManager.clearIpAddress();
++    sessionManager.getLogManager().destroyOperationLog(opHandle);
++    stopLogCapture();
+   }
+ 
+   /* (non-Javadoc)
+@@ -318,10 +326,12 @@ public void closeOperation(OperationHandle opHandle)
+   @Override
+   public TableSchema getResultSetMetadata(OperationHandle opHandle)
+       throws HiveSQLException {
++    startLogCapture(opHandle);
+     TableSchema tableSchema = sessionManager.getOperationManager().getOperation(opHandle).
+         getParentSession().getResultSetMetadata(opHandle);
+     LOG.info(opHandle + ": getResultSetMetadata()");
+     sessionManager.clearIpAddress();
++    stopLogCapture();
+     return tableSchema;
+   }
+ 
+@@ -331,10 +341,12 @@ public TableSchema getResultSetMetadata(OperationHandle opHandle)
+   @Override
+   public RowSet fetchResults(OperationHandle opHandle, FetchOrientation orientation, long maxRows)
+       throws HiveSQLException {
++    startLogCapture(opHandle);
+     RowSet rowSet = sessionManager.getOperationManager().getOperation(opHandle).
+         getParentSession().fetchResults(opHandle, orientation, maxRows);
+     LOG.info(opHandle + ": fetchResults()");
+     sessionManager.clearIpAddress();
++    stopLogCapture();
+     return rowSet;
+   }
+ 
+@@ -344,10 +356,12 @@ public RowSet fetchResults(OperationHandle opHandle, FetchOrientation orientatio
+   @Override
+   public RowSet fetchResults(OperationHandle opHandle)
+       throws HiveSQLException {
++    startLogCapture(opHandle);
+     RowSet rowSet = sessionManager.getOperationManager().getOperation(opHandle).
+         getParentSession().fetchResults(opHandle);
+     LOG.info(opHandle + ": fetchResults()");
+     sessionManager.clearIpAddress();
++    stopLogCapture();
+     return rowSet;
+   }
+ 
+@@ -430,4 +444,25 @@ public void renewDelegationToken(SessionHandle sessionHandle, HiveAuthFactory au
+     sessionManager.getSession(sessionHandle).renewDelegationToken(authFactory, tokenStr);
+     LOG.info(sessionHandle  + ": renewDelegationToken()");
+   }
++
++  /* (non-Javadoc)
++   * @see org.apache.hive.service.cli.ICLIService#getLog(org.apache.hive.service.cli.OperationHandle)
++   */
++   @Override
++   public String getLog(OperationHandle opHandle)
++      throws HiveSQLException {
++     OperationLog log = sessionManager.getLogManager().getOperationLogByOperation(opHandle, false);
++     LOG.info(opHandle  + ": getLog()");
++     sessionManager.clearIpAddress();
++     return log.readOperationLog();
++   }
++
++  private void startLogCapture(OperationHandle operationHandle) throws HiveSQLException {
++    sessionManager.getLogManager().unregisterCurrentThread();
++    sessionManager.getLogManager().registerCurrentThread(operationHandle);
++  }
++
++  private void stopLogCapture() {
++    sessionManager.getLogManager().unregisterCurrentThread();
++  }
+ }
+diff --git a/src/service/src/java/org/apache/hive/service/cli/CLIServiceClient.java b/src/service/src/java/org/apache/hive/service/cli/CLIServiceClient.java
+index 9e8542b..ddea1e7 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/CLIServiceClient.java
++++ b/src/service/src/java/org/apache/hive/service/cli/CLIServiceClient.java
+@@ -172,4 +172,7 @@ public abstract void cancelDelegationToken(SessionHandle sessionHandle, HiveAuth
+   public abstract void renewDelegationToken(SessionHandle sessionHandle, HiveAuthFactory authFactory,
+       String tokenStr) throws HiveSQLException;
+ 
++  @Override
++  public abstract String getLog(OperationHandle opHandle) throws HiveSQLException;
++
+ }
+diff --git a/src/service/src/java/org/apache/hive/service/cli/EmbeddedCLIServiceClient.java b/src/service/src/java/org/apache/hive/service/cli/EmbeddedCLIServiceClient.java
+index 8b960e2..50e1405 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/EmbeddedCLIServiceClient.java
++++ b/src/service/src/java/org/apache/hive/service/cli/EmbeddedCLIServiceClient.java
+@@ -208,4 +208,10 @@ public void renewDelegationToken(SessionHandle sessionHandle, HiveAuthFactory au
+       String tokenStr) throws HiveSQLException {
+     cliService.renewDelegationToken(sessionHandle, authFactory, tokenStr);
+   }
++
++  @Override
++  public String getLog(OperationHandle opHandle)
++      throws HiveSQLException {
++    return cliService.getLog(opHandle);
++  }
+ }
+diff --git a/src/service/src/java/org/apache/hive/service/cli/ICLIService.java b/src/service/src/java/org/apache/hive/service/cli/ICLIService.java
+index c4ebed5..be85e0a 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/ICLIService.java
++++ b/src/service/src/java/org/apache/hive/service/cli/ICLIService.java
+@@ -103,4 +103,6 @@ public abstract void renewDelegationToken(SessionHandle sessionHandle, HiveAuthF
+       String tokenStr) throws HiveSQLException;
+ 
+ 
++  public abstract String getLog(OperationHandle opHandle)
++      throws HiveSQLException;
+ }
+diff --git a/src/service/src/java/org/apache/hive/service/cli/log/LinkedStringBuffer.java b/src/service/src/java/org/apache/hive/service/cli/log/LinkedStringBuffer.java
+new file mode 100644
+index 0000000..c4a5106
+--- /dev/null
++++ b/src/service/src/java/org/apache/hive/service/cli/log/LinkedStringBuffer.java
+@@ -0,0 +1,80 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package org.apache.hive.service.cli.log;
++
++import java.util.LinkedList;
++
++/**
++ * A linked string buffer with a capacity limit.
++ */
++public class LinkedStringBuffer {
++
++  private final LinkedList<String> list;
++  private final long capacity;
++  private int size;
++
++  /**
++   * Create a buffer with the specified capacity on the number of characters.
++   */
++  public LinkedStringBuffer(long capacity) {
++    this.capacity = capacity;
++    list = new LinkedList<String>();
++  }
++
++  /**
++   * @return Size (number of characters) in the buffer
++   */
++  public synchronized long size() {
++    return size;
++  }
++
++  /**
++   * Write to the buffer, which will remove previously written strings if
++   * we don't fit in capacity.
++   */
++  public synchronized void write(String data) {
++    list.add(data);
++    size += data.length();
++
++    // Trim from the front
++    while (size > capacity) {
++      String evicted = list.remove(0);
++      size -= evicted.length();
++    }
++  }
++
++  /**
++   * @return All the data in the buffer.
++   */
++  public synchronized String read() {
++    StringBuilder sb = new StringBuilder(size);
++    for (String s : list) {
++      sb.append(s);
++    }
++    return sb.toString();
++  }
++
++  /**
++   * Remove all stored data.
++   */
++  public synchronized void clear() {
++    list.clear();
++    size = 0;
++  }
++}
+diff --git a/src/service/src/java/org/apache/hive/service/cli/log/LogDivertAppender.java b/src/service/src/java/org/apache/hive/service/cli/log/LogDivertAppender.java
+new file mode 100644
+index 0000000..5629881
+--- /dev/null
++++ b/src/service/src/java/org/apache/hive/service/cli/log/LogDivertAppender.java
+@@ -0,0 +1,92 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package org.apache.hive.service.cli.log;
++
++import java.io.CharArrayWriter;
++
++import org.apache.log4j.Layout;
++import org.apache.log4j.Logger;
++import org.apache.log4j.WriterAppender;
++import org.apache.log4j.spi.Filter;
++import org.apache.log4j.spi.LoggingEvent;
++
++/**
++ * An Appender to divert logs from individual threads to the LogObject they belong to.
++ */
++public class LogDivertAppender extends WriterAppender {
++  private static final Logger LOG = Logger.getLogger(LogDivertAppender.class.getName());
++  private final LogManager logManager;
++
++  /**
++   * A log filter that exclude messages coming from the logger with the given name.
++   * We apply this filter on the Loggers used by the log diversion stuff, so that
++   * they don't generate more logs for themselves when they process logs.
++   */
++  private class NameExclusionFilter extends Filter {
++    private String excludeLoggerName = null;
++
++    public NameExclusionFilter(String excludeLoggerName) {
++      super();
++      this.excludeLoggerName = excludeLoggerName;
++    }
++
++    @Override
++    public int decide(LoggingEvent ev) {
++      if (ev.getLoggerName().equals(excludeLoggerName)) {
++        return Filter.DENY;
++      }
++      return Filter.NEUTRAL;
++    }
++  }
++
++  /** This is where the log message will go to */
++  private final CharArrayWriter writer = new CharArrayWriter();
++
++  public LogDivertAppender(Layout layout, LogManager logManager) {
++    super();
++    this.setLayout(layout);
++    this.setWriter(writer);
++    this.setName("LogDivertAppender");
++    this.logManager = logManager;
++
++    // Filter out messages coming from log processing classes, or we'll run an infinite loop.
++    this.addFilter(new NameExclusionFilter(LOG.getName()));
++    this.addFilter(new NameExclusionFilter(OperationLog.class.getName()));
++    this.addFilter(new NameExclusionFilter(LogManager.class.getName()));
++  }
++
++  /**
++   * Overrides WriterAppender.subAppend(), which does the real logging.
++   * No need to worry about concurrency since log4j calls this synchronously.
++   */
++  @Override
++  protected void subAppend(LoggingEvent event) {
++    super.subAppend(event);
++    // That should've gone into our writer. Notify the LogContext.
++    String logOutput = writer.toString();
++    writer.reset();
++
++    OperationLog log = logManager.getOperationLogByThreadName(event.getThreadName());
++    if (log == null) {
++      LOG.debug(" ---+++=== Dropped log event from thread " + event.getThreadName());
++      return;
++    }
++    log.writeOperationLog(logOutput);
++  }
++}
+diff --git a/src/service/src/java/org/apache/hive/service/cli/log/LogManager.java b/src/service/src/java/org/apache/hive/service/cli/log/LogManager.java
+new file mode 100644
+index 0000000..8ed7541
+--- /dev/null
++++ b/src/service/src/java/org/apache/hive/service/cli/log/LogManager.java
+@@ -0,0 +1,184 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package org.apache.hive.service.cli.log;
++
++
++import java.util.Enumeration;
++import java.util.Map;
++import java.util.concurrent.ConcurrentHashMap;
++
++import org.apache.hadoop.hive.conf.HiveConf;
++import org.apache.hive.service.AbstractService;
++import org.apache.hive.service.cli.HiveSQLException;
++import org.apache.hive.service.cli.OperationHandle;
++import org.apache.hive.service.cli.session.SessionManager;
++import org.apache.log4j.Appender;
++import org.apache.log4j.ConsoleAppender;
++import org.apache.log4j.Layout;
++import org.apache.log4j.Logger;
++import org.apache.log4j.PatternLayout;
++
++/**
++ * LogManager - LogManager is responsible for managing the lifecycle of in memory operation logs for HS2.
++ * Each log object is maintained as a rolling log whose size can't exceed 1MB.
++ * LogManager tracks the log objects by operation handle as well as by the thread whose output will
++ * be redirected to these log objects.
++ */
++public class LogManager extends AbstractService {
++  private HiveConf hiveConf;
++
++  private final Map<OperationHandle, OperationLog> OperationLogByOperation =
++      new ConcurrentHashMap<OperationHandle, OperationLog> ();
++  private final Map<String, OperationLog> OperationLogByThreadName =
++      new ConcurrentHashMap<String, OperationLog> ();
++
++  private boolean isOperationLogCaptureIntialized = false;
++
++  private static final String DEFAULT_LAYOUT_PATTERN = "%d{yy/MM/dd HH:mm:ss} %p %c{2}: %m%n";
++
++  private static Logger LOG = Logger.getLogger(LogManager.class.getName());
++  private SessionManager sessionManager;
++
++  public LogManager() {
++    super("LogManager");
++  }
++
++  public void setSessionManager(SessionManager sessionManager) {
++    this.sessionManager = sessionManager;
++  }
++
++  public SessionManager getSessionManager() {
++    return sessionManager;
++  }
++
++  public void initOperationLogCapture() {
++    if (isOperationLogCaptureIntialized) {
++      return;
++    }
++
++    // There should be a ConsoleAppender. Copy its Layout.
++    Logger root = Logger.getRootLogger();
++    Layout layout = null;
++
++    Enumeration<?> appenders = root.getAllAppenders();
++    while (appenders.hasMoreElements()) {
++      Appender ap = (Appender) appenders.nextElement();
++      if (ap.getClass().equals(ConsoleAppender.class)) {
++        layout = ap.getLayout();
++        break;
++      }
++    }
++
++    if (layout == null) {
++      layout = new PatternLayout(DEFAULT_LAYOUT_PATTERN);
++      LOG.info("Cannot find a Layout from a ConsoleAppender. Using default Layout pattern.");
++    }
++
++    // Register another Appender (with the same layout) that talks to us.
++    Appender ap = new LogDivertAppender(layout, this);
++    root.addAppender(ap);
++
++    isOperationLogCaptureIntialized = true;
++  }
++
++  public OperationLog createNewOperationLog(OperationHandle operationHandle, String name) {
++    int size = HiveConf.getIntVar(hiveConf, HiveConf.ConfVars.HIVE_SERVER2_IN_MEM_LOG_SIZE);
++    LOG.info("Operation log size: " + size);
++    OperationLog OperationLog = new OperationLog(name, size);
++    OperationLogByOperation.put(operationHandle, OperationLog);
++    return OperationLog;
++  }
++
++  public boolean destroyOperationLog(OperationHandle operationHandle) {
++    OperationLog OperationLog = OperationLogByOperation.remove(operationHandle);
++    if (OperationLog == null) {
++      LOG.debug("No OperationLog found for operation: " + operationHandle.hashCode());
++      return false;
++    }
++    return true;
++  }
++
++  public void registerCurrentThread(OperationHandle operationHandle) throws HiveSQLException {
++    String threadName = Thread.currentThread().getName();
++
++    OperationLog OperationLog = getOperationLogByOperation(operationHandle, true);
++
++    if (OperationLogByThreadName.containsKey(threadName)) {
++      LOG.debug("Thread: " + threadName + " is already registered.");
++    }
++    OperationLogByThreadName.put(threadName, OperationLog);
++  }
++
++  public void registerCurrentThread(OperationLog OperationLog) {
++    String threadName = Thread.currentThread().getName();
++    OperationLogByThreadName.put(threadName, OperationLog);
++  }
++
++  public boolean unregisterCurrentThread() {
++    String threadName = Thread.currentThread().getName();
++    OperationLog OperationLog = OperationLogByThreadName.remove(threadName);
++    if (OperationLog == null) {
++      LOG.debug("Failed to unregister thread " + threadName + ": OperationLog object is currently "
++          + "not regsitered");
++      return false;
++    }
++    return true;
++  }
++
++  public OperationLog getOperationLogByThreadName(String threadName) {
++    OperationLog OperationLog = OperationLogByThreadName.get(threadName);
++    if (OperationLog == null) {
++      LOG.debug("Operation log assocaited with thread: " + threadName + " couldn't be found.");
++    }
++    return OperationLog;
++  }
++
++  public OperationLog getOperationLogByOperation(OperationHandle operationHandle,
++    boolean createIfAbsent) throws HiveSQLException {
++    OperationLog operationLog = OperationLogByOperation.get(operationHandle);
++    if (operationLog == null && createIfAbsent) {
++      operationLog = createNewOperationLog(operationHandle, operationHandle.toString());
++    } else if (operationLog == null) {
++      throw new HiveSQLException("Couldn't find log associated with operation handle: " +
++        operationHandle.toString());
++    }
++    return operationLog;
++  }
++
++  @Override
++  public synchronized void init(HiveConf hiveConf) {
++    this.hiveConf = hiveConf;
++    super.init(hiveConf);
++    if (HiveConf.getBoolVar(hiveConf, HiveConf.ConfVars.HIVE_SERVER2_IN_MEM_LOGGING)) {
++      initOperationLogCapture();
++    } else {
++      LOG.info("Opeation level logging is turned off");
++    }
++  }
++
++  @Override
++  public synchronized void start() {
++    super.start();
++  }
++
++  @Override
++  public synchronized void stop() {
++    super.stop();
++  }
++}
+diff --git a/src/service/src/java/org/apache/hive/service/cli/log/OperationLog.java b/src/service/src/java/org/apache/hive/service/cli/log/OperationLog.java
+new file mode 100644
+index 0000000..d2351a7
+--- /dev/null
++++ b/src/service/src/java/org/apache/hive/service/cli/log/OperationLog.java
+@@ -0,0 +1,92 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package org.apache.hive.service.cli.log;
++
++import java.io.IOException;
++import java.io.OutputStream;
++
++import org.apache.log4j.Logger;
++
++import com.google.common.base.Charsets;
++
++public class OperationLog {
++
++  private static final String HIVE_ENCODING = Charsets.UTF_8.name();
++
++  // This OperationLogger's name is added to an exclusion list in OperationLogDivertAppender
++  private static Logger LOG = Logger.getLogger(OperationLog.class.getName());
++
++  private final String operationLogName;
++  private final LinkedStringBuffer operationLogBuffer;
++  private final long creationTime;
++
++  OperationLog(String name, int size) {
++    this.operationLogName = name;
++    this.operationLogBuffer = new LinkedStringBuffer(size);
++    this.creationTime = System.currentTimeMillis();
++  }
++
++  public void writeOperationLog(String OperationLogMessage) {
++    operationLogBuffer.write(OperationLogMessage);
++  }
++
++  public String readOperationLog() {
++    return operationLogBuffer.read();
++  }
++
++  public void resetOperationLog() {
++    operationLogBuffer.clear();
++  }
++
++  /**
++   * The OperationLogOutputStream helps translate a OperationLog to an OutputStream.
++   */
++  private static class OperationLogOutputStream extends OutputStream {
++    private final LinkedStringBuffer backingStore;
++
++    public OperationLogOutputStream(LinkedStringBuffer operationLogBuffer) {
++      super();
++      backingStore = operationLogBuffer;
++    }
++
++    @Override
++    public void write(byte[] b) throws IOException {
++      backingStore.write(new String(b, HIVE_ENCODING));
++    }
++
++    @Override
++    public void write(byte[] b, int off, int len) throws IOException {
++      backingStore.write(new String(b, off, len, HIVE_ENCODING));
++    }
++
++    @Override
++    public void write(int b) throws IOException {
++      byte[] buf = { (byte) b };
++      this.write(buf);
++    }
++  }
++
++  public OutputStream getOutputStream() {
++    return new OperationLogOutputStream(operationLogBuffer);
++  }
++
++  public String getName() {
++    return operationLogName;
++  }
++}
+\ No newline at end of file
+diff --git a/src/service/src/java/org/apache/hive/service/cli/operation/OperationManager.java b/src/service/src/java/org/apache/hive/service/cli/operation/OperationManager.java
+index bcdb67f..8254565 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/operation/OperationManager.java
++++ b/src/service/src/java/org/apache/hive/service/cli/operation/OperationManager.java
+@@ -31,6 +31,7 @@
+ import org.apache.hive.service.cli.RowSet;
+ import org.apache.hive.service.cli.TableSchema;
+ import org.apache.hive.service.cli.session.HiveSession;
++import org.apache.hive.service.cli.session.SessionManager;
+ 
+ /**
+  * OperationManager.
+@@ -41,6 +42,7 @@
+   private HiveConf hiveConf;
+   private final Map<OperationHandle, Operation> handleToOperation =
+       new HashMap<OperationHandle, Operation>();
++  private SessionManager sessionManager;
+ 
+   public OperationManager() {
+     super("OperationManager");
+@@ -65,6 +67,13 @@ public synchronized void stop() {
+     super.stop();
+   }
+ 
++  public void setSessionManager(SessionManager sessionManager) {
++    this.sessionManager = sessionManager;
++  }
++
++  public SessionManager getSessionManager() {
++    return sessionManager;
++  }
+   public ExecuteStatementOperation newExecuteStatementOperation(HiveSession parentSession,
+       String statement, Map<String, String> confOverlay, boolean runAsync)
+     throws HiveSQLException {
+@@ -169,5 +178,5 @@ public RowSet getOperationNextRowSet(OperationHandle opHandle,
+       FetchOrientation orientation, long maxRows)
+       throws HiveSQLException {
+     return getOperation(opHandle).getNextRowSet(orientation, maxRows);
+-  }
++ }
+ }
+diff --git a/src/service/src/java/org/apache/hive/service/cli/session/HiveSession.java b/src/service/src/java/org/apache/hive/service/cli/session/HiveSession.java
+index dcfa709..38565f5 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/session/HiveSession.java
++++ b/src/service/src/java/org/apache/hive/service/cli/session/HiveSession.java
+@@ -33,6 +33,7 @@
+ import org.apache.hive.service.cli.RowSet;
+ import org.apache.hive.service.cli.SessionHandle;
+ import org.apache.hive.service.cli.TableSchema;
++import org.apache.hive.service.cli.log.LogManager;
+ import org.apache.hive.service.cli.operation.OperationManager;
+ 
+ public interface HiveSession {
+@@ -193,4 +194,9 @@ public void cancelDelegationToken(HiveAuthFactory authFactory, String tokenStr)
+ 
+   public void renewDelegationToken(HiveAuthFactory authFactory, String tokenStr)
+       throws HiveSQLException;
++
++  public void setLogManager(LogManager logManager);
++
++  public LogManager getLogManager();
++
+ }
+diff --git a/src/service/src/java/org/apache/hive/service/cli/session/HiveSessionImpl.java b/src/service/src/java/org/apache/hive/service/cli/session/HiveSessionImpl.java
+index 0c7e804..62bcb18 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/session/HiveSessionImpl.java
++++ b/src/service/src/java/org/apache/hive/service/cli/session/HiveSessionImpl.java
+@@ -44,6 +44,8 @@
+ import org.apache.hive.service.cli.RowSet;
+ import org.apache.hive.service.cli.SessionHandle;
+ import org.apache.hive.service.cli.TableSchema;
++import org.apache.hive.service.cli.log.LogManager;
++import org.apache.hive.service.cli.operation.Operation;
+ import org.apache.hive.service.cli.operation.ExecuteStatementOperation;
+ import org.apache.hive.service.cli.operation.GetCatalogsOperation;
+ import org.apache.hive.service.cli.operation.GetColumnsOperation;
+@@ -75,6 +77,7 @@
+ 
+   private SessionManager sessionManager;
+   private OperationManager operationManager;
++  private LogManager logManager;
+   private IMetaStoreClient metastoreClient = null;
+   private final Set<OperationHandle> opHandleSet = new HashSet<OperationHandle>();
+ 
+@@ -136,6 +139,14 @@ public HiveConf getHiveConf() {
+     return hiveConf;
+   }
+ 
++  public LogManager getLogManager() {
++    return logManager;
++  }
++
++  public void setLogManager(LogManager logManager) {
++    this.logManager = logManager;
++  }
++
+   public IMetaStoreClient getMetaStoreClient() throws HiveSQLException {
+     if (metastoreClient == null) {
+       try {
+@@ -166,7 +177,7 @@ public GetInfoValue getInfo(GetInfoType getInfoType)
+         return new GetInfoValue(128);
+       case CLI_TXN_CAPABLE:
+       default:
+-        throw new HiveSQLException("Unrecognized GetInfoType value: " + getInfoType.toString());
++        throw new HiveSQLException("Unrecognized GetInfoType value: "  + getInfoType.toString());
+       }
+     } finally {
+       release();
+@@ -193,7 +204,7 @@ private OperationHandle executeStatementInternal(String statement, Map<String, S
+           .newExecuteStatementOperation(getSession(), statement, confOverlay, runAsync);
+     OperationHandle opHandle = operation.getHandle();
+     try {
+-      operation.run();
++      runOperationWithLogCapture(operation, opHandle);
+       opHandleSet.add(opHandle);
+       return opHandle;
+     } catch (HiveSQLException e) {
+@@ -212,7 +223,7 @@ public OperationHandle getTypeInfo()
+     GetTypeInfoOperation operation = operationManager.newGetTypeInfoOperation(getSession());
+     OperationHandle opHandle = operation.getHandle();
+     try {
+-      operation.run();
++      runOperationWithLogCapture(operation, opHandle);
+       opHandleSet.add(opHandle);
+       return opHandle;
+     } catch (HiveSQLException e) {
+@@ -231,7 +242,7 @@ public OperationHandle getCatalogs()
+     GetCatalogsOperation operation = operationManager.newGetCatalogsOperation(getSession());
+     OperationHandle opHandle = operation.getHandle();
+     try {
+-      operation.run();
++      runOperationWithLogCapture(operation, opHandle);
+       opHandleSet.add(opHandle);
+       return opHandle;
+     } catch (HiveSQLException e) {
+@@ -251,7 +262,7 @@ public OperationHandle getSchemas(String catalogName, String schemaName)
+         operationManager.newGetSchemasOperation(getSession(), catalogName, schemaName);
+     OperationHandle opHandle = operation.getHandle();
+     try {
+-      operation.run();
++      runOperationWithLogCapture(operation, opHandle);
+       opHandleSet.add(opHandle);
+       return opHandle;
+     } catch (HiveSQLException e) {
+@@ -272,7 +283,7 @@ public OperationHandle getTables(String catalogName, String schemaName, String t
+         operationManager.newGetTablesOperation(getSession(), catalogName, schemaName, tableName, tableTypes);
+     OperationHandle opHandle = operation.getHandle();
+     try {
+-      operation.run();
++      runOperationWithLogCapture(operation, opHandle);
+       opHandleSet.add(opHandle);
+       return opHandle;
+     } catch (HiveSQLException e) {
+@@ -291,7 +302,7 @@ public OperationHandle getTableTypes()
+     GetTableTypesOperation operation = operationManager.newGetTableTypesOperation(getSession());
+     OperationHandle opHandle = operation.getHandle();
+     try {
+-      operation.run();
++      runOperationWithLogCapture(operation, opHandle);
+       opHandleSet.add(opHandle);
+       return opHandle;
+     } catch (HiveSQLException e) {
+@@ -311,9 +322,9 @@ public OperationHandle getColumns(String catalogName, String schemaName,
+         catalogName, schemaName, tableName, columnName);
+     OperationHandle opHandle = operation.getHandle();
+     try {
+-    operation.run();
+-    opHandleSet.add(opHandle);
+-    return opHandle;
++      runOperationWithLogCapture(operation, opHandle);
++      opHandleSet.add(opHandle);
++      return opHandle;
+     } catch (HiveSQLException e) {
+       operationManager.closeOperation(opHandle); 
+       throw e;
+@@ -331,7 +342,7 @@ public OperationHandle getFunctions(String catalogName, String schemaName, Strin
+         .newGetFunctionsOperation(getSession(), catalogName, schemaName, functionName);
+     OperationHandle opHandle = operation.getHandle();
+     try {
+-      operation.run();
++      runOperationWithLogCapture(operation, opHandle);
+       opHandleSet.add(opHandle);
+       return opHandle;
+     } catch (HiveSQLException e) {
+@@ -465,4 +476,13 @@ public void renewDelegationToken(HiveAuthFactory authFactory, String tokenStr)
+       throws HiveSQLException {
+     throw new HiveSQLException("Delegation token access is only allowed with impersonation");
+   }
++
++  //Log capture
++  private void runOperationWithLogCapture(Operation operation, 
++      OperationHandle opHandle) throws HiveSQLException { 
++    getLogManager().unregisterCurrentThread();
++    getLogManager().registerCurrentThread(opHandle);
++    operation.run();
++    getLogManager().unregisterCurrentThread();
++  }
+ }
+diff --git a/src/service/src/java/org/apache/hive/service/cli/session/SessionManager.java b/src/service/src/java/org/apache/hive/service/cli/session/SessionManager.java
+index 003471e..b91ea98 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/session/SessionManager.java
++++ b/src/service/src/java/org/apache/hive/service/cli/session/SessionManager.java
+@@ -34,6 +34,7 @@
+ import org.apache.hive.service.CompositeService;
+ import org.apache.hive.service.cli.HiveSQLException;
+ import org.apache.hive.service.cli.SessionHandle;
++import org.apache.hive.service.cli.log.LogManager;
+ import org.apache.hive.service.cli.operation.OperationManager;
+ import org.apache.hadoop.hive.shims.ShimLoader;
+ import org.apache.hadoop.security.UserGroupInformation;
+@@ -48,6 +49,7 @@
+   private HiveConf hiveConf;
+   private final Map<SessionHandle, HiveSession> handleToSession = new HashMap<SessionHandle, HiveSession>();
+   private OperationManager operationManager = new OperationManager();
++  private LogManager logManager = new LogManager();
+   private static final Object sessionMapLock = new Object();
+   private ExecutorService backgroundOperationPool;
+ 
+@@ -63,6 +65,10 @@ public synchronized void init(HiveConf hiveConf) {
+     LOG.info("HiveServer2: Async execution pool size" + backgroundPoolSize);
+     backgroundOperationPool = Executors.newFixedThreadPool(backgroundPoolSize);
+     addService(operationManager);
++    logManager = new LogManager();
++    logManager.setSessionManager(this);
++
++    addService(logManager);
+     super.init(hiveConf);
+   }
+ 
+@@ -107,6 +113,7 @@ public SessionHandle openSession(String username, String password, Map<String, S
+     }
+     session.setSessionManager(this);
+     session.setOperationManager(operationManager);
++    session.setLogManager(logManager);
+     synchronized(sessionMapLock) {
+       handleToSession.put(session.getSessionHandle(), session);
+     }
+@@ -145,6 +152,10 @@ public OperationManager getOperationManager() {
+     return operationManager;
+   }
+ 
++  public LogManager getLogManager() {
++    return logManager;
++  }
++
+   private static ThreadLocal<String> threadLocalIpAddress = new ThreadLocal<String>() {
+     @Override
+     protected synchronized String initialValue() {
+diff --git a/src/service/src/java/org/apache/hive/service/cli/thrift/ThriftCLIService.java b/src/service/src/java/org/apache/hive/service/cli/thrift/ThriftCLIService.java
+index 435a6e6..4c605d7 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/thrift/ThriftCLIService.java
++++ b/src/service/src/java/org/apache/hive/service/cli/thrift/ThriftCLIService.java
+@@ -184,6 +184,20 @@ private TStatus unsecureTokenErrorStatus() {
+   }
+ 
+   @Override
++  public TGetLogResp GetLog(TGetLogReq req) throws TException {
++    TGetLogResp resp = new TGetLogResp();
++    try {
++      String log = cliService.getLog(new OperationHandle(req.getOperationHandle()));
++      resp.setStatus(OK_STATUS);
++      resp.setLog(log);
++    } catch (Exception e) {
++      e.printStackTrace();
++      resp.setStatus(HiveSQLException.toTStatus(e));
++    }
++    return resp;
++  }
++
++  @Override
+   public TOpenSessionResp OpenSession(TOpenSessionReq req) throws TException {
+     TOpenSessionResp resp = new TOpenSessionResp();
+     try {
+diff --git a/src/service/src/java/org/apache/hive/service/cli/thrift/ThriftCLIServiceClient.java b/src/service/src/java/org/apache/hive/service/cli/thrift/ThriftCLIServiceClient.java
+index 692f0a6..09ab531 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/thrift/ThriftCLIServiceClient.java
++++ b/src/service/src/java/org/apache/hive/service/cli/thrift/ThriftCLIServiceClient.java
+@@ -434,4 +434,19 @@ public void renewDelegationToken(SessionHandle sessionHandle, HiveAuthFactory au
+       throw new HiveSQLException(e);
+     }
+   }
++
++  @Override
++  public String getLog(OperationHandle opHandle) throws HiveSQLException {
++    try {
++      TGetLogReq req = new TGetLogReq();
++      req.setOperationHandle(opHandle.toTOperationHandle());
++      TGetLogResp resp = cliService.GetLog(req);
++      checkStatus(resp.getStatus());
++      return new String(resp.getLog());
++    } catch (HiveSQLException e) {
++      throw e;
++    } catch (Exception e) {
++      throw new HiveSQLException(e);
++    }
++  }
+ }
+-- 
+1.7.0.4
+

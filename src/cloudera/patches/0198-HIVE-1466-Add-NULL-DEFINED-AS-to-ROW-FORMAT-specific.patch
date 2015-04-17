@@ -1,0 +1,882 @@
+From 071697587ec9fe9f844203d9f64add09fcbb1ab6 Mon Sep 17 00:00:00 2001
+From: Prasad Suresh Mujumdar <prasadm@apache.org>
+Date: Mon, 16 Dec 2013 19:52:06 +0000
+Subject: [PATCH 198/375] HIVE-1466: Add NULL DEFINED AS to ROW FORMAT specification (Prasad Mujumdar reviewed by Xuefu Zhang)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1551329 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../org/apache/hadoop/hive/ql/exec/DDLTask.java    |    9 +-
+ .../hadoop/hive/ql/parse/BaseSemanticAnalyzer.java |    5 +
+ .../org/apache/hadoop/hive/ql/parse/HiveLexer.g    |    1 +
+ .../org/apache/hadoop/hive/ql/parse/HiveParser.g   |   13 +-
+ .../hadoop/hive/ql/parse/IdentifiersParser.g       |    2 +-
+ .../hadoop/hive/ql/parse/SemanticAnalyzer.java     |    7 +
+ .../hadoop/hive/ql/plan/CreateTableDesc.java       |   17 ++
+ .../org/apache/hadoop/hive/ql/plan/PlanUtils.java  |   12 +-
+ ql/src/test/queries/clientpositive/nullformat.q    |   24 ++
+ .../test/queries/clientpositive/nullformatCTAS.q   |   24 ++
+ ql/src/test/queries/clientpositive/nullformatdir.q |   21 ++
+ .../test/results/clientpositive/nullformat.q.out   |  181 ++++++++++++++
+ .../results/clientpositive/nullformatCTAS.q.out    |  252 ++++++++++++++++++++
+ .../results/clientpositive/nullformatdir.q.out     |   89 +++++++
+ 14 files changed, 652 insertions(+), 5 deletions(-)
+ create mode 100644 ql/src/test/queries/clientpositive/nullformat.q
+ create mode 100644 ql/src/test/queries/clientpositive/nullformatCTAS.q
+ create mode 100644 ql/src/test/queries/clientpositive/nullformatdir.q
+ create mode 100644 ql/src/test/results/clientpositive/nullformat.q.out
+ create mode 100644 ql/src/test/results/clientpositive/nullformatCTAS.q.out
+ create mode 100644 ql/src/test/results/clientpositive/nullformatdir.q.out
+
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/DDLTask.java b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/DDLTask.java
+index d32be59..5a2698b 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/DDLTask.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/DDLTask.java
+@@ -2059,6 +2059,11 @@ else if (sortCol.getOrder() == BaseSemanticAnalyzer.HIVE_COLUMN_ORDER_DESC) {
+                 escapeHiveCommand(StringEscapeUtils.escapeJava(delims.get(
+                 serdeConstants.LINE_DELIM))) + "' \n";
+           }
++          if (delims.containsKey(serdeConstants.SERIALIZATION_NULL_FORMAT)) {
++            tbl_row_format += "  NULL DEFINED AS '" +
++                escapeHiveCommand(StringEscapeUtils.escapeJava(delims.get(
++                serdeConstants.SERIALIZATION_NULL_FORMAT))) + "' \n";
++          }
+         }
+         else {
+           tbl_row_format += " SERDE \n  '" +
+@@ -3600,7 +3605,9 @@ private int createTable(Hive db, CreateTableDesc crtTbl) throws HiveException {
+     if (crtTbl.getLineDelim() != null) {
+       tbl.setSerdeParam(serdeConstants.LINE_DELIM, crtTbl.getLineDelim());
+     }
+-
++    if (crtTbl.getNullFormat() != null) {
++      tbl.setSerdeParam(serdeConstants.SERIALIZATION_NULL_FORMAT, crtTbl.getNullFormat());
++    }
+     if (crtTbl.getSerdeProps() != null) {
+       Iterator<Entry<String, String>> iter = crtTbl.getSerdeProps().entrySet()
+         .iterator();
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/BaseSemanticAnalyzer.java b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/BaseSemanticAnalyzer.java
+index 46d1fac..953910d 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/BaseSemanticAnalyzer.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/BaseSemanticAnalyzer.java
+@@ -134,6 +134,7 @@
+     String collItemDelim = null;
+     String mapKeyDelim = null;
+     String lineDelim = null;
++    String nullFormat = null;
+ 
+     protected void analyzeRowFormat(AnalyzeCreateCommonVars shared, ASTNode child) throws SemanticException {
+       child = (ASTNode) child.getChild(0);
+@@ -166,6 +167,10 @@ protected void analyzeRowFormat(AnalyzeCreateCommonVars shared, ASTNode child) t
+                 ErrorMsg.LINES_TERMINATED_BY_NON_NEWLINE.getMsg()));
+           }
+           break;
++        case HiveParser.TOK_TABLEROWFORMATNULL:
++          nullFormat = unescapeSQLString(rowChild.getChild(0)
++                    .getText());
++          break;
+         default:
+           assert false;
+         }
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/HiveLexer.g b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/HiveLexer.g
+index 366b714..ed9917d 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/HiveLexer.g
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/HiveLexer.g
+@@ -176,6 +176,7 @@ KW_TBLPROPERTIES: 'TBLPROPERTIES';
+ KW_IDXPROPERTIES: 'IDXPROPERTIES';
+ KW_VALUE_TYPE: '$VALUE$';
+ KW_ELEM_TYPE: '$ELEM$';
++KW_DEFINED: 'DEFINED';
+ KW_CASE: 'CASE';
+ KW_WHEN: 'WHEN';
+ KW_THEN: 'THEN';
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/HiveParser.g b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/HiveParser.g
+index b8e0034..0875c23 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/HiveParser.g
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/HiveParser.g
+@@ -178,6 +178,7 @@ TOK_TABLEROWFORMATFIELD;
+ TOK_TABLEROWFORMATCOLLITEMS;
+ TOK_TABLEROWFORMATMAPKEYS;
+ TOK_TABLEROWFORMATLINES;
++TOK_TABLEROWFORMATNULL;
+ TOK_TBLORCFILE;
+ TOK_TBLSEQUENCEFILE;
+ TOK_TBLTEXTFILE;
+@@ -435,6 +436,7 @@ import java.util.HashMap;
+     xlateMap.put("KW_PROPERTIES", "TBLPROPERTIES");
+     xlateMap.put("KW_VALUE_TYPE", "\$VALUE\$");
+     xlateMap.put("KW_ELEM_TYPE", "\$ELEM\$");
++    xlateMap.put("KW_DEFINED", "DEFINED");
+ 
+     // Operators
+     xlateMap.put("DOT", ".");
+@@ -1516,8 +1518,8 @@ rowFormatDelimited
+ @init { msgs.push("serde properties specification"); }
+ @after { msgs.pop(); }
+     :
+-      KW_ROW KW_FORMAT KW_DELIMITED tableRowFormatFieldIdentifier? tableRowFormatCollItemsIdentifier? tableRowFormatMapKeysIdentifier? tableRowFormatLinesIdentifier?
+-    -> ^(TOK_SERDEPROPS tableRowFormatFieldIdentifier? tableRowFormatCollItemsIdentifier? tableRowFormatMapKeysIdentifier? tableRowFormatLinesIdentifier?)
++      KW_ROW KW_FORMAT KW_DELIMITED tableRowFormatFieldIdentifier? tableRowFormatCollItemsIdentifier? tableRowFormatMapKeysIdentifier? tableRowFormatLinesIdentifier? tableRowNullFormat?
++    -> ^(TOK_SERDEPROPS tableRowFormatFieldIdentifier? tableRowFormatCollItemsIdentifier? tableRowFormatMapKeysIdentifier? tableRowFormatLinesIdentifier? tableRowNullFormat?)
+     ;
+ 
+ tableRowFormat
+@@ -1599,6 +1601,13 @@ tableRowFormatLinesIdentifier
+     -> ^(TOK_TABLEROWFORMATLINES $linesIdnt)
+     ;
+ 
++tableRowNullFormat
++@init { msgs.push("table row format's null specifier"); }
++@after { msgs.pop(); }
++    :
++      KW_NULL KW_DEFINED KW_AS nullIdnt=StringLiteral
++    -> ^(TOK_TABLEROWFORMATNULL $nullIdnt)
++    ;
+ tableFileFormat
+ @init { msgs.push("table file format specification"); }
+ @after { msgs.pop(); }
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/IdentifiersParser.g b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/IdentifiersParser.g
+index 5bdf477..67aa49a 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/IdentifiersParser.g
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/IdentifiersParser.g
+@@ -525,5 +525,5 @@ identifier
+     
+ nonReserved
+     :
+-    KW_TRUE | KW_FALSE | KW_LIKE | KW_EXISTS | KW_ASC | KW_DESC | KW_ORDER | KW_GROUP | KW_BY | KW_AS | KW_INSERT | KW_OVERWRITE | KW_OUTER | KW_LEFT | KW_RIGHT | KW_FULL | KW_PARTITION | KW_PARTITIONS | KW_TABLE | KW_TABLES | KW_COLUMNS | KW_INDEX | KW_INDEXES | KW_REBUILD | KW_FUNCTIONS | KW_SHOW | KW_MSCK | KW_REPAIR | KW_DIRECTORY | KW_LOCAL | KW_USING | KW_CLUSTER | KW_DISTRIBUTE | KW_SORT | KW_UNION | KW_LOAD | KW_EXPORT | KW_IMPORT | KW_DATA | KW_INPATH | KW_IS | KW_NULL | KW_CREATE | KW_EXTERNAL | KW_ALTER | KW_CHANGE | KW_FIRST | KW_AFTER | KW_DESCRIBE | KW_DROP | KW_RENAME | KW_IGNORE | KW_PROTECTION | KW_TO | KW_COMMENT | KW_BOOLEAN | KW_TINYINT | KW_SMALLINT | KW_INT | KW_BIGINT | KW_FLOAT | KW_DOUBLE | KW_DATE | KW_DATETIME | KW_TIMESTAMP | KW_DECIMAL | KW_STRING | KW_ARRAY | KW_STRUCT | KW_UNIONTYPE | KW_PARTITIONED | KW_CLUSTERED | KW_SORTED | KW_INTO | KW_BUCKETS | KW_ROW | KW_ROWS | KW_FORMAT | KW_DELIMITED | KW_FIELDS | KW_TERMINATED | KW_ESCAPED | KW_COLLECTION | KW_ITEMS | KW_KEYS | KW_KEY_TYPE | KW_LINES | KW_STORED | KW_FILEFORMAT | KW_SEQUENCEFILE | KW_TEXTFILE | KW_RCFILE | KW_ORCFILE | KW_INPUTFORMAT | KW_OUTPUTFORMAT | KW_INPUTDRIVER | KW_OUTPUTDRIVER | KW_OFFLINE | KW_ENABLE | KW_DISABLE | KW_READONLY | KW_NO_DROP | KW_LOCATION | KW_BUCKET | KW_OUT | KW_OF | KW_PERCENT | KW_ADD | KW_REPLACE | KW_RLIKE | KW_REGEXP | KW_TEMPORARY | KW_EXPLAIN | KW_FORMATTED | KW_PRETTY | KW_DEPENDENCY | KW_LOGICAL | KW_SERDE | KW_WITH | KW_DEFERRED | KW_SERDEPROPERTIES | KW_DBPROPERTIES | KW_LIMIT | KW_SET | KW_UNSET | KW_TBLPROPERTIES | KW_IDXPROPERTIES | KW_VALUE_TYPE | KW_ELEM_TYPE | KW_MAPJOIN | KW_STREAMTABLE | KW_HOLD_DDLTIME | KW_CLUSTERSTATUS | KW_UTC | KW_UTCTIMESTAMP | KW_LONG | KW_DELETE | KW_PLUS | KW_MINUS | KW_FETCH | KW_INTERSECT | KW_VIEW | KW_IN | KW_DATABASES | KW_MATERIALIZED | KW_SCHEMA | KW_SCHEMAS | KW_GRANT | KW_REVOKE | KW_SSL | KW_UNDO | KW_LOCK | KW_LOCKS | KW_UNLOCK | KW_SHARED | KW_EXCLUSIVE | KW_PROCEDURE | KW_UNSIGNED | KW_WHILE | KW_READ | KW_READS | KW_PURGE | KW_RANGE | KW_ANALYZE | KW_BEFORE | KW_BETWEEN | KW_BOTH | KW_BINARY | KW_CONTINUE | KW_CURSOR | KW_TRIGGER | KW_RECORDREADER | KW_RECORDWRITER | KW_SEMI | KW_LATERAL | KW_TOUCH | KW_ARCHIVE | KW_UNARCHIVE | KW_COMPUTE | KW_STATISTICS | KW_USE | KW_OPTION | KW_CONCATENATE | KW_SHOW_DATABASE | KW_UPDATE | KW_RESTRICT | KW_CASCADE | KW_SKEWED | KW_ROLLUP | KW_CUBE | KW_DIRECTORIES | KW_FOR | KW_GROUPING | KW_SETS | KW_TRUNCATE | KW_NOSCAN | KW_USER | KW_ROLE | KW_INNER
++    KW_TRUE | KW_FALSE | KW_LIKE | KW_EXISTS | KW_ASC | KW_DESC | KW_ORDER | KW_GROUP | KW_BY | KW_AS | KW_INSERT | KW_OVERWRITE | KW_OUTER | KW_LEFT | KW_RIGHT | KW_FULL | KW_PARTITION | KW_PARTITIONS | KW_TABLE | KW_TABLES | KW_COLUMNS | KW_INDEX | KW_INDEXES | KW_REBUILD | KW_FUNCTIONS | KW_SHOW | KW_MSCK | KW_REPAIR | KW_DIRECTORY | KW_LOCAL | KW_USING | KW_CLUSTER | KW_DISTRIBUTE | KW_SORT | KW_UNION | KW_LOAD | KW_EXPORT | KW_IMPORT | KW_DATA | KW_INPATH | KW_IS | KW_NULL | KW_CREATE | KW_EXTERNAL | KW_ALTER | KW_CHANGE | KW_FIRST | KW_AFTER | KW_DESCRIBE | KW_DROP | KW_RENAME | KW_IGNORE | KW_PROTECTION | KW_TO | KW_COMMENT | KW_BOOLEAN | KW_TINYINT | KW_SMALLINT | KW_INT | KW_BIGINT | KW_FLOAT | KW_DOUBLE | KW_DATE | KW_DATETIME | KW_TIMESTAMP | KW_DECIMAL | KW_STRING | KW_ARRAY | KW_STRUCT | KW_UNIONTYPE | KW_PARTITIONED | KW_CLUSTERED | KW_SORTED | KW_INTO | KW_BUCKETS | KW_ROW | KW_ROWS | KW_FORMAT | KW_DELIMITED | KW_FIELDS | KW_TERMINATED | KW_ESCAPED | KW_COLLECTION | KW_ITEMS | KW_KEYS | KW_KEY_TYPE | KW_LINES | KW_STORED | KW_FILEFORMAT | KW_SEQUENCEFILE | KW_TEXTFILE | KW_RCFILE | KW_ORCFILE | KW_INPUTFORMAT | KW_OUTPUTFORMAT | KW_INPUTDRIVER | KW_OUTPUTDRIVER | KW_OFFLINE | KW_ENABLE | KW_DISABLE | KW_READONLY | KW_NO_DROP | KW_LOCATION | KW_BUCKET | KW_OUT | KW_OF | KW_PERCENT | KW_ADD | KW_REPLACE | KW_RLIKE | KW_REGEXP | KW_TEMPORARY | KW_EXPLAIN | KW_FORMATTED | KW_PRETTY | KW_DEPENDENCY | KW_LOGICAL | KW_SERDE | KW_WITH | KW_DEFERRED | KW_SERDEPROPERTIES | KW_DBPROPERTIES | KW_LIMIT | KW_SET | KW_UNSET | KW_TBLPROPERTIES | KW_IDXPROPERTIES | KW_VALUE_TYPE | KW_ELEM_TYPE | KW_MAPJOIN | KW_STREAMTABLE | KW_HOLD_DDLTIME | KW_CLUSTERSTATUS | KW_UTC | KW_UTCTIMESTAMP | KW_LONG | KW_DELETE | KW_PLUS | KW_MINUS | KW_FETCH | KW_INTERSECT | KW_VIEW | KW_IN | KW_DATABASES | KW_MATERIALIZED | KW_SCHEMA | KW_SCHEMAS | KW_GRANT | KW_REVOKE | KW_SSL | KW_UNDO | KW_LOCK | KW_LOCKS | KW_UNLOCK | KW_SHARED | KW_EXCLUSIVE | KW_PROCEDURE | KW_UNSIGNED | KW_WHILE | KW_READ | KW_READS | KW_PURGE | KW_RANGE | KW_ANALYZE | KW_BEFORE | KW_BETWEEN | KW_BOTH | KW_BINARY | KW_CONTINUE | KW_CURSOR | KW_TRIGGER | KW_RECORDREADER | KW_RECORDWRITER | KW_SEMI | KW_LATERAL | KW_TOUCH | KW_ARCHIVE | KW_UNARCHIVE | KW_COMPUTE | KW_STATISTICS | KW_USE | KW_OPTION | KW_CONCATENATE | KW_SHOW_DATABASE | KW_UPDATE | KW_RESTRICT | KW_CASCADE | KW_SKEWED | KW_ROLLUP | KW_CUBE | KW_DIRECTORIES | KW_FOR | KW_GROUPING | KW_SETS | KW_TRUNCATE | KW_NOSCAN | KW_USER | KW_ROLE | KW_INNER | KW_DEFINED
+     ;
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/SemanticAnalyzer.java b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/SemanticAnalyzer.java
+index 2c256ef..32cc388 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/SemanticAnalyzer.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/SemanticAnalyzer.java
+@@ -1289,6 +1289,7 @@ public void getMetaData(QB qb, ReadEntity parentInput) throws SemanticException 
+                   localDirectoryDesc.setCollItemDelim(rowFormatParams.collItemDelim);
+                   localDirectoryDesc.setMapKeyDelim(rowFormatParams.mapKeyDelim);
+                   localDirectoryDesc.setFieldEscape(rowFormatParams.fieldEscape);
++                  localDirectoryDesc.setNullFormat(rowFormatParams.nullFormat);
+                   localDirectoryDescIsSet=true;
+                   break;
+                 case HiveParser.TOK_TABLESERIALIZER:
+@@ -1983,6 +1984,10 @@ private TableDesc getTableDescFromSerDe(ASTNode child, String cols,
+             throw new SemanticException(generateErrorMessage(rowChild,
+                 ErrorMsg.LINES_TERMINATED_BY_NON_NEWLINE.getMsg()));
+           }
++        case HiveParser.TOK_TABLEROWFORMATNULL:
++          String nullFormat = unescapeSQLString(rowChild.getChild(0).getText());
++          tblDesc.getProperties().setProperty(serdeConstants.SERIALIZATION_NULL_FORMAT,
++              nullFormat);
+           break;
+         default:
+           assert false;
+@@ -9039,6 +9044,7 @@ private ASTNode analyzeCreateTable(ASTNode ast, QB qb)
+           storageFormat.storageHandler, shared.serdeProps, tblProps, ifNotExists, skewedColNames,
+           skewedValues);
+       crtTblDesc.setStoredAsSubDirectories(storedAsDirs);
++      crtTblDesc.setNullFormat(rowFormatParams.nullFormat);
+ 
+       crtTblDesc.validate();
+       // outputs is empty, which means this create table happens in the current
+@@ -9087,6 +9093,7 @@ private ASTNode analyzeCreateTable(ASTNode ast, QB qb)
+           shared.serdeProps,
+           tblProps, ifNotExists, skewedColNames, skewedValues);
+       crtTblDesc.setStoredAsSubDirectories(storedAsDirs);
++      crtTblDesc.setNullFormat(rowFormatParams.nullFormat);
+       qb.setTableDesc(crtTblDesc);
+ 
+       SessionState.get().setCommandType(HiveOperation.CREATETABLE_AS_SELECT);
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/plan/CreateTableDesc.java b/src/ql/src/java/org/apache/hadoop/hive/ql/plan/CreateTableDesc.java
+index 93b4181..d1b729c 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/plan/CreateTableDesc.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/plan/CreateTableDesc.java
+@@ -62,6 +62,7 @@
+   String collItemDelim;
+   String mapKeyDelim;
+   String lineDelim;
++  String nullFormat;
+   String comment;
+   String inputFormat;
+   String outputFormat;
+@@ -508,4 +509,20 @@ public boolean isStoredAsSubDirectories() {
+   public void setStoredAsSubDirectories(boolean isStoredAsSubDirectories) {
+     this.isStoredAsSubDirectories = isStoredAsSubDirectories;
+   }
++
++  /**
++   * @return the nullFormat
++   */
++  public String getNullFormat() {
++    return nullFormat;
++  }
++
++  /**
++   * Set null format string
++   * @param nullFormat
++   */
++  public void setNullFormat(String nullFormat) {
++    this.nullFormat = nullFormat;
++  }
++
+ }
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/plan/PlanUtils.java b/src/ql/src/java/org/apache/hadoop/hive/ql/plan/PlanUtils.java
+index b6097b1..cdd8b9c 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/plan/PlanUtils.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/plan/PlanUtils.java
+@@ -133,10 +133,15 @@ public static TableDesc getDefaultTableDesc(CreateTableDesc localDirectoryDesc,
+       if (localDirectoryDesc.getSerName() != null) {
+         tableDesc.getProperties().setProperty(
+             serdeConstants.SERIALIZATION_LIB, localDirectoryDesc.getSerName());
+-        }
++      }
+       if (localDirectoryDesc.getOutputFormat() != null){
+           tableDesc.setOutputFileFormatClass(Class.forName(localDirectoryDesc.getOutputFormat()));
+       }
++      if (localDirectoryDesc.getNullFormat() != null) {
++        tableDesc.getProperties().setProperty(serdeConstants.SERIALIZATION_NULL_FORMAT,
++              localDirectoryDesc.getNullFormat());
++      }
++
+     } catch (ClassNotFoundException e) {
+       // mimicking behaviour in CreateTableDesc tableDesc creation
+       // returning null table description for output.
+@@ -323,6 +328,11 @@ public static TableDesc getTableDesc(CreateTableDesc crtTblDesc, String cols,
+         properties.setProperty(serdeConstants.LINE_DELIM, crtTblDesc.getLineDelim());
+       }
+ 
++      if (crtTblDesc.getNullFormat() != null) {
++        properties.setProperty(serdeConstants.SERIALIZATION_NULL_FORMAT,
++              crtTblDesc.getNullFormat());
++      }
++
+       if (crtTblDesc.getTableName() != null && crtTblDesc.getDatabaseName() != null) {
+         properties.setProperty(org.apache.hadoop.hive.metastore.api.hive_metastoreConstants.META_TABLE_NAME,
+             crtTblDesc.getDatabaseName() + "." + crtTblDesc.getTableName());
+diff --git a/src/ql/src/test/queries/clientpositive/nullformat.q b/src/ql/src/test/queries/clientpositive/nullformat.q
+new file mode 100644
+index 0000000..c9a7dab
+--- /dev/null
++++ b/src/ql/src/test/queries/clientpositive/nullformat.q
+@@ -0,0 +1,24 @@
++-- base table with null data
++DROP TABLE IF EXISTS base_tab;
++CREATE TABLE base_tab(a STRING, b STRING, c STRING, d STRING) STORED AS TEXTFILE;
++LOAD DATA LOCAL INPATH '../../data/files/null.txt' INTO TABLE base_tab;
++DESCRIBE EXTENDED base_tab;
++
++-- table with non-default null format
++DROP TABLE IF EXISTS null_tab1;
++EXPLAIN CREATE TABLE null_tab1(a STRING, b STRING) ROW FORMAT DELIMITED NULL DEFINED AS 'fooNull';
++CREATE TABLE null_tab1(a STRING, b STRING) ROW FORMAT DELIMITED NULL DEFINED AS 'fooNull';
++DESCRIBE EXTENDED null_tab1;
++SHOW CREATE TABLE null_tab1;
++
++-- load null data from another table and verify that the null is stored in the expected format
++INSERT OVERWRITE TABLE null_tab1 SELECT a,b FROM base_tab;
++dfs -cat ${system:test.warehouse.dir}/null_tab1/*;
++SELECT * FROM null_tab1;
++-- alter the null format and verify that the old null format is no longer in effect
++ALTER TABLE null_tab1 SET SERDEPROPERTIES ( 'serialization.null.format'='foo');
++SELECT * FROM null_tab1;
++
++
++DROP TABLE null_tab1;
++DROP TABLE base_tab;
+diff --git a/src/ql/src/test/queries/clientpositive/nullformatCTAS.q b/src/ql/src/test/queries/clientpositive/nullformatCTAS.q
+new file mode 100644
+index 0000000..d077981
+--- /dev/null
++++ b/src/ql/src/test/queries/clientpositive/nullformatCTAS.q
+@@ -0,0 +1,24 @@
++-- base table with null data
++DROP TABLE IF EXISTS base_tab;
++CREATE TABLE base_tab(a STRING, b STRING, c STRING, d STRING) STORED AS TEXTFILE;
++LOAD DATA LOCAL INPATH '../../data/files/null.txt' INTO TABLE base_tab;
++DESCRIBE EXTENDED base_tab;
++
++-- table with non-default null format
++DROP TABLE IF EXISTS null_tab3;
++EXPLAIN CREATE TABLE null_tab3 ROW FORMAT DELIMITED NULL DEFINED AS 'fooNull'
++   AS SELECT a, b FROM base_tab;
++CREATE TABLE null_tab3 ROW FORMAT DELIMITED NULL DEFINED AS 'fooNull'
++   AS SELECT a, b FROM base_tab;
++DESCRIBE EXTENDED null_tab3;
++SHOW CREATE TABLE null_tab3;
++
++dfs -cat ${system:test.warehouse.dir}/null_tab3/*;
++SELECT * FROM null_tab3;
++-- alter the null format and verify that the old null format is no longer in effect
++ALTER TABLE null_tab3 SET SERDEPROPERTIES ( 'serialization.null.format'='foo');
++SELECT * FROM null_tab3;
++
++
++DROP TABLE null_tab3;
++DROP TABLE base_tab;
+diff --git a/src/ql/src/test/queries/clientpositive/nullformatdir.q b/src/ql/src/test/queries/clientpositive/nullformatdir.q
+new file mode 100644
+index 0000000..d298638
+--- /dev/null
++++ b/src/ql/src/test/queries/clientpositive/nullformatdir.q
+@@ -0,0 +1,21 @@
++-- base table with null data
++DROP TABLE IF EXISTS base_tab;
++CREATE TABLE base_tab(a STRING, b STRING, c STRING, d STRING) STORED AS TEXTFILE;
++LOAD DATA LOCAL INPATH '../../data/files/null.txt' INTO TABLE base_tab;
++DESCRIBE EXTENDED base_tab;
++
++dfs ${system:test.dfs.mkdir} ${system:test.tmp.dir}/hive_test/nullformat/tmp;
++dfs -rmr ${system:test.tmp.dir}/hive_test/nullformat/*;
++INSERT OVERWRITE LOCAL DIRECTORY '${system:test.tmp.dir}/hive_test/nullformat'
++   ROW FORMAT DELIMITED NULL DEFINED AS 'fooNull' SELECT a,b FROM base_tab;
++dfs -cat ${system:test.tmp.dir}/hive_test/nullformat/000000_0;
++
++-- load the exported data back into a table with same null format and verify null values
++DROP TABLE IF EXISTS null_tab2;
++CREATE TABLE null_tab2(a STRING, b STRING) ROW FORMAT DELIMITED NULL DEFINED AS 'fooNull';
++LOAD DATA LOCAL INPATH '${system:test.tmp.dir}/hive_test/nullformat/000000_0' INTO TABLE null_tab2;
++SELECT * FROM null_tab2;
++
++
++dfs -rmr ${system:test.tmp.dir}/hive_test/nullformat;
++DROP TABLE base_tab;
+diff --git a/src/ql/src/test/results/clientpositive/nullformat.q.out b/src/ql/src/test/results/clientpositive/nullformat.q.out
+new file mode 100644
+index 0000000..82379d7
+--- /dev/null
++++ b/src/ql/src/test/results/clientpositive/nullformat.q.out
+@@ -0,0 +1,181 @@
++PREHOOK: query: -- base table with null data
++DROP TABLE IF EXISTS base_tab
++PREHOOK: type: DROPTABLE
++POSTHOOK: query: -- base table with null data
++DROP TABLE IF EXISTS base_tab
++POSTHOOK: type: DROPTABLE
++PREHOOK: query: CREATE TABLE base_tab(a STRING, b STRING, c STRING, d STRING) STORED AS TEXTFILE
++PREHOOK: type: CREATETABLE
++POSTHOOK: query: CREATE TABLE base_tab(a STRING, b STRING, c STRING, d STRING) STORED AS TEXTFILE
++POSTHOOK: type: CREATETABLE
++POSTHOOK: Output: default@base_tab
++PREHOOK: query: LOAD DATA LOCAL INPATH '../../data/files/null.txt' INTO TABLE base_tab
++PREHOOK: type: LOAD
++PREHOOK: Output: default@base_tab
++POSTHOOK: query: LOAD DATA LOCAL INPATH '../../data/files/null.txt' INTO TABLE base_tab
++POSTHOOK: type: LOAD
++POSTHOOK: Output: default@base_tab
++PREHOOK: query: DESCRIBE EXTENDED base_tab
++PREHOOK: type: DESCTABLE
++POSTHOOK: query: DESCRIBE EXTENDED base_tab
++POSTHOOK: type: DESCTABLE
++a                   	string              	None                
++b                   	string              	None                
++c                   	string              	None                
++d                   	string              	None                
++	 	 
++#### A masked pattern was here ####
++PREHOOK: query: -- table with non-default null format
++DROP TABLE IF EXISTS null_tab1
++PREHOOK: type: DROPTABLE
++POSTHOOK: query: -- table with non-default null format
++DROP TABLE IF EXISTS null_tab1
++POSTHOOK: type: DROPTABLE
++PREHOOK: query: EXPLAIN CREATE TABLE null_tab1(a STRING, b STRING) ROW FORMAT DELIMITED NULL DEFINED AS 'fooNull'
++PREHOOK: type: CREATETABLE
++POSTHOOK: query: EXPLAIN CREATE TABLE null_tab1(a STRING, b STRING) ROW FORMAT DELIMITED NULL DEFINED AS 'fooNull'
++POSTHOOK: type: CREATETABLE
++ABSTRACT SYNTAX TREE:
++  (TOK_CREATETABLE (TOK_TABNAME null_tab1) TOK_LIKETABLE (TOK_TABCOLLIST (TOK_TABCOL a TOK_STRING) (TOK_TABCOL b TOK_STRING)) (TOK_TABLEROWFORMAT (TOK_SERDEPROPS (TOK_TABLEROWFORMATNULL 'fooNull'))))
++
++STAGE DEPENDENCIES:
++  Stage-0 is a root stage
++
++STAGE PLANS:
++  Stage: Stage-0
++      Create Table Operator:
++        Create Table
++          columns: a string, b string
++          if not exists: false
++          input format: org.apache.hadoop.mapred.TextInputFormat
++          # buckets: -1
++          output format: org.apache.hadoop.hive.ql.io.IgnoreKeyTextOutputFormat
++          name: null_tab1
++          isExternal: false
++
++PREHOOK: query: CREATE TABLE null_tab1(a STRING, b STRING) ROW FORMAT DELIMITED NULL DEFINED AS 'fooNull'
++PREHOOK: type: CREATETABLE
++POSTHOOK: query: CREATE TABLE null_tab1(a STRING, b STRING) ROW FORMAT DELIMITED NULL DEFINED AS 'fooNull'
++POSTHOOK: type: CREATETABLE
++POSTHOOK: Output: default@null_tab1
++PREHOOK: query: DESCRIBE EXTENDED null_tab1
++PREHOOK: type: DESCTABLE
++POSTHOOK: query: DESCRIBE EXTENDED null_tab1
++POSTHOOK: type: DESCTABLE
++a                   	string              	None                
++b                   	string              	None                
++	 	 
++#### A masked pattern was here ####
++PREHOOK: query: SHOW CREATE TABLE null_tab1
++PREHOOK: type: SHOW_CREATETABLE
++PREHOOK: Input: default@null_tab1
++POSTHOOK: query: SHOW CREATE TABLE null_tab1
++POSTHOOK: type: SHOW_CREATETABLE
++POSTHOOK: Input: default@null_tab1
++CREATE  TABLE `null_tab1`(
++  `a` string, 
++  `b` string)
++ROW FORMAT DELIMITED 
++  NULL DEFINED AS 'fooNull' 
++STORED AS INPUTFORMAT 
++  'org.apache.hadoop.mapred.TextInputFormat' 
++OUTPUTFORMAT 
++  'org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat'
++LOCATION
++#### A masked pattern was here ####
++TBLPROPERTIES (
++#### A masked pattern was here ####
++PREHOOK: query: -- load null data from another table and verify that the null is stored in the expected format
++INSERT OVERWRITE TABLE null_tab1 SELECT a,b FROM base_tab
++PREHOOK: type: QUERY
++PREHOOK: Input: default@base_tab
++PREHOOK: Output: default@null_tab1
++POSTHOOK: query: -- load null data from another table and verify that the null is stored in the expected format
++INSERT OVERWRITE TABLE null_tab1 SELECT a,b FROM base_tab
++POSTHOOK: type: QUERY
++POSTHOOK: Input: default@base_tab
++POSTHOOK: Output: default@null_tab1
++POSTHOOK: Lineage: null_tab1.a SIMPLE [(base_tab)base_tab.FieldSchema(name:a, type:string, comment:null), ]
++POSTHOOK: Lineage: null_tab1.b SIMPLE [(base_tab)base_tab.FieldSchema(name:b, type:string, comment:null), ]
++1.01
++1.01
++1.01
++1.01
++1.01
++fooNull1
++fooNullfooNull
++1.0fooNull
++1.01
++1.01
++PREHOOK: query: SELECT * FROM null_tab1
++PREHOOK: type: QUERY
++PREHOOK: Input: default@null_tab1
++#### A masked pattern was here ####
++POSTHOOK: query: SELECT * FROM null_tab1
++POSTHOOK: type: QUERY
++POSTHOOK: Input: default@null_tab1
++#### A masked pattern was here ####
++POSTHOOK: Lineage: null_tab1.a SIMPLE [(base_tab)base_tab.FieldSchema(name:a, type:string, comment:null), ]
++POSTHOOK: Lineage: null_tab1.b SIMPLE [(base_tab)base_tab.FieldSchema(name:b, type:string, comment:null), ]
++1.0	1
++1.0	1
++1.0	1
++1.0	1
++1.0	1
++NULL	1
++NULL	NULL
++1.0	NULL
++1.0	1
++1.0	1
++PREHOOK: query: -- alter the null format and verify that the old null format is no longer in effect
++ALTER TABLE null_tab1 SET SERDEPROPERTIES ( 'serialization.null.format'='foo')
++PREHOOK: type: ALTERTABLE_SERDEPROPERTIES
++PREHOOK: Input: default@null_tab1
++PREHOOK: Output: default@null_tab1
++POSTHOOK: query: -- alter the null format and verify that the old null format is no longer in effect
++ALTER TABLE null_tab1 SET SERDEPROPERTIES ( 'serialization.null.format'='foo')
++POSTHOOK: type: ALTERTABLE_SERDEPROPERTIES
++POSTHOOK: Input: default@null_tab1
++POSTHOOK: Output: default@null_tab1
++POSTHOOK: Lineage: null_tab1.a SIMPLE [(base_tab)base_tab.FieldSchema(name:a, type:string, comment:null), ]
++POSTHOOK: Lineage: null_tab1.b SIMPLE [(base_tab)base_tab.FieldSchema(name:b, type:string, comment:null), ]
++PREHOOK: query: SELECT * FROM null_tab1
++PREHOOK: type: QUERY
++PREHOOK: Input: default@null_tab1
++#### A masked pattern was here ####
++POSTHOOK: query: SELECT * FROM null_tab1
++POSTHOOK: type: QUERY
++POSTHOOK: Input: default@null_tab1
++#### A masked pattern was here ####
++POSTHOOK: Lineage: null_tab1.a SIMPLE [(base_tab)base_tab.FieldSchema(name:a, type:string, comment:null), ]
++POSTHOOK: Lineage: null_tab1.b SIMPLE [(base_tab)base_tab.FieldSchema(name:b, type:string, comment:null), ]
++1.0	1
++1.0	1
++1.0	1
++1.0	1
++1.0	1
++fooNull	1
++fooNull	fooNull
++1.0	fooNull
++1.0	1
++1.0	1
++PREHOOK: query: DROP TABLE null_tab1
++PREHOOK: type: DROPTABLE
++PREHOOK: Input: default@null_tab1
++PREHOOK: Output: default@null_tab1
++POSTHOOK: query: DROP TABLE null_tab1
++POSTHOOK: type: DROPTABLE
++POSTHOOK: Input: default@null_tab1
++POSTHOOK: Output: default@null_tab1
++POSTHOOK: Lineage: null_tab1.a SIMPLE [(base_tab)base_tab.FieldSchema(name:a, type:string, comment:null), ]
++POSTHOOK: Lineage: null_tab1.b SIMPLE [(base_tab)base_tab.FieldSchema(name:b, type:string, comment:null), ]
++PREHOOK: query: DROP TABLE base_tab
++PREHOOK: type: DROPTABLE
++PREHOOK: Input: default@base_tab
++PREHOOK: Output: default@base_tab
++POSTHOOK: query: DROP TABLE base_tab
++POSTHOOK: type: DROPTABLE
++POSTHOOK: Input: default@base_tab
++POSTHOOK: Output: default@base_tab
++POSTHOOK: Lineage: null_tab1.a SIMPLE [(base_tab)base_tab.FieldSchema(name:a, type:string, comment:null), ]
++POSTHOOK: Lineage: null_tab1.b SIMPLE [(base_tab)base_tab.FieldSchema(name:b, type:string, comment:null), ]
+diff --git a/src/ql/src/test/results/clientpositive/nullformatCTAS.q.out b/src/ql/src/test/results/clientpositive/nullformatCTAS.q.out
+new file mode 100644
+index 0000000..54d7432
+--- /dev/null
++++ b/src/ql/src/test/results/clientpositive/nullformatCTAS.q.out
+@@ -0,0 +1,252 @@
++PREHOOK: query: -- base table with null data
++DROP TABLE IF EXISTS base_tab
++PREHOOK: type: DROPTABLE
++POSTHOOK: query: -- base table with null data
++DROP TABLE IF EXISTS base_tab
++POSTHOOK: type: DROPTABLE
++PREHOOK: query: CREATE TABLE base_tab(a STRING, b STRING, c STRING, d STRING) STORED AS TEXTFILE
++PREHOOK: type: CREATETABLE
++POSTHOOK: query: CREATE TABLE base_tab(a STRING, b STRING, c STRING, d STRING) STORED AS TEXTFILE
++POSTHOOK: type: CREATETABLE
++POSTHOOK: Output: default@base_tab
++PREHOOK: query: LOAD DATA LOCAL INPATH '../../data/files/null.txt' INTO TABLE base_tab
++PREHOOK: type: LOAD
++PREHOOK: Output: default@base_tab
++POSTHOOK: query: LOAD DATA LOCAL INPATH '../../data/files/null.txt' INTO TABLE base_tab
++POSTHOOK: type: LOAD
++POSTHOOK: Output: default@base_tab
++PREHOOK: query: DESCRIBE EXTENDED base_tab
++PREHOOK: type: DESCTABLE
++POSTHOOK: query: DESCRIBE EXTENDED base_tab
++POSTHOOK: type: DESCTABLE
++a                   	string              	None                
++b                   	string              	None                
++c                   	string              	None                
++d                   	string              	None                
++	 	 
++#### A masked pattern was here ####
++PREHOOK: query: -- table with non-default null format
++DROP TABLE IF EXISTS null_tab3
++PREHOOK: type: DROPTABLE
++POSTHOOK: query: -- table with non-default null format
++DROP TABLE IF EXISTS null_tab3
++POSTHOOK: type: DROPTABLE
++PREHOOK: query: EXPLAIN CREATE TABLE null_tab3 ROW FORMAT DELIMITED NULL DEFINED AS 'fooNull'
++   AS SELECT a, b FROM base_tab
++PREHOOK: type: CREATETABLE_AS_SELECT
++POSTHOOK: query: EXPLAIN CREATE TABLE null_tab3 ROW FORMAT DELIMITED NULL DEFINED AS 'fooNull'
++   AS SELECT a, b FROM base_tab
++POSTHOOK: type: CREATETABLE_AS_SELECT
++ABSTRACT SYNTAX TREE:
++  (TOK_CREATETABLE (TOK_TABNAME null_tab3) TOK_LIKETABLE (TOK_TABLEROWFORMAT (TOK_SERDEPROPS (TOK_TABLEROWFORMATNULL 'fooNull'))) (TOK_QUERY (TOK_FROM (TOK_TABREF (TOK_TABNAME base_tab))) (TOK_INSERT (TOK_DESTINATION (TOK_DIR TOK_TMP_FILE)) (TOK_SELECT (TOK_SELEXPR (TOK_TABLE_OR_COL a)) (TOK_SELEXPR (TOK_TABLE_OR_COL b))))))
++
++STAGE DEPENDENCIES:
++  Stage-1 is a root stage
++  Stage-7 depends on stages: Stage-1 , consists of Stage-4, Stage-3, Stage-5
++  Stage-4
++  Stage-0 depends on stages: Stage-4, Stage-3, Stage-6
++  Stage-8 depends on stages: Stage-0
++  Stage-2 depends on stages: Stage-8
++  Stage-3
++  Stage-5
++  Stage-6 depends on stages: Stage-5
++
++STAGE PLANS:
++  Stage: Stage-1
++    Map Reduce
++      Alias -> Map Operator Tree:
++        base_tab 
++          TableScan
++            alias: base_tab
++            Select Operator
++              expressions:
++                    expr: a
++                    type: string
++                    expr: b
++                    type: string
++              outputColumnNames: _col0, _col1
++              File Output Operator
++                compressed: false
++                GlobalTableId: 1
++                table:
++                    input format: org.apache.hadoop.mapred.TextInputFormat
++                    output format: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
++                    serde: org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe
++                    name: default.null_tab3
++
++  Stage: Stage-7
++    Conditional Operator
++
++  Stage: Stage-4
++    Move Operator
++      files:
++          hdfs directory: true
++#### A masked pattern was here ####
++
++  Stage: Stage-0
++    Move Operator
++      files:
++          hdfs directory: true
++#### A masked pattern was here ####
++
++  Stage: Stage-8
++      Create Table Operator:
++        Create Table
++          columns: a string, b string
++          if not exists: false
++          input format: org.apache.hadoop.mapred.TextInputFormat
++          # buckets: -1
++          output format: org.apache.hadoop.hive.ql.io.IgnoreKeyTextOutputFormat
++          name: null_tab3
++          isExternal: false
++
++  Stage: Stage-2
++    Stats-Aggr Operator
++
++  Stage: Stage-3
++    Map Reduce
++      Alias -> Map Operator Tree:
++#### A masked pattern was here ####
++          TableScan
++            File Output Operator
++              compressed: false
++              GlobalTableId: 0
++              table:
++                  input format: org.apache.hadoop.mapred.TextInputFormat
++                  output format: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
++                  serde: org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe
++                  name: default.null_tab3
++
++  Stage: Stage-5
++    Map Reduce
++      Alias -> Map Operator Tree:
++#### A masked pattern was here ####
++          TableScan
++            File Output Operator
++              compressed: false
++              GlobalTableId: 0
++              table:
++                  input format: org.apache.hadoop.mapred.TextInputFormat
++                  output format: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
++                  serde: org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe
++                  name: default.null_tab3
++
++  Stage: Stage-6
++    Move Operator
++      files:
++          hdfs directory: true
++#### A masked pattern was here ####
++
++PREHOOK: query: CREATE TABLE null_tab3 ROW FORMAT DELIMITED NULL DEFINED AS 'fooNull'
++   AS SELECT a, b FROM base_tab
++PREHOOK: type: CREATETABLE_AS_SELECT
++PREHOOK: Input: default@base_tab
++POSTHOOK: query: CREATE TABLE null_tab3 ROW FORMAT DELIMITED NULL DEFINED AS 'fooNull'
++   AS SELECT a, b FROM base_tab
++POSTHOOK: type: CREATETABLE_AS_SELECT
++POSTHOOK: Input: default@base_tab
++POSTHOOK: Output: default@null_tab3
++PREHOOK: query: DESCRIBE EXTENDED null_tab3
++PREHOOK: type: DESCTABLE
++POSTHOOK: query: DESCRIBE EXTENDED null_tab3
++POSTHOOK: type: DESCTABLE
++a                   	string              	None                
++b                   	string              	None                
++	 	 
++#### A masked pattern was here ####
++PREHOOK: query: SHOW CREATE TABLE null_tab3
++PREHOOK: type: SHOW_CREATETABLE
++PREHOOK: Input: default@null_tab3
++POSTHOOK: query: SHOW CREATE TABLE null_tab3
++POSTHOOK: type: SHOW_CREATETABLE
++POSTHOOK: Input: default@null_tab3
++CREATE  TABLE `null_tab3`(
++  `a` string, 
++  `b` string)
++ROW FORMAT DELIMITED 
++  NULL DEFINED AS 'fooNull' 
++STORED AS INPUTFORMAT 
++  'org.apache.hadoop.mapred.TextInputFormat' 
++OUTPUTFORMAT 
++  'org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat'
++LOCATION
++#### A masked pattern was here ####
++TBLPROPERTIES (
++  'numFiles'='1', 
++  'COLUMN_STATS_ACCURATE'='true', 
++#### A masked pattern was here ####
++  'numRows'='10', 
++  'totalSize'='80', 
++  'rawDataSize'='70')
++1.01
++1.01
++1.01
++1.01
++1.01
++fooNull1
++fooNullfooNull
++1.0fooNull
++1.01
++1.01
++PREHOOK: query: SELECT * FROM null_tab3
++PREHOOK: type: QUERY
++PREHOOK: Input: default@null_tab3
++#### A masked pattern was here ####
++POSTHOOK: query: SELECT * FROM null_tab3
++POSTHOOK: type: QUERY
++POSTHOOK: Input: default@null_tab3
++#### A masked pattern was here ####
++1.0	1
++1.0	1
++1.0	1
++1.0	1
++1.0	1
++NULL	1
++NULL	NULL
++1.0	NULL
++1.0	1
++1.0	1
++PREHOOK: query: -- alter the null format and verify that the old null format is no longer in effect
++ALTER TABLE null_tab3 SET SERDEPROPERTIES ( 'serialization.null.format'='foo')
++PREHOOK: type: ALTERTABLE_SERDEPROPERTIES
++PREHOOK: Input: default@null_tab3
++PREHOOK: Output: default@null_tab3
++POSTHOOK: query: -- alter the null format and verify that the old null format is no longer in effect
++ALTER TABLE null_tab3 SET SERDEPROPERTIES ( 'serialization.null.format'='foo')
++POSTHOOK: type: ALTERTABLE_SERDEPROPERTIES
++POSTHOOK: Input: default@null_tab3
++POSTHOOK: Output: default@null_tab3
++PREHOOK: query: SELECT * FROM null_tab3
++PREHOOK: type: QUERY
++PREHOOK: Input: default@null_tab3
++#### A masked pattern was here ####
++POSTHOOK: query: SELECT * FROM null_tab3
++POSTHOOK: type: QUERY
++POSTHOOK: Input: default@null_tab3
++#### A masked pattern was here ####
++1.0	1
++1.0	1
++1.0	1
++1.0	1
++1.0	1
++fooNull	1
++fooNull	fooNull
++1.0	fooNull
++1.0	1
++1.0	1
++PREHOOK: query: DROP TABLE null_tab3
++PREHOOK: type: DROPTABLE
++PREHOOK: Input: default@null_tab3
++PREHOOK: Output: default@null_tab3
++POSTHOOK: query: DROP TABLE null_tab3
++POSTHOOK: type: DROPTABLE
++POSTHOOK: Input: default@null_tab3
++POSTHOOK: Output: default@null_tab3
++PREHOOK: query: DROP TABLE base_tab
++PREHOOK: type: DROPTABLE
++PREHOOK: Input: default@base_tab
++PREHOOK: Output: default@base_tab
++POSTHOOK: query: DROP TABLE base_tab
++POSTHOOK: type: DROPTABLE
++POSTHOOK: Input: default@base_tab
++POSTHOOK: Output: default@base_tab
+diff --git a/src/ql/src/test/results/clientpositive/nullformatdir.q.out b/src/ql/src/test/results/clientpositive/nullformatdir.q.out
+new file mode 100644
+index 0000000..175a26f
+--- /dev/null
++++ b/src/ql/src/test/results/clientpositive/nullformatdir.q.out
+@@ -0,0 +1,89 @@
++PREHOOK: query: -- base table with null data
++DROP TABLE IF EXISTS base_tab
++PREHOOK: type: DROPTABLE
++POSTHOOK: query: -- base table with null data
++DROP TABLE IF EXISTS base_tab
++POSTHOOK: type: DROPTABLE
++PREHOOK: query: CREATE TABLE base_tab(a STRING, b STRING, c STRING, d STRING) STORED AS TEXTFILE
++PREHOOK: type: CREATETABLE
++POSTHOOK: query: CREATE TABLE base_tab(a STRING, b STRING, c STRING, d STRING) STORED AS TEXTFILE
++POSTHOOK: type: CREATETABLE
++POSTHOOK: Output: default@base_tab
++PREHOOK: query: LOAD DATA LOCAL INPATH '../../data/files/null.txt' INTO TABLE base_tab
++PREHOOK: type: LOAD
++PREHOOK: Output: default@base_tab
++POSTHOOK: query: LOAD DATA LOCAL INPATH '../../data/files/null.txt' INTO TABLE base_tab
++POSTHOOK: type: LOAD
++POSTHOOK: Output: default@base_tab
++PREHOOK: query: DESCRIBE EXTENDED base_tab
++PREHOOK: type: DESCTABLE
++POSTHOOK: query: DESCRIBE EXTENDED base_tab
++POSTHOOK: type: DESCTABLE
++a                   	string              	None                
++b                   	string              	None                
++c                   	string              	None                
++d                   	string              	None                
++	 	 
++#### A masked pattern was here ####
++   ROW FORMAT DELIMITED NULL DEFINED AS 'fooNull' SELECT a,b FROM base_tab
++PREHOOK: type: QUERY
++PREHOOK: Input: default@base_tab
++#### A masked pattern was here ####
++   ROW FORMAT DELIMITED NULL DEFINED AS 'fooNull' SELECT a,b FROM base_tab
++POSTHOOK: type: QUERY
++POSTHOOK: Input: default@base_tab
++#### A masked pattern was here ####
++1.01
++1.01
++1.01
++1.01
++1.01
++fooNull1
++fooNullfooNull
++1.0fooNull
++1.01
++1.01
++PREHOOK: query: -- load the exported data back into a table with same null format and verify null values
++DROP TABLE IF EXISTS null_tab2
++PREHOOK: type: DROPTABLE
++POSTHOOK: query: -- load the exported data back into a table with same null format and verify null values
++DROP TABLE IF EXISTS null_tab2
++POSTHOOK: type: DROPTABLE
++PREHOOK: query: CREATE TABLE null_tab2(a STRING, b STRING) ROW FORMAT DELIMITED NULL DEFINED AS 'fooNull'
++PREHOOK: type: CREATETABLE
++POSTHOOK: query: CREATE TABLE null_tab2(a STRING, b STRING) ROW FORMAT DELIMITED NULL DEFINED AS 'fooNull'
++POSTHOOK: type: CREATETABLE
++POSTHOOK: Output: default@null_tab2
++#### A masked pattern was here ####
++PREHOOK: type: LOAD
++PREHOOK: Output: default@null_tab2
++#### A masked pattern was here ####
++POSTHOOK: type: LOAD
++POSTHOOK: Output: default@null_tab2
++PREHOOK: query: SELECT * FROM null_tab2
++PREHOOK: type: QUERY
++PREHOOK: Input: default@null_tab2
++#### A masked pattern was here ####
++POSTHOOK: query: SELECT * FROM null_tab2
++POSTHOOK: type: QUERY
++POSTHOOK: Input: default@null_tab2
++#### A masked pattern was here ####
++1.0	1
++1.0	1
++1.0	1
++1.0	1
++1.0	1
++NULL	1
++NULL	NULL
++1.0	NULL
++1.0	1
++1.0	1
++#### A masked pattern was here ####
++PREHOOK: query: DROP TABLE base_tab
++PREHOOK: type: DROPTABLE
++PREHOOK: Input: default@base_tab
++PREHOOK: Output: default@base_tab
++POSTHOOK: query: DROP TABLE base_tab
++POSTHOOK: type: DROPTABLE
++POSTHOOK: Input: default@base_tab
++POSTHOOK: Output: default@base_tab
+-- 
+1.7.0.4
+

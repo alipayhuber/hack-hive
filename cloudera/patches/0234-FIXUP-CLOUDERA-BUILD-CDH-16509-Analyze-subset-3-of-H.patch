@@ -1,0 +1,112 @@
+From a860d612dcc9ac4c4d210cba62e0737353b4f1a8 Mon Sep 17 00:00:00 2001
+From: Szehon Ho <szehon@cloudera.com>
+Date: Thu, 16 Jan 2014 16:11:18 -0800
+Subject: [PATCH 234/375] FIXUP: CLOUDERA-BUILD: CDH-16509 Analyze subset 3 of Hive MR2 failures
+
+Made HBase tests also pass in hadoopVer as per previous commit of the same.
+---
+ .../src/test/templates/TestHBaseCliDriver.vm       |    4 +++-
+ .../test/templates/TestHBaseNegativeCliDriver.vm   |    3 ++-
+ itests/qtest/pom.xml                               |   17 ++++++++++++-----
+ .../apache/hadoop/hive/hbase/HBaseQTestUtil.java   |    4 ++--
+ 4 files changed, 19 insertions(+), 9 deletions(-)
+
+diff --git a/src/hbase-handler/src/test/templates/TestHBaseCliDriver.vm b/src/hbase-handler/src/test/templates/TestHBaseCliDriver.vm
+index 191bbc7..7ffac95 100644
+--- a/src/hbase-handler/src/test/templates/TestHBaseCliDriver.vm
++++ b/src/hbase-handler/src/test/templates/TestHBaseCliDriver.vm
+@@ -44,7 +44,9 @@ public class $className extends TestCase {
+   protected void setUp() {
+     try {
+       boolean miniMR = "$clusterMode".equals("miniMR");
+-      qt = new HBaseQTestUtil((HIVE_ROOT + "$resultsDir"), (HIVE_ROOT + "$logDir"), miniMR, setup);
++      String hadoopVer = "$hadoopVersion";
++
++      qt = new HBaseQTestUtil((HIVE_ROOT + "$resultsDir"), (HIVE_ROOT + "$logDir"), miniMR, setup, hadoopVer);
+ 
+     } catch (Exception e) {
+       System.err.println("Exception: " + e.getMessage());
+diff --git a/src/hbase-handler/src/test/templates/TestHBaseNegativeCliDriver.vm b/src/hbase-handler/src/test/templates/TestHBaseNegativeCliDriver.vm
+index f3b5e4b..d90949e 100644
+--- a/src/hbase-handler/src/test/templates/TestHBaseNegativeCliDriver.vm
++++ b/src/hbase-handler/src/test/templates/TestHBaseNegativeCliDriver.vm
+@@ -44,8 +44,9 @@ public class $className extends TestCase {
+   protected void setUp() {
+     try {
+       boolean miniMR = "$clusterMode".equals("miniMR");
++      String hadoopVer = "$hadoopVersion";
+ 
+-      qt = new HBaseQTestUtil((HIVE_ROOT + "$resultsDir"), (HIVE_ROOT + "$logDir"), miniMR, setup);
++      qt = new HBaseQTestUtil((HIVE_ROOT + "$resultsDir"), (HIVE_ROOT + "$logDir"), miniMR, setup, hadoopVer);
+ 
+     } catch (Exception e) {
+       System.err.println("Exception: " + e.getMessage());
+diff --git a/src/itests/qtest/pom.xml b/src/itests/qtest/pom.xml
+index 26cbf79..8996037 100644
+--- a/src/itests/qtest/pom.xml
++++ b/src/itests/qtest/pom.xml
+@@ -471,7 +471,9 @@
+                   clusterMode="${clustermode}"
+                   resultsDirectory="${basedir}/${hive.path.to.root}/hbase-handler/src/test/results/positive/" className="TestHBaseCliDriver"
+                   logFile="${project.build.directory}/testhbaseclidrivergen.log"
+-                  logDirectory="${project.build.directory}/qfile-results/hbase-handler/positive/"/>
++                  logDirectory="${project.build.directory}/qfile-results/hbase-handler/positive/"
++                  hadoopVersion="${hadoopVersion}"
++                  />
+ 
+                 <!-- HBase Minimr -->
+                 <qtestgen hiveRootDirectory="${basedir}/${hive.path.to.root}/"
+@@ -483,7 +485,9 @@
+                   clusterMode="miniMR"
+                   resultsDirectory="${basedir}/${hive.path.to.root}/hbase-handler/src/test/results/positive/" className="TestHBaseMinimrCliDriver"
+                   logFile="${project.build.directory}/testhbaseminimrclidrivergen.log"
+-                  logDirectory="${project.build.directory}/qfile-results/hbase-handler/minimrpositive/"/>
++                  logDirectory="${project.build.directory}/qfile-results/hbase-handler/minimrpositive/"
++                  hadoopVersion="${hadoopVersion}"
++                  />
+ 
+                 <!-- HBase Negative -->
+                 <qtestgen hiveRootDirectory="${basedir}/${hive.path.to.root}/"
+@@ -495,7 +499,9 @@
+                   clusterMode="${clustermode}"
+                   resultsDirectory="${basedir}/${hive.path.to.root}/hbase-handler/src/test/results/negative/" className="TestHBaseNegativeCliDriver"
+                   logFile="${project.build.directory}/testhbasenegativeclidrivergen.log"
+-                  logDirectory="${project.build.directory}/qfile-results/hbase-handler/negative"/>
++                  logDirectory="${project.build.directory}/qfile-results/hbase-handler/negative"
++                  hadoopVersion="${hadoopVersion}"
++                  />
+ 
+ 
+                 <!-- Beeline -->
+@@ -543,8 +549,9 @@
+                   runDisabled="${run_disabled}"
+                   resultsDirectory="${basedir}/${hive.path.to.root}/contrib/src/test/results/clientnegative/" className="TestContribNegativeCliDriver"
+                   logFile="${project.build.directory}/testcontribnegclidrivergen.log"
+-                  logDirectory="${project.build.directory}/qfile-results/contribclientnegative"/>
+-
++                  logDirectory="${project.build.directory}/qfile-results/contribclientnegative"
++                  hadoopVersion="${hadoopVersion}"
++                 />
+ 
+               </target>
+             </configuration>
+diff --git a/src/itests/util/src/main/java/org/apache/hadoop/hive/hbase/HBaseQTestUtil.java b/src/itests/util/src/main/java/org/apache/hadoop/hive/hbase/HBaseQTestUtil.java
+index 0558048..aa23ba7 100644
+--- a/src/itests/util/src/main/java/org/apache/hadoop/hive/hbase/HBaseQTestUtil.java
++++ b/src/itests/util/src/main/java/org/apache/hadoop/hive/hbase/HBaseQTestUtil.java
+@@ -24,10 +24,10 @@
+  */
+ public class HBaseQTestUtil extends QTestUtil {
+   public HBaseQTestUtil(
+-    String outDir, String logDir, boolean miniMr, HBaseTestSetup setup)
++    String outDir, String logDir, boolean miniMr, HBaseTestSetup setup, String hadoopVer)
+     throws Exception {
+ 
+-    super(outDir, logDir, miniMr, null);
++    super(outDir, logDir, miniMr, hadoopVer);
+     setup.preTest(conf);
+     super.init();
+   }
+-- 
+1.7.0.4
+

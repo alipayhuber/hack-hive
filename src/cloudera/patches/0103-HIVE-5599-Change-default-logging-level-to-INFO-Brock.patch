@@ -1,0 +1,26 @@
+From bac4f0e4218c8f74ec0b71a762a0f80c7c2d3c8d Mon Sep 17 00:00:00 2001
+From: Brock Noland <brock@apache.org>
+Date: Wed, 23 Oct 2013 15:01:29 +0000
+Subject: [PATCH 103/375] HIVE-5599 - Change default logging level to INFO (Brock Noland, Reviewed by Thejas M Nair)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1535047 13f79535-47bb-0310-9956-ffa450edef68
+---
+ common/src/java/conf/hive-log4j.properties |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+
+diff --git a/src/common/src/java/conf/hive-log4j.properties b/src/common/src/java/conf/hive-log4j.properties
+index 97564aa..6a95ec0 100644
+--- a/src/common/src/java/conf/hive-log4j.properties
++++ b/src/common/src/java/conf/hive-log4j.properties
+@@ -16,7 +16,7 @@
+ 
+ # Define some default values that can be overridden by system properties
+ hive.log.threshold=ALL
+-hive.root.logger=WARN,DRFA
++hive.root.logger=INFO,DRFA
+ hive.log.dir=/tmp/${user.name}
+ hive.log.file=hive.log
+ 
+-- 
+1.7.0.4
+

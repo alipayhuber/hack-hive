@@ -1,0 +1,156 @@
+From f0c3178e59d87387ff7f561ea0d8349b32ce27c2 Mon Sep 17 00:00:00 2001
+From: Brock Noland <brock@cloudera.com>
+Date: Tue, 26 Nov 2013 15:22:46 -0600
+Subject: [PATCH 157/375] PROPOSED: CDH-15893 - Backport HIVE-5755 - Fix hadoop2 execution environment Milestone 1
+
+---
+ hcatalog/hcatalog-pig-adapter/pom.xml |    5 ++++
+ itests/qtest/pom.xml                  |   40 ++++++++++++++++++++++++++++++++-
+ pom.xml                               |    2 +-
+ ql/pom.xml                            |    6 +++++
+ serde/pom.xml                         |    7 +++++
+ 5 files changed, 58 insertions(+), 2 deletions(-)
+
+diff --git a/src/hcatalog/hcatalog-pig-adapter/pom.xml b/src/hcatalog/hcatalog-pig-adapter/pom.xml
+index f8fe779..969fc2a 100644
+--- a/src/hcatalog/hcatalog-pig-adapter/pom.xml
++++ b/src/hcatalog/hcatalog-pig-adapter/pom.xml
+@@ -85,6 +85,11 @@
+         </dependency>
+         <dependency>
+           <groupId>org.apache.hadoop</groupId>
++          <artifactId>hadoop-mapreduce-client-common</artifactId>
++          <version>${hadoop-23.version}</version>
++        </dependency>
++        <dependency>
++          <groupId>org.apache.hadoop</groupId>
+           <artifactId>hadoop-mapreduce-client-core</artifactId>
+           <version>${hadoop-23.version}</version>
+         </dependency>
+diff --git a/src/itests/qtest/pom.xml b/src/itests/qtest/pom.xml
+index a3116e8..f163820 100644
+--- a/src/itests/qtest/pom.xml
++++ b/src/itests/qtest/pom.xml
+@@ -206,9 +206,28 @@
+       </properties>
+       <dependencies>
+         <dependency>
++          <groupId>com.sun.jersey</groupId>
++          <artifactId>jersey-servlet</artifactId>
++          <version>${jersey.version}</version>
++          <scope>test</scope>
++        </dependency>
++        <dependency>
++          <groupId>org.apache.hadoop</groupId>
++          <artifactId>hadoop-common</artifactId>
++          <version>${hadoop-23.version}</version>
++          <scope>test</scope>
++        </dependency>
++        <dependency>
+           <groupId>org.apache.hadoop</groupId>
+           <artifactId>hadoop-common</artifactId>
+           <version>${hadoop-23.version}</version>
++          <classifier>tests</classifier>
++          <scope>test</scope>
++        </dependency>
++        <dependency>
++          <groupId>org.apache.hadoop</groupId>
++          <artifactId>hadoop-hdfs</artifactId>
++          <version>${hadoop-23.version}</version>
+           <scope>test</scope>
+         </dependency>
+         <dependency>
+@@ -220,6 +239,18 @@
+         </dependency>
+         <dependency>
+           <groupId>org.apache.hadoop</groupId>
++          <artifactId>hadoop-mapreduce-client-core</artifactId>
++          <version>${hadoop-23.version}</version>
++          <scope>test</scope>
++        </dependency>
++        <dependency>
++          <groupId>org.apache.hadoop</groupId>
++          <artifactId>hadoop-mapreduce-client-hs</artifactId>
++          <version>${hadoop-23.version}</version>
++          <scope>test</scope>
++        </dependency>
++        <dependency>
++          <groupId>org.apache.hadoop</groupId>
+           <artifactId>hadoop-mapreduce-client-jobclient</artifactId>
+           <version>${hadoop-23.version}</version>
+           <classifier>tests</classifier>
+@@ -227,8 +258,9 @@
+         </dependency>
+         <dependency>
+           <groupId>org.apache.hadoop</groupId>
+-          <artifactId>hadoop-mapreduce-client-core</artifactId>
++          <artifactId>hadoop-yarn-server-tests</artifactId>
+           <version>${hadoop-23.version}</version>
++          <classifier>tests</classifier>
+           <scope>test</scope>
+         </dependency>
+         <dependency>
+@@ -280,6 +312,12 @@
+           <groupId>org.apache.hbase</groupId>
+           <artifactId>hbase-server</artifactId>
+           <version>${hbase.hadoop2.version}</version>
++          <scope>test</scope>
++        </dependency>
++        <dependency>
++          <groupId>org.apache.hbase</groupId>
++          <artifactId>hbase-server</artifactId>
++          <version>${hbase.hadoop2.version}</version>
+           <classifier>tests</classifier>
+           <scope>test</scope>
+         </dependency>
+diff --git a/src/pom.xml b/src/pom.xml
+index e315500..6468af8 100644
+--- a/src/pom.xml
++++ b/src/pom.xml
+@@ -707,7 +707,7 @@
+           <redirectTestOutputToFile>true</redirectTestOutputToFile>
+           <reuseForks>false</reuseForks>
+           <failIfNoTests>false</failIfNoTests>
+-          <argLine></argLine>
++          <argLine>-Xmx1024m -XX:MaxPermSize=256m</argLine>
+           <additionalClasspathElements>
+             <additionalClasspathElement>${test.tmp.dir}/conf</additionalClasspathElement>
+             <additionalClasspathElement>${basedir}/${hive.path.to.root}/conf</additionalClasspathElement>
+diff --git a/src/ql/pom.xml b/src/ql/pom.xml
+index 9f3b277..66bf919 100644
+--- a/src/ql/pom.xml
++++ b/src/ql/pom.xml
+@@ -248,6 +248,12 @@
+           <version>${hadoop-23.version}</version>
+           <optional>true</optional>
+         </dependency>
++        <dependency>
++           <groupId>org.apache.hadoop</groupId>
++           <artifactId>hadoop-mapreduce-client-common</artifactId>
++           <version>${hadoop-23.version}</version>
++           <scope>test</scope>
++        </dependency>
+       </dependencies>
+     </profile>
+     <profile>
+diff --git a/src/serde/pom.xml b/src/serde/pom.xml
+index e487be5..da917ae 100644
+--- a/src/serde/pom.xml
++++ b/src/serde/pom.xml
+@@ -123,6 +123,13 @@
+         </dependency>
+         <dependency>
+           <groupId>org.apache.hadoop</groupId>
++          <artifactId>hadoop-common</artifactId>
++          <version>${hadoop-23.version}</version>
++          <classifier>tests</classifier>
++          <scope>test</scope>
++        </dependency>
++        <dependency>
++          <groupId>org.apache.hadoop</groupId>
+           <artifactId>hadoop-hdfs</artifactId>
+           <version>${hadoop-23.version}</version>
+           <scope>test</scope>
+-- 
+1.7.0.4
+

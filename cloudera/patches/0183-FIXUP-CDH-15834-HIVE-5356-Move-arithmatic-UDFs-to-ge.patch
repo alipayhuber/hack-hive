@@ -1,0 +1,37 @@
+From d23eaa1faad16484e6344fff85d44b10a9cb6033 Mon Sep 17 00:00:00 2001
+From: Szehon Ho <szehon@cloudera.com>
+Date: Thu, 5 Dec 2013 12:52:29 -0800
+Subject: [PATCH 183/375] FIXUP: CDH-15834: HIVE-5356: Move arithmatic UDFs to generic UDF implementations (reviewed by Brock)
+
+The code changes of HIVE-5655 was brought in transitively due to this JIRA.  Now need to include the test changes of that JIRA.
+---
+ ql/src/test/results/clientpositive/udf_round.q.out |    2 +-
+ .../test/results/clientpositive/udf_round_2.q.out  |    2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/src/ql/src/test/results/clientpositive/udf_round.q.out b/src/ql/src/test/results/clientpositive/udf_round.q.out
+index e168b42..e298a6f 100644
+--- a/src/ql/src/test/results/clientpositive/udf_round.q.out
++++ b/src/ql/src/test/results/clientpositive/udf_round.q.out
+@@ -23,7 +23,7 @@ FROM src LIMIT 1
+ POSTHOOK: type: QUERY
+ POSTHOOK: Input: default@src
+ #### A masked pattern was here ####
+-NULL	NULL	NULL	Infinity	NaN
++NULL	NULL	NULL	NULL	NaN
+ PREHOOK: query: SELECT
+   round(55555), round(55555, 0), round(55555, 1), round(55555, 2), round(55555, 3),
+   round(55555, -1), round(55555, -2), round(55555, -3), round(55555, -4),
+diff --git a/src/ql/src/test/results/clientpositive/udf_round_2.q.out b/src/ql/src/test/results/clientpositive/udf_round_2.q.out
+index 5dbbd2b..cae0ca6 100644
+--- a/src/ql/src/test/results/clientpositive/udf_round_2.q.out
++++ b/src/ql/src/test/results/clientpositive/udf_round_2.q.out
+@@ -57,4 +57,4 @@ POSTHOOK: type: QUERY
+ POSTHOOK: Input: default@src
+ #### A masked pattern was here ####
+ POSTHOOK: Lineage: tsttbl1.n EXPRESSION []
+-Infinity	Infinity	Infinity	Infinity
++NULL	NULL	NULL	NULL
+-- 
+1.7.0.4
+

@@ -1,0 +1,35 @@
+From 2cc46b758a22a114e4982ed69a45f6d1ae4d53f7 Mon Sep 17 00:00:00 2001
+From: Navis Ryu <navis@apache.org>
+Date: Tue, 22 Oct 2013 07:18:36 +0000
+Subject: [PATCH 026/375] HIVE-5597 : Temporary fix for HIVE-5172 (possible NPE in TUGIContainingTransport) (agate via Navis)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1534524 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../hive/thrift/TUGIContainingTransport.java       |   11 +++++++++--
+ 1 files changed, 9 insertions(+), 2 deletions(-)
+
+diff --git a/src/shims/src/common/java/org/apache/hadoop/hive/thrift/TUGIContainingTransport.java b/src/shims/src/common/java/org/apache/hadoop/hive/thrift/TUGIContainingTransport.java
+index d73d77b..46057fa 100644
+--- a/src/shims/src/common/java/org/apache/hadoop/hive/thrift/TUGIContainingTransport.java
++++ b/src/shims/src/common/java/org/apache/hadoop/hive/thrift/TUGIContainingTransport.java
+@@ -82,8 +82,15 @@ public TUGIContainingTransport getTransport(TTransport trans) {
+ 
+       // UGI information is not available at connection setup time, it will be set later
+       // via set_ugi() rpc.
+-      transMap.putIfAbsent(trans, new TUGIContainingTransport(trans));
+-      return transMap.get(trans);
++      TUGIContainingTransport tugiTrans = transMap.get(trans);
++      if (tugiTrans == null) {
++        tugiTrans = new TUGIContainingTransport(trans);
++        TUGIContainingTransport prev = transMap.putIfAbsent(trans, tugiTrans);
++        if (prev != null) {
++          return prev
++        }
++      }
++      return tugiTrans;
+     }
+   }
+ }
+-- 
+1.7.0.4
+

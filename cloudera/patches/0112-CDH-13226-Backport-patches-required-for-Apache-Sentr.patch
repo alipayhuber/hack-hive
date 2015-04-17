@@ -1,0 +1,1620 @@
+From 769c2bdeb1dedb493dd47ffe83fc0cf5a61efdc4 Mon Sep 17 00:00:00 2001
+From: Brock Noland <brock@cloudera.com>
+Date: Tue, 23 Jul 2013 13:50:27 -0500
+Subject: [PATCH 112/375] CDH-13226 - Backport patches required for Apache Sentry-incubating
+ CDH-14184 - Sentry q file test input_uri.q from CDH-13226 doesn't use correct mkdir
+
+---
+ .../java/org/apache/hadoop/hive/conf/HiveConf.java |   42 +++-
+ ql/src/java/org/apache/hadoop/hive/ql/Driver.java  |   44 ++++-
+ .../hadoop/hive/ql/HiveDriverFilterHook.java       |   38 +++
+ .../hive/ql/HiveDriverFilterHookContext.java       |   35 +++
+ .../hive/ql/HiveDriverFilterHookContextImpl.java   |   72 ++++++
+ .../hadoop/hive/ql/HiveDriverFilterHookResult.java |   37 +++
+ .../hive/ql/HiveDriverFilterHookResultImpl.java    |   77 ++++++
+ .../apache/hadoop/hive/ql/hooks/ReadEntity.java    |   17 ++
+ .../hadoop/hive/ql/parse/DDLSemanticAnalyzer.java  |   26 ++-
+ .../hive/ql/parse/ImportSemanticAnalyzer.java      |    7 +-
+ .../hadoop/hive/ql/parse/LoadSemanticAnalyzer.java |    5 +
+ .../hadoop/hive/ql/parse/SemanticAnalyzer.java     |    9 +
+ .../hive/ql/security/TestConfRestrictList.java     |   91 +++++++
+ .../describe_table_extended_entity.q               |   20 ++
+ ql/src/test/queries/clientpositive/input_uri.q     |   25 ++
+ .../queries/clientpositive/view_extended_entity.q  |   36 +++
+ .../describe_table_extended_entity.q.out           |  260 ++++++++++++++++++++
+ ql/src/test/results/clientpositive/input_uri.q.out |   79 ++++++
+ .../clientpositive/view_extended_entity.q.out      |  102 ++++++++
+ .../service/cli/operation/GetSchemasOperation.java |   14 +-
+ .../service/cli/operation/GetTablesOperation.java  |   14 +-
+ .../service/cli/operation/MetadataOperation.java   |   74 ++++++
+ .../cli/session/HiveSessionHookContext.java        |    1 +
+ .../apache/hadoop/hive/shims/Hadoop20Shims.java    |    5 +
+ .../apache/hadoop/hive/shims/Hadoop20SShims.java   |    7 +-
+ .../apache/hadoop/hive/shims/Hadoop23Shims.java    |    7 +-
+ .../hive/thrift/HadoopThriftAuthBridge20S.java     |   10 +-
+ .../org/apache/hadoop/hive/shims/HadoopShims.java  |    8 +
+ 28 files changed, 1143 insertions(+), 19 deletions(-)
+ create mode 100644 ql/src/java/org/apache/hadoop/hive/ql/HiveDriverFilterHook.java
+ create mode 100644 ql/src/java/org/apache/hadoop/hive/ql/HiveDriverFilterHookContext.java
+ create mode 100644 ql/src/java/org/apache/hadoop/hive/ql/HiveDriverFilterHookContextImpl.java
+ create mode 100644 ql/src/java/org/apache/hadoop/hive/ql/HiveDriverFilterHookResult.java
+ create mode 100644 ql/src/java/org/apache/hadoop/hive/ql/HiveDriverFilterHookResultImpl.java
+ create mode 100644 ql/src/test/org/apache/hadoop/hive/ql/security/TestConfRestrictList.java
+ create mode 100644 ql/src/test/queries/clientpositive/describe_table_extended_entity.q
+ create mode 100644 ql/src/test/queries/clientpositive/input_uri.q
+ create mode 100644 ql/src/test/queries/clientpositive/view_extended_entity.q
+ create mode 100644 ql/src/test/results/clientpositive/describe_table_extended_entity.q.out
+ create mode 100644 ql/src/test/results/clientpositive/input_uri.q.out
+ create mode 100644 ql/src/test/results/clientpositive/view_extended_entity.q.out
+
+diff --git a/src/common/src/java/org/apache/hadoop/hive/conf/HiveConf.java b/src/common/src/java/org/apache/hadoop/hive/conf/HiveConf.java
+index 3e956a7..f7b7a12 100644
+--- a/src/common/src/java/org/apache/hadoop/hive/conf/HiveConf.java
++++ b/src/common/src/java/org/apache/hadoop/hive/conf/HiveConf.java
+@@ -680,6 +680,7 @@
+     HIVECONFVALIDATION("hive.conf.validation", true),
+ 
+     SEMANTIC_ANALYZER_HOOK("hive.semantic.analyzer.hook", ""),
++    HIVE_EXEC_FILTER_HOOK("hive.exec.filter.hook",""),
+ 
+     HIVE_AUTHORIZATION_ENABLED("hive.security.authorization.enabled", false),
+     HIVE_AUTHORIZATION_MANAGER("hive.security.authorization.manager",
+@@ -738,6 +739,7 @@
+     HIVE_DRIVER_RUN_HOOKS("hive.exec.driver.run.hooks", ""),
+     HIVE_DDL_OUTPUT_FORMAT("hive.ddl.output.format", null),
+     HIVE_ENTITY_SEPARATOR("hive.entity.separator", "@"),
++    HIVE_EXTENDED_ENITITY_CAPTURE("hive.entity.capture.input.URI", false),
+ 
+     // binary or http
+     HIVE_SERVER2_TRANSPORT_MODE("hive.server2.transport.mode", "binary"),
+@@ -1164,15 +1166,7 @@ private void initialize(Class<?> cls) {
+       setBoolVar(ConfVars.METASTORE_FIXED_DATASTORE, true);
+     }
+ 
+-    // setup list of conf vars that are not allowed to change runtime
+-    String restrictListStr = this.get(ConfVars.HIVE_CONF_RESTRICTED_LIST.toString(), "").trim();
+-    for (String entry : restrictListStr.split(",")) {
+-      entry = entry.trim();
+-      if (!entry.isEmpty()) {
+-        restrictList.add(entry);
+-      }
+-    }
+-    restrictList.add(ConfVars.HIVE_CONF_RESTRICTED_LIST.toString());
++    setupRestrictList();
+   }
+ 
+ 
+@@ -1287,4 +1281,34 @@ public static int getPositionFromInternalName(String internalName) {
+     }
+   }
+ 
++  /**
++   * Append comma separated list of config vars to the restrict List
++   * @param restrictListStr
++   */
++  public void addToRestrictList(String restrictListStr) {
++    if (restrictListStr == null) {
++      return;
++    }
++    String oldList = this.getVar(ConfVars.HIVE_CONF_RESTRICTED_LIST);
++    if (oldList == null || oldList.isEmpty()) {
++      this.setVar(ConfVars.HIVE_CONF_RESTRICTED_LIST, restrictListStr);
++    } else {
++      this.setVar(ConfVars.HIVE_CONF_RESTRICTED_LIST, oldList + "," + restrictListStr);
++    }
++    setupRestrictList();
++  }
++
++  /**
++   * Add the HIVE_CONF_RESTRICTED_LIST values to restrictList. Include HIVE_CONF_RESTRICTED_LIST itself
++   */
++  private void setupRestrictList() {
++    String restrictListStr = this.getVar(ConfVars.HIVE_CONF_RESTRICTED_LIST);
++    restrictList.clear();
++    if (restrictListStr != null) {
++      for (String entry : restrictListStr.split(",")) {
++        restrictList.add(entry.trim());
++      }
++    }
++    restrictList.add(ConfVars.HIVE_CONF_RESTRICTED_LIST.toString());
++  }
+ }
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/Driver.java b/src/ql/src/java/org/apache/hadoop/hive/ql/Driver.java
+index d14bbcb..d303292 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/Driver.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/Driver.java
+@@ -25,6 +25,7 @@
+ import java.io.IOException;
+ import java.io.Serializable;
+ import java.util.ArrayList;
++import java.util.Arrays;
+ import java.util.HashMap;
+ import java.util.HashSet;
+ import java.util.Iterator;
+@@ -132,6 +133,7 @@
+   private String errorMessage;
+   private String SQLState;
+   private Throwable downstreamError;
++  private HiveOperation hiveOperation;
+ 
+   // A limit on the number of threads that can be launched
+   private int maxthreads;
+@@ -463,6 +465,7 @@ public int compile(String command, boolean resetTaskIds) {
+       sem.validate();
+       perfLogger.PerfLogEnd(CLASS_NAME, PerfLogger.ANALYZE);
+ 
++      hiveOperation = SessionState.get().getHiveOperation();
+       plan = new QueryPlan(command, sem, perfLogger.getStartTime(PerfLogger.DRIVER_RUN));
+ 
+       // test Only - serialize the query plan and deserialize it
+@@ -1491,11 +1494,49 @@ public TaskResult pollTasks(Set<TaskResult> results) {
+     }
+   }
+ 
++  private boolean isExecMetadataLookup(HiveOperation hiveOperation) {
++    String[] commands = {"SHOWDATABASES", "SHOWTABLES"};
++    return Arrays.binarySearch(commands, hiveOperation.getOperationName().toUpperCase()) >=0 ;
++  }
++
++  private void fireFilterHooks(List<String> res) throws CommandNeedRetryException {
++    List<HiveDriverFilterHook> filterHooks = null;
++
++    // Invoke filter hooks if a) any specified and b) operation is a metadata operation
++    try {
++      filterHooks = getHooks(HiveConf.ConfVars.HIVE_EXEC_FILTER_HOOK,
++                   HiveDriverFilterHook.class);
++      if (res != null && !res.isEmpty() && filterHooks != null && !filterHooks.isEmpty()
++          && isExecMetadataLookup(hiveOperation)) {
++        String currentDbName = SessionState.get().getCurrentDatabase();
++        HiveDriverFilterHookContext hookCtx = new HiveDriverFilterHookContextImpl(conf,
++                                                hiveOperation, userName, res, currentDbName);
++        HiveDriverFilterHookResult hookResult;
++        List<String> filteredValues = null;
++        for (HiveDriverFilterHook hook : filterHooks) {
++          // result set 'res' is passed to the filter hooks. The filter hooks shouldn't mutate res
++          // directly. They should return a filtered result set instead.
++          hookResult = hook.postDriverFetch(hookCtx);
++          // pass the filtered result set back to the client
++          filteredValues = hookResult.getResult();
++          ((HiveDriverFilterHookContextImpl)hookCtx).setResult(filteredValues);
++        }
++        res.clear();
++        res.addAll(filteredValues);
++      }
++    } catch (Exception e) {
++        throw new CommandNeedRetryException(e);
++    }
++
++  }
++
+   public boolean getResults(ArrayList<String> res) throws IOException, CommandNeedRetryException {
+     if (plan != null && plan.getFetchTask() != null) {
+       FetchTask ft = plan.getFetchTask();
+       ft.setMaxRows(maxRows);
+-      return ft.fetch(res);
++      boolean ret = ft.fetch(res);
++      fireFilterHooks(res);
++      return ret;
+     }
+ 
+     if (resStream == null) {
+@@ -1537,6 +1578,7 @@ public boolean getResults(ArrayList<String> res) throws IOException, CommandNeed
+         return false;
+       }
+ 
++      fireFilterHooks(res);
+       if (ss == Utilities.StreamStatus.EOF) {
+         resStream = ctx.getStream();
+       }
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/HiveDriverFilterHook.java b/src/ql/src/java/org/apache/hadoop/hive/ql/HiveDriverFilterHook.java
+new file mode 100644
+index 0000000..b539305
+--- /dev/null
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/HiveDriverFilterHook.java
+@@ -0,0 +1,38 @@
++/*
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package org.apache.hadoop.hive.ql;
++
++import org.apache.hadoop.hive.ql.hooks.Hook;
++
++/**
++ * HiveDriverFilterHook allows Hive to be extended with custom
++ * logic for processing commands.
++ *
++ * Note that the lifetime of an instantiated hook object is scoped to
++ * the analysis of a single statement; hook instances are never reused.
++ */
++public interface HiveDriverFilterHook extends Hook {
++  /**
++   * Invoked after Hive finishes processing a command, fetches results and before the results
++   * are returned to the client.
++   */
++  public HiveDriverFilterHookResult postDriverFetch(HiveDriverFilterHookContext hookContext)
++      throws Exception;
++
++}
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/HiveDriverFilterHookContext.java b/src/ql/src/java/org/apache/hadoop/hive/ql/HiveDriverFilterHookContext.java
+new file mode 100644
+index 0000000..85ad24d
+--- /dev/null
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/HiveDriverFilterHookContext.java
+@@ -0,0 +1,35 @@
++/*
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package org.apache.hadoop.hive.ql;
++
++import java.util.List;
++
++import org.apache.hadoop.conf.Configurable;
++import org.apache.hadoop.hive.ql.plan.HiveOperation;
++
++/**
++ * Context information provided by Hive to implementations of
++ * HiveDriverFilterHook.
++ */
++public interface HiveDriverFilterHookContext extends Configurable{
++  public HiveOperation getHiveOperation ();
++  public String getUserName();
++  public List<String> getResult();
++  public String getDbName();
++}
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/HiveDriverFilterHookContextImpl.java b/src/ql/src/java/org/apache/hadoop/hive/ql/HiveDriverFilterHookContextImpl.java
+new file mode 100644
+index 0000000..7800836
+--- /dev/null
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/HiveDriverFilterHookContextImpl.java
+@@ -0,0 +1,72 @@
++/*
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package org.apache.hadoop.hive.ql;
++
++import java.util.List;
++
++import org.apache.hadoop.conf.Configuration;
++import org.apache.hadoop.hive.ql.plan.HiveOperation;
++
++public class HiveDriverFilterHookContextImpl implements HiveDriverFilterHookContext {
++
++  private Configuration conf;
++  private final HiveOperation hiveOperation;
++  private final String userName;
++  private List<String> result;
++  private final String dbName;
++
++  public HiveDriverFilterHookContextImpl(Configuration conf, HiveOperation hiveOperation,
++    String userName, List<String> result, String dbName) {
++    this.conf = conf;
++    this.hiveOperation = hiveOperation;
++    this.userName = userName;
++    this.result = result;
++    this.dbName = dbName;
++  }
++
++  @Override
++  public Configuration getConf() {
++    return conf;
++  }
++
++  public String getUserName() {
++    return userName;
++  }
++
++  public List<String> getResult() {
++    return result;
++  }
++
++  public HiveOperation getHiveOperation() {
++    return hiveOperation;
++  }
++
++  public void setConf(Configuration conf) {
++    this.conf = conf;
++  }
++
++  public String getDbName() {
++    return dbName;
++  }
++
++  public void setResult(List<String> result) {
++    this.result = result;
++  }
++
++}
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/HiveDriverFilterHookResult.java b/src/ql/src/java/org/apache/hadoop/hive/ql/HiveDriverFilterHookResult.java
+new file mode 100644
+index 0000000..77d698f
+--- /dev/null
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/HiveDriverFilterHookResult.java
+@@ -0,0 +1,37 @@
++/*
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package org.apache.hadoop.hive.ql;
++
++import java.util.List;
++
++import org.apache.hadoop.conf.Configurable;
++import org.apache.hadoop.hive.ql.plan.HiveOperation;
++
++/**
++ * Context information provided by Hive to implementations of
++ * HiveDriverFilterHook.
++ */
++public interface HiveDriverFilterHookResult extends Configurable{
++  public HiveOperation getHiveOperation ();
++  public void setHiveOperation(HiveOperation operation);
++  public String getUserName();
++  public void setUserName(String userName);
++  public List<String> getResult();
++  public void setResult(List<String> result);
++}
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/HiveDriverFilterHookResultImpl.java b/src/ql/src/java/org/apache/hadoop/hive/ql/HiveDriverFilterHookResultImpl.java
+new file mode 100644
+index 0000000..4f9b4e1
+--- /dev/null
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/HiveDriverFilterHookResultImpl.java
+@@ -0,0 +1,77 @@
++/*
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package org.apache.hadoop.hive.ql;
++
++import java.util.List;
++
++import org.apache.hadoop.conf.Configuration;
++import org.apache.hadoop.hive.ql.plan.HiveOperation;
++
++public class HiveDriverFilterHookResultImpl implements HiveDriverFilterHookResult {
++
++  private Configuration conf;
++  private HiveOperation hiveOperation;
++  private String userName;
++  private List<String> result;
++
++  public HiveDriverFilterHookResultImpl(Configuration conf, HiveOperation hiveOperation,
++    String userName, List<String> result) {
++    this.conf = conf;
++    this.hiveOperation = hiveOperation;
++    this.userName = userName;
++    this.result = result;
++  }
++
++  public HiveDriverFilterHookResultImpl() {
++  }
++
++  @Override
++  public Configuration getConf() {
++    return conf;
++  }
++
++  @Override
++  public void setConf(Configuration conf) {
++    this.conf = conf;
++  }
++
++  public String getUserName() {
++    return userName;
++  }
++
++  public void setUserName(String userName) {
++    this.userName = userName;
++  }
++
++  public List<String> getResult() {
++    return result;
++  }
++
++  public void setResult(List<String> result) {
++    this.result = result;
++  }
++
++  public HiveOperation getHiveOperation() {
++    return hiveOperation;
++  }
++
++  public void setHiveOperation(HiveOperation hiveOperation) {
++    this.hiveOperation = hiveOperation;
++  }
++}
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/hooks/ReadEntity.java b/src/ql/src/java/org/apache/hadoop/hive/ql/hooks/ReadEntity.java
+index 555faca..3e2a954 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/hooks/ReadEntity.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/hooks/ReadEntity.java
+@@ -86,6 +86,23 @@ public ReadEntity(Partition p, ReadEntity parent) {
+   }
+ 
+   /**
++   * Constructor for URI readentity
++   * @param path
++   * @param isLocal
++   */
++  public ReadEntity (String path, boolean isLocal) {
++    super(path, isLocal);
++  }
++
++  /**
++   * Constructor for URI readentity
++   * @param path
++   */
++  public ReadEntity (String path) {
++    super(path, false);
++  }
++
++  /**
+    * Equals function.
+    */
+   @Override
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/DDLSemanticAnalyzer.java b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/DDLSemanticAnalyzer.java
+index 037191a..4344814 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/DDLSemanticAnalyzer.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/DDLSemanticAnalyzer.java
+@@ -781,7 +781,7 @@ private void analyzeCreateDatabase(ASTNode ast) throws SemanticException {
+     if (dbProps != null) {
+       createDatabaseDesc.setDatabaseProperties(dbProps);
+     }
+-
++    saveInputLocationEntity(dbLocation);
+     rootTasks.add(TaskFactory.get(new DDLWork(getInputs(), getOutputs(),
+         createDatabaseDesc), conf));
+   }
+@@ -1097,6 +1097,7 @@ private void analyzeCreateIndex(ASTNode ast) throws SemanticException {
+         shared.serde, shared.serdeProps, rowFormatParams.collItemDelim,
+         rowFormatParams.fieldDelim, rowFormatParams.fieldEscape,
+         rowFormatParams.lineDelim, rowFormatParams.mapKeyDelim, indexComment);
++    saveInputLocationEntity(location);
+     Task<?> createIndex =
+         TaskFactory.get(new DDLWork(getInputs(), getOutputs(), crtIndexDesc), conf);
+     rootTasks.add(createIndex);
+@@ -1442,6 +1443,7 @@ private void analyzeAlterTableLocation(ASTNode ast, String tableName,
+     AlterTableDesc alterTblDesc = new AlterTableDesc(tableName, newLocation, partSpec);
+ 
+     addInputsOutputsAlterTable(tableName, partSpec, alterTblDesc);
++    saveInputLocationEntity(newLocation);
+     rootTasks.add(TaskFactory.get(new DDLWork(getInputs(), getOutputs(),
+         alterTblDesc), conf));
+   }
+@@ -1973,6 +1975,19 @@ private void analyzeDescribeTable(ASTNode ast) throws SemanticException {
+       descTblDesc.setExt(descOptions == HiveParser.KW_EXTENDED);
+       descTblDesc.setPretty(descOptions == HiveParser.KW_PRETTY);
+     }
++
++    // store the read entity for the table being described
++    if (conf.getBoolVar(ConfVars.HIVE_EXTENDED_ENITITY_CAPTURE)) {
++      Table table;
++      // table name could be db.tab format
++      if (tableName.contains(".")) {
++        String[] tokens = tableName.split("\\.");
++        table = new Table (tokens[0], tokens[1]);
++      } else {
++        table = new Table (SessionState.get().getCurrentDatabase(), tableName);
++      }
++      inputs.add(new ReadEntity(table));
++    }
+     rootTasks.add(TaskFactory.get(new DDLWork(getInputs(), getOutputs(),
+         descTblDesc), conf));
+     setFetchTask(createFetchTask(DescTableDesc.getSchema()));
+@@ -2626,6 +2641,7 @@ private void analyzeAlterTableAddParts(CommonTree ast, boolean expectView)
+     // add the last one
+     if (currentPart != null) {
+       Partition partition = getPartitionForOutput(tab, currentPart);
++      saveInputLocationEntity(currentLocation);
+       if (partition == null || !ifNotExists) {
+         AddPartitionDesc addPartitionDesc = new AddPartitionDesc(
+           tab.getDbName(), tblName, currentPart,
+@@ -3323,4 +3339,12 @@ private Partition getPartition(Table table, Map<String, String> partSpec, boolea
+   private String toMessage(ErrorMsg message, Object detail) {
+     return detail == null ? message.getMsg() : message.getMsg(detail.toString());
+   }
++
++  private void saveInputLocationEntity(String location) {
++    if (conf.getBoolVar(ConfVars.HIVE_EXTENDED_ENITITY_CAPTURE) &&
++        (location != null)) {
++      inputs.add(new ReadEntity(location));
++    }
++  }
++
+ }
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/ImportSemanticAnalyzer.java b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/ImportSemanticAnalyzer.java
+index e97d948..9a275f6 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/ImportSemanticAnalyzer.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/ImportSemanticAnalyzer.java
+@@ -36,6 +36,7 @@
+ import org.apache.hadoop.fs.FileSystem;
+ import org.apache.hadoop.fs.Path;
+ import org.apache.hadoop.hive.conf.HiveConf;
++import org.apache.hadoop.hive.conf.HiveConf.ConfVars;
+ import org.apache.hadoop.hive.metastore.TableType;
+ import org.apache.hadoop.hive.metastore.Warehouse;
+ import org.apache.hadoop.hive.metastore.api.FieldSchema;
+@@ -46,6 +47,7 @@
+ import org.apache.hadoop.hive.ql.exec.Task;
+ import org.apache.hadoop.hive.ql.exec.TaskFactory;
+ import org.apache.hadoop.hive.ql.exec.Utilities;
++import org.apache.hadoop.hive.ql.hooks.ReadEntity;
+ import org.apache.hadoop.hive.ql.hooks.WriteEntity;
+ import org.apache.hadoop.hive.ql.metadata.HiveException;
+ import org.apache.hadoop.hive.ql.metadata.InvalidTableException;
+@@ -269,8 +271,9 @@ public void analyzeInternal(ASTNode ast) throws SemanticException {
+           }
+         }
+         rootTasks.add(t);
+-        //inputs.add(new ReadEntity(fromURI.toString(),
+-        //  fromURI.getScheme().equals("hdfs") ? true : false));
++        if (conf.getBoolVar(ConfVars.HIVE_EXTENDED_ENITITY_CAPTURE)) {
++          inputs.add(new ReadEntity(fromURI.toString(), "hdfs".equals(fromURI.getScheme())));
++        }
+       }
+     } catch (SemanticException e) {
+       throw e;
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/LoadSemanticAnalyzer.java b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/LoadSemanticAnalyzer.java
+index c2981e8..593ab2d 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/LoadSemanticAnalyzer.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/LoadSemanticAnalyzer.java
+@@ -34,11 +34,13 @@
+ import org.apache.hadoop.fs.FileSystem;
+ import org.apache.hadoop.fs.Path;
+ import org.apache.hadoop.hive.conf.HiveConf;
++import org.apache.hadoop.hive.conf.HiveConf.ConfVars;
+ import org.apache.hadoop.hive.metastore.api.FieldSchema;
+ import org.apache.hadoop.hive.ql.ErrorMsg;
+ import org.apache.hadoop.hive.ql.exec.Task;
+ import org.apache.hadoop.hive.ql.exec.TaskFactory;
+ import org.apache.hadoop.hive.ql.exec.Utilities;
++import org.apache.hadoop.hive.ql.hooks.ReadEntity;
+ import org.apache.hadoop.hive.ql.hooks.WriteEntity;
+ import org.apache.hadoop.hive.ql.metadata.Hive;
+ import org.apache.hadoop.hive.ql.metadata.HiveException;
+@@ -191,6 +193,9 @@ public void analyzeInternal(ASTNode ast) throws SemanticException {
+       throw new SemanticException(ErrorMsg.INVALID_PATH.getMsg(fromTree, e
+           .getMessage()), e);
+     }
++    if (conf.getBoolVar(ConfVars.HIVE_EXTENDED_ENITITY_CAPTURE)) {
++      inputs.add(new ReadEntity(fromURI.toString(), isLocal));
++    }
+ 
+     // initialize destination table/partition
+     tableSpec ts = new tableSpec(db, conf, (ASTNode) tableTree);
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/SemanticAnalyzer.java b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/SemanticAnalyzer.java
+index 76ca606..720cd33 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/SemanticAnalyzer.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/SemanticAnalyzer.java
+@@ -8365,6 +8365,11 @@ public void analyzeInternal(ASTNode ast) throws SemanticException {
+       // skip the rest of this method.
+       ctx.setResDir(null);
+       ctx.setResFile(null);
++      if (conf.getBoolVar(ConfVars.HIVE_EXTENDED_ENITITY_CAPTURE)) {
++        for (Table tab : topToTable.values()) {
++          getInputs().add(new ReadEntity(tab));
++        }
++      }
+       return;
+     }
+ 
+@@ -9008,6 +9013,10 @@ private ASTNode analyzeCreateTable(ASTNode ast, QB qb)
+       }
+     }
+ 
++    if (conf.getBoolVar(ConfVars.HIVE_EXTENDED_ENITITY_CAPTURE) &&
++          (location != null)) {
++      inputs.add(new ReadEntity(location));
++    }
+     // Handle different types of CREATE TABLE command
+     CreateTableDesc crtTblDesc = null;
+     switch (command_type) {
+diff --git a/src/ql/src/test/org/apache/hadoop/hive/ql/security/TestConfRestrictList.java b/src/ql/src/test/org/apache/hadoop/hive/ql/security/TestConfRestrictList.java
+new file mode 100644
+index 0000000..fb36b47
+--- /dev/null
++++ b/src/ql/src/test/org/apache/hadoop/hive/ql/security/TestConfRestrictList.java
+@@ -0,0 +1,91 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.apache.hadoop.hive.ql.security;
++
++import junit.framework.TestCase;
++
++import org.apache.hadoop.hive.conf.HiveConf;
++import org.apache.hadoop.hive.conf.HiveConf.ConfVars;
++import org.junit.Test;
++
++public class TestConfRestrictList extends TestCase {
++  private HiveConf conf = null;
++
++  @Override
++  protected void setUp() throws Exception {
++    super.setUp();
++    System.setProperty(ConfVars.HIVE_CONF_RESTRICTED_LIST.varname,
++        ConfVars.HIVETESTMODEPREFIX.varname);
++    conf = new HiveConf();
++  }
++
++  /**
++   * Test that configs in restrict list can't be changed
++   * @throws Exception
++   */
++  @Test
++  public void testRestriction() throws Exception {
++    verifyRestriction(ConfVars.HIVETESTMODEPREFIX.varname, "foo");
++    conf.verifyAndSet(ConfVars.HIVETESTMODE.varname, "false");
++  }
++
++  /**
++   * Test that restrict list config itselft can't be changed
++   * @throws Exception
++   */
++  @Test
++  public void testRestrictList() throws Exception {
++    verifyRestriction(ConfVars.HIVE_CONF_RESTRICTED_LIST.varname, "foo");
++  }
++
++  /**
++   * Test appending new configs vars added to restrict list
++   * @throws Exception
++   */
++  @Test
++  public void testAppendRestriction() throws Exception {
++    String appendListStr = ConfVars.SCRATCHDIR.varname + "," +
++        ConfVars.LOCALSCRATCHDIR.varname + "," +
++        ConfVars.METASTOREURIS.varname;
++
++    conf.addToRestrictList(appendListStr);
++    // check if the new configs are added to HIVE_CONF_RESTRICTED_LIST
++    String newRestrictList = conf.getVar(ConfVars.HIVE_CONF_RESTRICTED_LIST);
++    assertTrue(newRestrictList.contains(ConfVars.SCRATCHDIR.varname));
++    assertTrue(newRestrictList.contains(ConfVars.LOCALSCRATCHDIR.varname));
++    assertTrue(newRestrictList.contains(ConfVars.METASTOREURIS.varname));
++
++    // check if the old values are still there in HIVE_CONF_RESTRICTED_LIST
++    assertTrue(newRestrictList.contains(ConfVars.HIVETESTMODEPREFIX.varname));
++
++    // verify that the new configs are in effect
++    verifyRestriction(ConfVars.HIVETESTMODEPREFIX.varname, "foo");
++    verifyRestriction(ConfVars.HIVE_CONF_RESTRICTED_LIST.varname, "foo");
++    verifyRestriction(ConfVars.LOCALSCRATCHDIR.varname, "foo");
++    verifyRestriction(ConfVars.METASTOREURIS.varname, "foo");
++  }
++
++  private void verifyRestriction(String varName, String newVal) {
++    try {
++      conf.verifyAndSet(varName, newVal);
++      fail("Setting config property " + varName + " should fail");
++    } catch (IllegalArgumentException e) {
++      // the verifyAndSet in this case is expected to fail with the IllegalArgumentException
++    }
++  }
++}
+diff --git a/src/ql/src/test/queries/clientpositive/describe_table_extended_entity.q b/src/ql/src/test/queries/clientpositive/describe_table_extended_entity.q
+new file mode 100644
+index 0000000..b3c8475
+--- /dev/null
++++ b/src/ql/src/test/queries/clientpositive/describe_table_extended_entity.q
+@@ -0,0 +1,20 @@
++set hive.entity.capture.input.URI=true;
++describe srcpart;
++describe srcpart.key;
++describe srcpart PARTITION(ds='2008-04-08', hr='12');
++
++describe extended srcpart;
++describe extended srcpart.key;
++describe extended srcpart PARTITION(ds='2008-04-08', hr='12');
++
++describe formatted srcpart;
++describe formatted srcpart.key;
++describe formatted srcpart PARTITION(ds='2008-04-08', hr='12');
++
++create table srcpart_serdeprops like srcpart;
++alter table srcpart_serdeprops set serdeproperties('xyz'='0');
++alter table srcpart_serdeprops set serdeproperties('pqrs'='1');
++alter table srcpart_serdeprops set serdeproperties('abcd'='2');
++alter table srcpart_serdeprops set serdeproperties('A1234'='3');
++describe formatted srcpart_serdeprops;
++drop table srcpart_serdeprops;
+diff --git a/src/ql/src/test/queries/clientpositive/input_uri.q b/src/ql/src/test/queries/clientpositive/input_uri.q
+new file mode 100644
+index 0000000..d471754
+--- /dev/null
++++ b/src/ql/src/test/queries/clientpositive/input_uri.q
+@@ -0,0 +1,25 @@
++SET  hive.test.mode=true;
++SET hive.test.mode.prefix=;
++SET hive.entity.capture.input.URI=false;
++
++DROP DATABASE IF EXISTS db1 CASCADE;
++CREATE DATABASE db1;
++
++USE db1;
++CREATE TABLE tab1( dep_id INT);
++
++LOAD DATA LOCAL INPATH '../data/files/test.dat' INTO TABLE tab1;
++
++dfs ${system:test.dfs.mkdir} ../build/ql/test/data/exports/uri1/temp;
++dfs -rmr ../build/ql/test/data/exports/uri1;
++EXPORT TABLE tab1 TO 'ql/test/data/exports/uri1';
++
++DROP TABLE tab1;
++IMPORT TABLE tab2 FROM 'ql/test/data/exports/uri1';
++
++CREATE TABLE tab3 (key INT, value STRING);
++ALTER TABLE tab3 SET LOCATION "file:/test/test/";
++
++CREATE TABLE ptab (key INT, value STRING) PARTITIONED BY (ds STRING);
++ALTER TABLE ptab ADD PARTITION (ds='2010');
++ALTER TABLE ptab PARTITION(ds='2010') SET LOCATION "file:/test/test/ds=2010";
+diff --git a/src/ql/src/test/queries/clientpositive/view_extended_entity.q b/src/ql/src/test/queries/clientpositive/view_extended_entity.q
+new file mode 100644
+index 0000000..57fe2b4
+--- /dev/null
++++ b/src/ql/src/test/queries/clientpositive/view_extended_entity.q
+@@ -0,0 +1,36 @@
++DROP DATABASE IF EXISTS db1;
++CREATE DATABASE db1;
++USE db1;
++
++set hive.entity.capture.input.URI=true;
++
++CREATE TABLE table1 (key STRING, value STRING)
++STORED AS TEXTFILE;
++
++CREATE TABLE table2 (key STRING, value STRING)
++STORED AS TEXTFILE;
++
++-- relative reference, no alias
++CREATE VIEW v1 AS SELECT * FROM table1;
++
++-- relative reference, aliased
++CREATE VIEW v2 AS SELECT t1.* FROM table1 t1;
++
++-- relative reference, multiple tables
++CREATE VIEW v3 AS SELECT t1.*, t2.key k FROM table1 t1 JOIN table2 t2 ON t1.key = t2.key;
++
++-- absolute reference, no alias
++CREATE VIEW v4 AS SELECT * FROM db1.table1;
++
++-- absolute reference, aliased
++CREATE VIEW v5 AS SELECT t1.* FROM db1.table1 t1;
++
++-- absolute reference, multiple tables
++CREATE VIEW v6 AS SELECT t1.*, t2.key k FROM db1.table1 t1 JOIN db1.table2 t2 ON t1.key = t2.key;
++
++-- relative reference, explicit column
++CREATE VIEW v7 AS SELECT key from table1;
++
++-- absolute reference, explicit column
++CREATE VIEW v8 AS SELECT key from db1.table1;
++
+diff --git a/src/ql/src/test/results/clientpositive/describe_table_extended_entity.q.out b/src/ql/src/test/results/clientpositive/describe_table_extended_entity.q.out
+new file mode 100644
+index 0000000..3ba4ec0
+--- /dev/null
++++ b/src/ql/src/test/results/clientpositive/describe_table_extended_entity.q.out
+@@ -0,0 +1,260 @@
++PREHOOK: query: describe srcpart
++PREHOOK: type: DESCTABLE
++PREHOOK: Input: default@srcpart
++POSTHOOK: query: describe srcpart
++POSTHOOK: type: DESCTABLE
++POSTHOOK: Input: default@srcpart
++key                 	string              	default             
++value               	string              	default             
++ds                  	string              	None                
++hr                  	string              	None                
++	 	 
++# Partition Information	 	 
++# col_name            	data_type           	comment             
++	 	 
++ds                  	string              	None                
++hr                  	string              	None                
++PREHOOK: query: describe srcpart.key
++PREHOOK: type: DESCTABLE
++PREHOOK: Input: default@srcpart
++POSTHOOK: query: describe srcpart.key
++POSTHOOK: type: DESCTABLE
++POSTHOOK: Input: default@srcpart
++key                 	string              	from deserializer   
++PREHOOK: query: describe srcpart PARTITION(ds='2008-04-08', hr='12')
++PREHOOK: type: DESCTABLE
++PREHOOK: Input: default@srcpart
++POSTHOOK: query: describe srcpart PARTITION(ds='2008-04-08', hr='12')
++POSTHOOK: type: DESCTABLE
++POSTHOOK: Input: default@srcpart
++key                 	string              	default             
++value               	string              	default             
++ds                  	string              	None                
++hr                  	string              	None                
++	 	 
++# Partition Information	 	 
++# col_name            	data_type           	comment             
++	 	 
++ds                  	string              	None                
++hr                  	string              	None                
++PREHOOK: query: describe extended srcpart
++PREHOOK: type: DESCTABLE
++PREHOOK: Input: default@srcpart
++POSTHOOK: query: describe extended srcpart
++POSTHOOK: type: DESCTABLE
++POSTHOOK: Input: default@srcpart
++key                 	string              	default             
++value               	string              	default             
++ds                  	string              	None                
++hr                  	string              	None                
++	 	 
++# Partition Information	 	 
++# col_name            	data_type           	comment             
++	 	 
++ds                  	string              	None                
++hr                  	string              	None                
++	 	 
++#### A masked pattern was here ####
++PREHOOK: query: describe extended srcpart.key
++PREHOOK: type: DESCTABLE
++PREHOOK: Input: default@srcpart
++POSTHOOK: query: describe extended srcpart.key
++POSTHOOK: type: DESCTABLE
++POSTHOOK: Input: default@srcpart
++key                 	string              	from deserializer   
++PREHOOK: query: describe extended srcpart PARTITION(ds='2008-04-08', hr='12')
++PREHOOK: type: DESCTABLE
++PREHOOK: Input: default@srcpart
++POSTHOOK: query: describe extended srcpart PARTITION(ds='2008-04-08', hr='12')
++POSTHOOK: type: DESCTABLE
++POSTHOOK: Input: default@srcpart
++key                 	string              	default             
++value               	string              	default             
++ds                  	string              	None                
++hr                  	string              	None                
++	 	 
++# Partition Information	 	 
++# col_name            	data_type           	comment             
++	 	 
++ds                  	string              	None                
++hr                  	string              	None                
++	 	 
++#### A masked pattern was here ####
++PREHOOK: query: describe formatted srcpart
++PREHOOK: type: DESCTABLE
++PREHOOK: Input: default@srcpart
++POSTHOOK: query: describe formatted srcpart
++POSTHOOK: type: DESCTABLE
++POSTHOOK: Input: default@srcpart
++# col_name            	data_type           	comment             
++	 	 
++key                 	string              	default             
++value               	string              	default             
++	 	 
++# Partition Information	 	 
++# col_name            	data_type           	comment             
++	 	 
++ds                  	string              	None                
++hr                  	string              	None                
++	 	 
++# Detailed Table Information	 	 
++Database:           	default             	 
++#### A masked pattern was here ####
++Protect Mode:       	None                	 
++Retention:          	0                   	 
++#### A masked pattern was here ####
++Table Type:         	MANAGED_TABLE       	 
++Table Parameters:	 	 
++	numFiles            	4                   
++	numPartitions       	4                   
++	numRows             	0                   
++	rawDataSize         	0                   
++	totalSize           	23248               
++#### A masked pattern was here ####
++	 	 
++# Storage Information	 	 
++SerDe Library:      	org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe	 
++InputFormat:        	org.apache.hadoop.mapred.TextInputFormat	 
++OutputFormat:       	org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat	 
++Compressed:         	No                  	 
++Num Buckets:        	-1                  	 
++Bucket Columns:     	[]                  	 
++Sort Columns:       	[]                  	 
++Storage Desc Params:	 	 
++	serialization.format	1                   
++PREHOOK: query: describe formatted srcpart.key
++PREHOOK: type: DESCTABLE
++PREHOOK: Input: default@srcpart
++POSTHOOK: query: describe formatted srcpart.key
++POSTHOOK: type: DESCTABLE
++POSTHOOK: Input: default@srcpart
++# col_name            	data_type           	comment             
++	 	 
++key                 	string              	from deserializer   
++PREHOOK: query: describe formatted srcpart PARTITION(ds='2008-04-08', hr='12')
++PREHOOK: type: DESCTABLE
++PREHOOK: Input: default@srcpart
++POSTHOOK: query: describe formatted srcpart PARTITION(ds='2008-04-08', hr='12')
++POSTHOOK: type: DESCTABLE
++POSTHOOK: Input: default@srcpart
++# col_name            	data_type           	comment             
++	 	 
++key                 	string              	default             
++value               	string              	default             
++	 	 
++# Partition Information	 	 
++# col_name            	data_type           	comment             
++	 	 
++ds                  	string              	None                
++hr                  	string              	None                
++	 	 
++# Detailed Partition Information	 	 
++Partition Value:    	[2008-04-08, 12]    	 
++Database:           	default             	 
++Table:              	srcpart             	 
++#### A masked pattern was here ####
++Protect Mode:       	None                	 
++#### A masked pattern was here ####
++Partition Parameters:	 	 
++	numFiles            	1                   
++	numRows             	0                   
++	rawDataSize         	0                   
++	totalSize           	5812                
++#### A masked pattern was here ####
++	 	 
++# Storage Information	 	 
++SerDe Library:      	org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe	 
++InputFormat:        	org.apache.hadoop.mapred.TextInputFormat	 
++OutputFormat:       	org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat	 
++Compressed:         	No                  	 
++Num Buckets:        	-1                  	 
++Bucket Columns:     	[]                  	 
++Sort Columns:       	[]                  	 
++Storage Desc Params:	 	 
++	serialization.format	1                   
++PREHOOK: query: create table srcpart_serdeprops like srcpart
++PREHOOK: type: CREATETABLE
++POSTHOOK: query: create table srcpart_serdeprops like srcpart
++POSTHOOK: type: CREATETABLE
++POSTHOOK: Output: default@srcpart_serdeprops
++PREHOOK: query: alter table srcpart_serdeprops set serdeproperties('xyz'='0')
++PREHOOK: type: ALTERTABLE_SERDEPROPERTIES
++PREHOOK: Input: default@srcpart_serdeprops
++PREHOOK: Output: default@srcpart_serdeprops
++POSTHOOK: query: alter table srcpart_serdeprops set serdeproperties('xyz'='0')
++POSTHOOK: type: ALTERTABLE_SERDEPROPERTIES
++POSTHOOK: Input: default@srcpart_serdeprops
++POSTHOOK: Output: default@srcpart_serdeprops
++PREHOOK: query: alter table srcpart_serdeprops set serdeproperties('pqrs'='1')
++PREHOOK: type: ALTERTABLE_SERDEPROPERTIES
++PREHOOK: Input: default@srcpart_serdeprops
++PREHOOK: Output: default@srcpart_serdeprops
++POSTHOOK: query: alter table srcpart_serdeprops set serdeproperties('pqrs'='1')
++POSTHOOK: type: ALTERTABLE_SERDEPROPERTIES
++POSTHOOK: Input: default@srcpart_serdeprops
++POSTHOOK: Output: default@srcpart_serdeprops
++PREHOOK: query: alter table srcpart_serdeprops set serdeproperties('abcd'='2')
++PREHOOK: type: ALTERTABLE_SERDEPROPERTIES
++PREHOOK: Input: default@srcpart_serdeprops
++PREHOOK: Output: default@srcpart_serdeprops
++POSTHOOK: query: alter table srcpart_serdeprops set serdeproperties('abcd'='2')
++POSTHOOK: type: ALTERTABLE_SERDEPROPERTIES
++POSTHOOK: Input: default@srcpart_serdeprops
++POSTHOOK: Output: default@srcpart_serdeprops
++PREHOOK: query: alter table srcpart_serdeprops set serdeproperties('A1234'='3')
++PREHOOK: type: ALTERTABLE_SERDEPROPERTIES
++PREHOOK: Input: default@srcpart_serdeprops
++PREHOOK: Output: default@srcpart_serdeprops
++POSTHOOK: query: alter table srcpart_serdeprops set serdeproperties('A1234'='3')
++POSTHOOK: type: ALTERTABLE_SERDEPROPERTIES
++POSTHOOK: Input: default@srcpart_serdeprops
++POSTHOOK: Output: default@srcpart_serdeprops
++PREHOOK: query: describe formatted srcpart_serdeprops
++PREHOOK: type: DESCTABLE
++PREHOOK: Input: default@srcpart_serdeprops
++POSTHOOK: query: describe formatted srcpart_serdeprops
++POSTHOOK: type: DESCTABLE
++POSTHOOK: Input: default@srcpart_serdeprops
++# col_name            	data_type           	comment             
++	 	 
++key                 	string              	default             
++value               	string              	default             
++	 	 
++# Partition Information	 	 
++# col_name            	data_type           	comment             
++	 	 
++ds                  	string              	None                
++hr                  	string              	None                
++	 	 
++# Detailed Table Information	 	 
++Database:           	default             	 
++#### A masked pattern was here ####
++Protect Mode:       	None                	 
++Retention:          	0                   	 
++#### A masked pattern was here ####
++Table Type:         	MANAGED_TABLE       	 
++Table Parameters:	 	 
++#### A masked pattern was here ####
++	 	 
++# Storage Information	 	 
++SerDe Library:      	org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe	 
++InputFormat:        	org.apache.hadoop.mapred.TextInputFormat	 
++OutputFormat:       	org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat	 
++Compressed:         	No                  	 
++Num Buckets:        	-1                  	 
++Bucket Columns:     	[]                  	 
++Sort Columns:       	[]                  	 
++Storage Desc Params:	 	 
++	A1234               	3                   
++	abcd                	2                   
++	pqrs                	1                   
++	serialization.format	1                   
++	xyz                 	0                   
++PREHOOK: query: drop table srcpart_serdeprops
++PREHOOK: type: DROPTABLE
++PREHOOK: Input: default@srcpart_serdeprops
++PREHOOK: Output: default@srcpart_serdeprops
++POSTHOOK: query: drop table srcpart_serdeprops
++POSTHOOK: type: DROPTABLE
++POSTHOOK: Input: default@srcpart_serdeprops
++POSTHOOK: Output: default@srcpart_serdeprops
+diff --git a/src/ql/src/test/results/clientpositive/input_uri.q.out b/src/ql/src/test/results/clientpositive/input_uri.q.out
+new file mode 100644
+index 0000000..a83b86a
+--- /dev/null
++++ b/src/ql/src/test/results/clientpositive/input_uri.q.out
+@@ -0,0 +1,79 @@
++PREHOOK: query: DROP DATABASE IF EXISTS db1 CASCADE
++PREHOOK: type: DROPDATABASE
++POSTHOOK: query: DROP DATABASE IF EXISTS db1 CASCADE
++POSTHOOK: type: DROPDATABASE
++PREHOOK: query: CREATE DATABASE db1
++PREHOOK: type: CREATEDATABASE
++POSTHOOK: query: CREATE DATABASE db1
++POSTHOOK: type: CREATEDATABASE
++PREHOOK: query: USE db1
++PREHOOK: type: SWITCHDATABASE
++POSTHOOK: query: USE db1
++POSTHOOK: type: SWITCHDATABASE
++PREHOOK: query: CREATE TABLE tab1( dep_id INT)
++PREHOOK: type: CREATETABLE
++POSTHOOK: query: CREATE TABLE tab1( dep_id INT)
++POSTHOOK: type: CREATETABLE
++POSTHOOK: Output: db1@tab1
++PREHOOK: query: LOAD DATA LOCAL INPATH '../data/files/test.dat' INTO TABLE tab1
++PREHOOK: type: LOAD
++PREHOOK: Output: db1@tab1
++POSTHOOK: query: LOAD DATA LOCAL INPATH '../data/files/test.dat' INTO TABLE tab1
++POSTHOOK: type: LOAD
++POSTHOOK: Output: db1@tab1
++#### A masked pattern was here ####
++PREHOOK: query: EXPORT TABLE tab1 TO 'ql/test/data/exports/uri1'
++PREHOOK: type: EXPORT
++PREHOOK: Input: db1@tab1
++#### A masked pattern was here ####
++POSTHOOK: query: EXPORT TABLE tab1 TO 'ql/test/data/exports/uri1'
++POSTHOOK: type: EXPORT
++POSTHOOK: Input: db1@tab1
++#### A masked pattern was here ####
++PREHOOK: query: DROP TABLE tab1
++PREHOOK: type: DROPTABLE
++PREHOOK: Input: db1@tab1
++PREHOOK: Output: db1@tab1
++POSTHOOK: query: DROP TABLE tab1
++POSTHOOK: type: DROPTABLE
++POSTHOOK: Input: db1@tab1
++POSTHOOK: Output: db1@tab1
++PREHOOK: query: IMPORT TABLE tab2 FROM 'ql/test/data/exports/uri1'
++PREHOOK: type: IMPORT
++POSTHOOK: query: IMPORT TABLE tab2 FROM 'ql/test/data/exports/uri1'
++POSTHOOK: type: IMPORT
++POSTHOOK: Output: db1@tab2
++PREHOOK: query: CREATE TABLE tab3 (key INT, value STRING)
++PREHOOK: type: CREATETABLE
++POSTHOOK: query: CREATE TABLE tab3 (key INT, value STRING)
++POSTHOOK: type: CREATETABLE
++POSTHOOK: Output: db1@tab3
++#### A masked pattern was here ####
++PREHOOK: type: ALTERTABLE_LOCATION
++PREHOOK: Input: db1@tab3
++PREHOOK: Output: db1@tab3
++#### A masked pattern was here ####
++POSTHOOK: type: ALTERTABLE_LOCATION
++POSTHOOK: Input: db1@tab3
++POSTHOOK: Output: db1@tab3
++PREHOOK: query: CREATE TABLE ptab (key INT, value STRING) PARTITIONED BY (ds STRING)
++PREHOOK: type: CREATETABLE
++POSTHOOK: query: CREATE TABLE ptab (key INT, value STRING) PARTITIONED BY (ds STRING)
++POSTHOOK: type: CREATETABLE
++POSTHOOK: Output: db1@ptab
++PREHOOK: query: ALTER TABLE ptab ADD PARTITION (ds='2010')
++PREHOOK: type: ALTERTABLE_ADDPARTS
++PREHOOK: Input: db1@ptab
++POSTHOOK: query: ALTER TABLE ptab ADD PARTITION (ds='2010')
++POSTHOOK: type: ALTERTABLE_ADDPARTS
++POSTHOOK: Input: db1@ptab
++POSTHOOK: Output: db1@ptab@ds=2010
++#### A masked pattern was here ####
++PREHOOK: type: ALTERPARTITION_LOCATION
++PREHOOK: Input: db1@ptab
++PREHOOK: Output: db1@ptab@ds=2010
++#### A masked pattern was here ####
++POSTHOOK: type: ALTERPARTITION_LOCATION
++POSTHOOK: Input: db1@ptab
++POSTHOOK: Input: db1@ptab@ds=2010
++POSTHOOK: Output: db1@ptab@ds=2010
+diff --git a/src/ql/src/test/results/clientpositive/view_extended_entity.q.out b/src/ql/src/test/results/clientpositive/view_extended_entity.q.out
+new file mode 100644
+index 0000000..01fc7a3
+--- /dev/null
++++ b/src/ql/src/test/results/clientpositive/view_extended_entity.q.out
+@@ -0,0 +1,102 @@
++PREHOOK: query: DROP DATABASE IF EXISTS db1
++PREHOOK: type: DROPDATABASE
++POSTHOOK: query: DROP DATABASE IF EXISTS db1
++POSTHOOK: type: DROPDATABASE
++PREHOOK: query: CREATE DATABASE db1
++PREHOOK: type: CREATEDATABASE
++POSTHOOK: query: CREATE DATABASE db1
++POSTHOOK: type: CREATEDATABASE
++PREHOOK: query: USE db1
++PREHOOK: type: SWITCHDATABASE
++POSTHOOK: query: USE db1
++POSTHOOK: type: SWITCHDATABASE
++PREHOOK: query: CREATE TABLE table1 (key STRING, value STRING)
++STORED AS TEXTFILE
++PREHOOK: type: CREATETABLE
++POSTHOOK: query: CREATE TABLE table1 (key STRING, value STRING)
++STORED AS TEXTFILE
++POSTHOOK: type: CREATETABLE
++POSTHOOK: Output: db1@table1
++PREHOOK: query: CREATE TABLE table2 (key STRING, value STRING)
++STORED AS TEXTFILE
++PREHOOK: type: CREATETABLE
++POSTHOOK: query: CREATE TABLE table2 (key STRING, value STRING)
++STORED AS TEXTFILE
++POSTHOOK: type: CREATETABLE
++POSTHOOK: Output: db1@table2
++PREHOOK: query: -- relative reference, no alias
++CREATE VIEW v1 AS SELECT * FROM table1
++PREHOOK: type: CREATEVIEW
++PREHOOK: Input: db1@table1
++POSTHOOK: query: -- relative reference, no alias
++CREATE VIEW v1 AS SELECT * FROM table1
++POSTHOOK: type: CREATEVIEW
++POSTHOOK: Input: db1@table1
++POSTHOOK: Output: db1@v1
++PREHOOK: query: -- relative reference, aliased
++CREATE VIEW v2 AS SELECT t1.* FROM table1 t1
++PREHOOK: type: CREATEVIEW
++PREHOOK: Input: db1@table1
++POSTHOOK: query: -- relative reference, aliased
++CREATE VIEW v2 AS SELECT t1.* FROM table1 t1
++POSTHOOK: type: CREATEVIEW
++POSTHOOK: Input: db1@table1
++POSTHOOK: Output: db1@v2
++PREHOOK: query: -- relative reference, multiple tables
++CREATE VIEW v3 AS SELECT t1.*, t2.key k FROM table1 t1 JOIN table2 t2 ON t1.key = t2.key
++PREHOOK: type: CREATEVIEW
++PREHOOK: Input: db1@table1
++PREHOOK: Input: db1@table2
++POSTHOOK: query: -- relative reference, multiple tables
++CREATE VIEW v3 AS SELECT t1.*, t2.key k FROM table1 t1 JOIN table2 t2 ON t1.key = t2.key
++POSTHOOK: type: CREATEVIEW
++POSTHOOK: Input: db1@table1
++POSTHOOK: Input: db1@table2
++POSTHOOK: Output: db1@v3
++PREHOOK: query: -- absolute reference, no alias
++CREATE VIEW v4 AS SELECT * FROM db1.table1
++PREHOOK: type: CREATEVIEW
++PREHOOK: Input: db1@table1
++POSTHOOK: query: -- absolute reference, no alias
++CREATE VIEW v4 AS SELECT * FROM db1.table1
++POSTHOOK: type: CREATEVIEW
++POSTHOOK: Input: db1@table1
++POSTHOOK: Output: db1@v4
++PREHOOK: query: -- absolute reference, aliased
++CREATE VIEW v5 AS SELECT t1.* FROM db1.table1 t1
++PREHOOK: type: CREATEVIEW
++PREHOOK: Input: db1@table1
++POSTHOOK: query: -- absolute reference, aliased
++CREATE VIEW v5 AS SELECT t1.* FROM db1.table1 t1
++POSTHOOK: type: CREATEVIEW
++POSTHOOK: Input: db1@table1
++POSTHOOK: Output: db1@v5
++PREHOOK: query: -- absolute reference, multiple tables
++CREATE VIEW v6 AS SELECT t1.*, t2.key k FROM db1.table1 t1 JOIN db1.table2 t2 ON t1.key = t2.key
++PREHOOK: type: CREATEVIEW
++PREHOOK: Input: db1@table1
++PREHOOK: Input: db1@table2
++POSTHOOK: query: -- absolute reference, multiple tables
++CREATE VIEW v6 AS SELECT t1.*, t2.key k FROM db1.table1 t1 JOIN db1.table2 t2 ON t1.key = t2.key
++POSTHOOK: type: CREATEVIEW
++POSTHOOK: Input: db1@table1
++POSTHOOK: Input: db1@table2
++POSTHOOK: Output: db1@v6
++PREHOOK: query: -- relative reference, explicit column
++CREATE VIEW v7 AS SELECT key from table1
++PREHOOK: type: CREATEVIEW
++PREHOOK: Input: db1@table1
++POSTHOOK: query: -- relative reference, explicit column
++CREATE VIEW v7 AS SELECT key from table1
++POSTHOOK: type: CREATEVIEW
++POSTHOOK: Input: db1@table1
++POSTHOOK: Output: db1@v7
++PREHOOK: query: -- absolute reference, explicit column
++CREATE VIEW v8 AS SELECT key from db1.table1
++PREHOOK: type: CREATEVIEW
++PREHOOK: Input: db1@table1
++POSTHOOK: query: -- absolute reference, explicit column
++CREATE VIEW v8 AS SELECT key from db1.table1
++POSTHOOK: type: CREATEVIEW
++POSTHOOK: Input: db1@table1
++POSTHOOK: Output: db1@v8
+diff --git a/src/service/src/java/org/apache/hive/service/cli/operation/GetSchemasOperation.java b/src/service/src/java/org/apache/hive/service/cli/operation/GetSchemasOperation.java
+index bafe40c..9462684 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/operation/GetSchemasOperation.java
++++ b/src/service/src/java/org/apache/hive/service/cli/operation/GetSchemasOperation.java
+@@ -26,6 +26,11 @@
+ import org.apache.hive.service.cli.RowSet;
+ import org.apache.hive.service.cli.TableSchema;
+ import org.apache.hive.service.cli.session.HiveSession;
++import java.util.List;
++import org.apache.hadoop.hive.ql.session.SessionState;
++import org.apache.hadoop.hive.ql.plan.HiveOperation;
++
++
+ 
+ /**
+  * GetSchemasOperation.
+@@ -58,7 +63,14 @@ public void run() throws HiveSQLException {
+     try {
+       IMetaStoreClient metastoreClient = getParentSession().getMetaStoreClient();
+       String schemaPattern = convertSchemaPattern(schemaName);
+-      for (String dbName : metastoreClient.getDatabases(schemaPattern)) {
++      List<String > dbNames = metastoreClient.getDatabases(schemaPattern);
++
++      // filter the list of dbnames
++      HiveOperation hiveOperation = HiveOperation.SHOWDATABASES;
++      String currentDbName = SessionState.get().getCurrentDatabase();
++      List<String> filteredDbNames = filterResultSet(dbNames, hiveOperation, currentDbName);
++
++      for (String dbName : filteredDbNames) {
+         rowSet.addRow(RESULT_SET_SCHEMA, new Object[] {dbName, DEFAULT_HIVE_CATALOG});
+       }
+       setState(OperationState.FINISHED);
+diff --git a/src/service/src/java/org/apache/hive/service/cli/operation/GetTablesOperation.java b/src/service/src/java/org/apache/hive/service/cli/operation/GetTablesOperation.java
+index 7e8a06b..2770b84 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/operation/GetTablesOperation.java
++++ b/src/service/src/java/org/apache/hive/service/cli/operation/GetTablesOperation.java
+@@ -24,6 +24,8 @@
+ import org.apache.hadoop.hive.conf.HiveConf;
+ import org.apache.hadoop.hive.metastore.IMetaStoreClient;
+ import org.apache.hadoop.hive.metastore.api.Table;
++import org.apache.hadoop.hive.ql.session.SessionState;
++import org.apache.hadoop.hive.ql.plan.HiveOperation;
+ import org.apache.hive.service.cli.FetchOrientation;
+ import org.apache.hive.service.cli.HiveSQLException;
+ import org.apache.hive.service.cli.OperationState;
+@@ -79,9 +81,17 @@ public void run() throws HiveSQLException {
+       IMetaStoreClient metastoreClient = getParentSession().getMetaStoreClient();
+       String schemaPattern = convertSchemaPattern(schemaName);
+       String tablePattern = convertIdentifierPattern(tableName, true);
+-      for (String dbName : metastoreClient.getDatabases(schemaPattern)) {
++
++      HiveOperation hiveOperation = HiveOperation.SHOWDATABASES;
++      String currentDbName = SessionState.get().getCurrentDatabase();
++      List<String> dbNames = metastoreClient.getDatabases(schemaPattern);
++      List<String> filteredDbNames = filterResultSet(dbNames, hiveOperation, currentDbName);
++
++      for (String dbName : filteredDbNames) {
+         List<String> tableNames = metastoreClient.getTables(dbName, tablePattern);
+-        for (Table table : metastoreClient.getTableObjectsByName(dbName, tableNames)) {
++        hiveOperation = HiveOperation.SHOWTABLES;
++        List <String> filteredTableNames = filterResultSet(tableNames, hiveOperation, dbName);
++        for (Table table : metastoreClient.getTableObjectsByName(dbName, filteredTableNames)) {
+           Object[] rowData = new Object[] {
+               DEFAULT_HIVE_CATALOG,
+               table.getDbName(),
+diff --git a/src/service/src/java/org/apache/hive/service/cli/operation/MetadataOperation.java b/src/service/src/java/org/apache/hive/service/cli/operation/MetadataOperation.java
+index 8dc82ab..227ba31 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/operation/MetadataOperation.java
++++ b/src/service/src/java/org/apache/hive/service/cli/operation/MetadataOperation.java
+@@ -18,6 +18,18 @@
+ 
+ package org.apache.hive.service.cli.operation;
+ 
++import java.util.ArrayList;
++import java.util.List;
++
++import org.apache.hadoop.hive.common.JavaUtils;
++import org.apache.hadoop.hive.conf.HiveConf;
++import org.apache.hadoop.hive.ql.HiveDriverFilterHook;
++import org.apache.hadoop.hive.ql.HiveDriverFilterHookContext;
++import org.apache.hadoop.hive.ql.HiveDriverFilterHookContextImpl;
++import org.apache.hadoop.hive.ql.HiveDriverFilterHookResult;
++import org.apache.hadoop.hive.ql.hooks.Hook;
++import org.apache.hadoop.hive.ql.plan.HiveOperation;
++import org.apache.hadoop.util.StringUtils;
+ import org.apache.hive.service.cli.HiveSQLException;
+ import org.apache.hive.service.cli.OperationState;
+ import org.apache.hive.service.cli.OperationType;
+@@ -96,4 +108,66 @@ private String convertPattern(final String pattern, boolean datanucleusFormat) {
+           .replaceAll("([^\\\\])_", "$1.").replaceAll("\\\\_", "_").replaceAll("^_", ".");
+   }
+ 
++  private <T extends Hook> List<T> getHooks(HiveConf.ConfVars hookConfVar, Class<T> clazz)
++      throws Exception {
++    HiveConf conf = getParentSession().getHiveConf();
++    List<T> hooks = new ArrayList<T>();
++    String csHooks = conf.getVar(hookConfVar);
++    if (csHooks == null) {
++      return hooks;
++    }
++
++    csHooks = csHooks.trim();
++    if (csHooks.equals("")) {
++      return hooks;
++    }
++
++    String[] hookClasses = csHooks.split(",");
++
++    for (String hookClass : hookClasses) {
++      try {
++        T hook =
++            (T) Class.forName(hookClass.trim(), true, JavaUtils.getClassLoader()).newInstance();
++        hooks.add(hook);
++      } catch (ClassNotFoundException e) {
++        LOG.error(hookConfVar.varname + " Class not found:" + e.getMessage());
++        throw e;
++      }
++    }
++    return hooks;
++  }
++
++  protected List<String> filterResultSet(List<String> inputResultSet, HiveOperation hiveOperation, String dbName)
++    throws Exception {
++    List<String> filteredResultSet = new ArrayList<String>();
++    HiveConf conf = getParentSession().getHiveConf();
++    String userName = getParentSession().getUserName();
++    List<HiveDriverFilterHook> filterHooks = null;
++
++    try {
++      filterHooks = getHooks(HiveConf.ConfVars.HIVE_EXEC_FILTER_HOOK,
++          HiveDriverFilterHook.class);
++    } catch (Exception e) {
++      LOG.error("Failed to obtain filter hooks");
++      LOG.error(StringUtils.stringifyException(e));
++    }
++
++    // if the result set is non null, non empty and exec filter hooks are present
++    // invoke the hooks to filter the result set
++    if (inputResultSet != null && !inputResultSet.isEmpty() && filterHooks != null && !filterHooks.isEmpty() )  {
++      HiveDriverFilterHookContext hookCtx = new HiveDriverFilterHookContextImpl(conf,
++                                                           hiveOperation, userName, inputResultSet, dbName);
++      HiveDriverFilterHookResult hookResult = null;
++      for (HiveDriverFilterHook hook : filterHooks) {
++        // result set 'inputResultSet' is passed to the filter hooks. The filter hooks shouldn't
++        // mutate inputResultSet directly. They should return a filtered result set instead.
++        hookResult = hook.postDriverFetch(hookCtx);
++        ((HiveDriverFilterHookContextImpl)hookCtx).setResult(hookResult.getResult());
++      }
++      filteredResultSet.addAll(hookResult.getResult());
++      return filteredResultSet;
++    } else {
++      return inputResultSet;
++    }
++  }
+ }
+diff --git a/src/service/src/java/org/apache/hive/service/cli/session/HiveSessionHookContext.java b/src/service/src/java/org/apache/hive/service/cli/session/HiveSessionHookContext.java
+index 156c814..b9c9c6b 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/session/HiveSessionHookContext.java
++++ b/src/service/src/java/org/apache/hive/service/cli/session/HiveSessionHookContext.java
+@@ -19,6 +19,7 @@
+ package org.apache.hive.service.cli.session;
+ 
+ import org.apache.hadoop.hive.conf.HiveConf;
++
+ /**
+  * HiveSessionHookContext.
+  * Interface passed to the HiveServer2 session hook execution. This enables
+diff --git a/src/shims/src/0.20/java/org/apache/hadoop/hive/shims/Hadoop20Shims.java b/src/shims/src/0.20/java/org/apache/hadoop/hive/shims/Hadoop20Shims.java
+index a8a6e73..7bf5293 100644
+--- a/src/shims/src/0.20/java/org/apache/hadoop/hive/shims/Hadoop20Shims.java
++++ b/src/shims/src/0.20/java/org/apache/hadoop/hive/shims/Hadoop20Shims.java
+@@ -106,6 +106,11 @@ public void setTmpFiles(String prop, String files) {
+     // gone in 20+
+   }
+ 
++   public String getKerberosShortName(String kerberosName) throws IOException {
++    // raise an exception
++    throw new IOException("Authentication is not supported with 0.20");
++  }
++
+ 
+   /**
+    * Returns a shim to wrap MiniMrCluster
+diff --git a/src/shims/src/0.20S/java/org/apache/hadoop/hive/shims/Hadoop20SShims.java b/src/shims/src/0.20S/java/org/apache/hadoop/hive/shims/Hadoop20SShims.java
+index fe24d25..e1acdb0 100644
+--- a/src/shims/src/0.20S/java/org/apache/hadoop/hive/shims/Hadoop20SShims.java
++++ b/src/shims/src/0.20S/java/org/apache/hadoop/hive/shims/Hadoop20SShims.java
+@@ -47,7 +47,7 @@
+ import org.apache.hadoop.util.Progressable;
+ import org.apache.hadoop.mapred.lib.TotalOrderPartitioner;
+ import org.apache.hadoop.security.UserGroupInformation;
+-
++import org.apache.hadoop.security.KerberosName;
+ 
+ /**
+  * Implemention of shims against Hadoop 0.20 with Security.
+@@ -89,6 +89,11 @@ public void progress() {
+     };
+   }
+ 
++  public String getKerberosShortName(String kerberosLongName) throws IOException {
++    KerberosName kerberosName = new KerberosName(kerberosLongName);
++    return kerberosName.getShortName();
++  }
++
+   @Override
+   public TaskAttemptID newTaskAttemptID(JobID jobId, boolean isMap, int taskId, int id) {
+     return new TaskAttemptID(jobId.getJtIdentifier(), jobId.getId(), isMap, taskId, id);
+diff --git a/src/shims/src/0.23/java/org/apache/hadoop/hive/shims/Hadoop23Shims.java b/src/shims/src/0.23/java/org/apache/hadoop/hive/shims/Hadoop23Shims.java
+index e9519df..06db19a 100644
+--- a/src/shims/src/0.23/java/org/apache/hadoop/hive/shims/Hadoop23Shims.java
++++ b/src/shims/src/0.23/java/org/apache/hadoop/hive/shims/Hadoop23Shims.java
+@@ -55,7 +55,7 @@
+ import org.apache.hadoop.util.Progressable;
+ import org.apache.hadoop.mapred.lib.TotalOrderPartitioner;
+ import org.apache.hadoop.security.UserGroupInformation;
+-
++import org.apache.hadoop.security.authentication.util.KerberosName;
+ 
+ /**
+  * Implemention of shims against Hadoop 0.23.0.
+@@ -137,6 +137,11 @@ public void setJobLauncherRpcAddress(Configuration conf, String val) {
+     }
+   }
+ 
++  public String getKerberosShortName(String kerberosLongName) throws IOException {
++    KerberosName kerberosName = new KerberosName(kerberosLongName);
++    return kerberosName.getShortName();
++  }
++
+   @Override
+   public String getJobLauncherHttpAddress(Configuration conf) {
+     return conf.get("yarn.resourcemanager.webapp.address");
+diff --git a/src/shims/src/common-secure/java/org/apache/hadoop/hive/thrift/HadoopThriftAuthBridge20S.java b/src/shims/src/common-secure/java/org/apache/hadoop/hive/thrift/HadoopThriftAuthBridge20S.java
+index dc89de1..b3d016e 100644
+--- a/src/shims/src/common-secure/java/org/apache/hadoop/hive/thrift/HadoopThriftAuthBridge20S.java
++++ b/src/shims/src/common-secure/java/org/apache/hadoop/hive/thrift/HadoopThriftAuthBridge20S.java
+@@ -43,6 +43,8 @@
+ import org.apache.commons.logging.LogFactory;
+ import org.apache.hadoop.conf.Configuration;
+ import org.apache.hadoop.fs.FileSystem;
++import org.apache.hadoop.hive.shims.ShimLoader;
++import org.apache.hadoop.hive.thrift.HadoopThriftAuthBridge.Client;
+ import org.apache.hadoop.hive.thrift.client.TUGIAssumingTransport;
+ import org.apache.hadoop.security.SaslRpcServer;
+ import org.apache.hadoop.security.SaslRpcServer.AuthMethod;
+@@ -581,7 +583,13 @@ public Boolean run() {
+                  }
+                });
+            } else {
+-             remoteUser.set(endUser);
++             // check for kerberos v5
++             if (saslServer.getMechanismName().equals("GSSAPI")) {
++               String shortName = ShimLoader.getHadoopShims().getKerberosShortName(endUser);
++               remoteUser.set(shortName);
++             } else {
++               remoteUser.set(endUser);
++             }
+              return wrapped.process(inProt, outProt);
+            }
+          } catch (RuntimeException rte) {
+diff --git a/src/shims/src/common/java/org/apache/hadoop/hive/shims/HadoopShims.java b/src/shims/src/common/java/org/apache/hadoop/hive/shims/HadoopShims.java
+index e678534..ec4eef8 100644
+--- a/src/shims/src/common/java/org/apache/hadoop/hive/shims/HadoopShims.java
++++ b/src/shims/src/common/java/org/apache/hadoop/hive/shims/HadoopShims.java
+@@ -120,6 +120,14 @@ String getTaskAttemptLogUrl(JobConf conf,
+   long getAccessTime(FileStatus file);
+ 
+   /**
++   * return the Kerberos short name
++   * @param full Kerberos name
++   * @return short Kerberos name
++   * @throws IOException
++   */
++  String getKerberosShortName(String kerberosName) throws IOException;
++
++  /**
+    * Returns a shim to wrap MiniMrCluster
+    */
+   public MiniMrShim getMiniMrCluster(Configuration conf, int numberOfTaskTrackers,
+-- 
+1.7.0.4
+

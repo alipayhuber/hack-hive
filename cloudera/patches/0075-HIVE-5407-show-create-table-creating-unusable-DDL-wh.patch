@@ -1,0 +1,231 @@
+From a8513c1d53b98ad446859786f34c6dfe260abbf6 Mon Sep 17 00:00:00 2001
+From: Ashutosh Chauhan <hashutosh@apache.org>
+Date: Tue, 8 Oct 2013 15:31:15 +0000
+Subject: [PATCH 075/375] HIVE-5407 : show create table creating unusable DDL when some reserved keywords  exist (Zhichun Wu via Ashutosh Chauhan)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1530310 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../org/apache/hadoop/hive/ql/exec/DDLTask.java    |   10 +++---
+ .../clientpositive/show_create_table_alter.q.out   |   30 ++++++++++----------
+ .../show_create_table_db_table.q.out               |    6 ++--
+ .../show_create_table_delimited.q.out              |    8 ++--
+ .../show_create_table_partitioned.q.out            |    8 ++--
+ .../clientpositive/show_create_table_serde.q.out   |   14 ++++----
+ .../clientpositive/show_create_table_view.q.out    |    2 +-
+ 7 files changed, 39 insertions(+), 39 deletions(-)
+
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/DDLTask.java b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/DDLTask.java
+index 77631f0..9a17c3c 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/DDLTask.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/DDLTask.java
+@@ -1927,15 +1927,15 @@ private int showCreateTable(Hive db, ShowCreateTableDesc showCreateTbl) throws H
+       outStream = fs.create(resFile);
+ 
+       if (tbl.isView()) {
+-        String createTab_stmt = "CREATE VIEW " + tableName + " AS " + tbl.getViewExpandedText();
++        String createTab_stmt = "CREATE VIEW `" + tableName + "` AS " + tbl.getViewExpandedText();
+         outStream.writeBytes(createTab_stmt.toString());
+         ((FSDataOutputStream) outStream).close();
+         outStream = null;
+         return 0;
+       }
+ 
+-      ST createTab_stmt = new ST("CREATE <" + EXTERNAL + "> TABLE " +
+-          tableName + "(\n" +
++      ST createTab_stmt = new ST("CREATE <" + EXTERNAL + "> TABLE `" +
++          tableName + "`(\n" +
+           "<" + LIST_COLUMNS + ">)\n" +
+           "<" + TBL_COMMENT + ">\n" +
+           "<" + LIST_PARTITIONS + ">\n" +
+@@ -1958,7 +1958,7 @@ private int showCreateTable(Hive db, ShowCreateTableDesc showCreateTbl) throws H
+       List<FieldSchema> cols = tbl.getCols();
+       List<String> columns = new ArrayList<String>();
+       for (FieldSchema col : cols) {
+-        String columnDesc = "  " + col.getName() + " " + col.getType();
++        String columnDesc = "  `" + col.getName() + "` " + col.getType();
+         if (col.getComment() != null) {
+           columnDesc = columnDesc + " COMMENT '" + escapeHiveCommand(col.getComment()) + "'";
+         }
+@@ -1981,7 +1981,7 @@ private int showCreateTable(Hive db, ShowCreateTableDesc showCreateTbl) throws H
+         tbl_partitions += "PARTITIONED BY ( \n";
+         List<String> partCols = new ArrayList<String>();
+         for (FieldSchema partKey : partKeys) {
+-          String partColDesc = "  " + partKey.getName() + " " + partKey.getType();
++          String partColDesc = "  `" + partKey.getName() + "` " + partKey.getType();
+           if (partKey.getComment() != null) {
+             partColDesc = partColDesc + " COMMENT '" +
+                 escapeHiveCommand(partKey.getComment()) + "'";
+diff --git a/src/ql/src/test/results/clientpositive/show_create_table_alter.q.out b/src/ql/src/test/results/clientpositive/show_create_table_alter.q.out
+index 8ed807d..7096820 100644
+--- a/src/ql/src/test/results/clientpositive/show_create_table_alter.q.out
++++ b/src/ql/src/test/results/clientpositive/show_create_table_alter.q.out
+@@ -15,9 +15,9 @@ PREHOOK: Input: default@tmp_showcrt1
+ POSTHOOK: query: SHOW CREATE TABLE tmp_showcrt1
+ POSTHOOK: type: SHOW_CREATETABLE
+ POSTHOOK: Input: default@tmp_showcrt1
+-CREATE EXTERNAL TABLE tmp_showcrt1(
+-  key smallint, 
+-  value float)
++CREATE EXTERNAL TABLE `tmp_showcrt1`(
++  `key` smallint, 
++  `value` float)
+ CLUSTERED BY ( 
+   key) 
+ SORTED BY ( 
+@@ -49,9 +49,9 @@ PREHOOK: Input: default@tmp_showcrt1
+ POSTHOOK: query: SHOW CREATE TABLE tmp_showcrt1
+ POSTHOOK: type: SHOW_CREATETABLE
+ POSTHOOK: Input: default@tmp_showcrt1
+-CREATE  TABLE tmp_showcrt1(
+-  key smallint, 
+-  value float)
++CREATE  TABLE `tmp_showcrt1`(
++  `key` smallint, 
++  `value` float)
+ COMMENT 'temporary table'
+ CLUSTERED BY ( 
+   key) 
+@@ -85,9 +85,9 @@ PREHOOK: Input: default@tmp_showcrt1
+ POSTHOOK: query: SHOW CREATE TABLE tmp_showcrt1
+ POSTHOOK: type: SHOW_CREATETABLE
+ POSTHOOK: Input: default@tmp_showcrt1
+-CREATE EXTERNAL TABLE tmp_showcrt1(
+-  key smallint, 
+-  value float)
++CREATE EXTERNAL TABLE `tmp_showcrt1`(
++  `key` smallint, 
++  `value` float)
+ COMMENT 'changed comment'
+ CLUSTERED BY ( 
+   key) 
+@@ -120,9 +120,9 @@ PREHOOK: Input: default@tmp_showcrt1
+ POSTHOOK: query: SHOW CREATE TABLE tmp_showcrt1
+ POSTHOOK: type: SHOW_CREATETABLE
+ POSTHOOK: Input: default@tmp_showcrt1
+-CREATE EXTERNAL TABLE tmp_showcrt1(
+-  key smallint, 
+-  value float)
++CREATE EXTERNAL TABLE `tmp_showcrt1`(
++  `key` smallint, 
++  `value` float)
+ COMMENT 'changed comment'
+ CLUSTERED BY ( 
+   key) 
+@@ -155,9 +155,9 @@ PREHOOK: Input: default@tmp_showcrt1
+ POSTHOOK: query: SHOW CREATE TABLE tmp_showcrt1
+ POSTHOOK: type: SHOW_CREATETABLE
+ POSTHOOK: Input: default@tmp_showcrt1
+-CREATE EXTERNAL TABLE tmp_showcrt1(
+-  key smallint, 
+-  value float)
++CREATE EXTERNAL TABLE `tmp_showcrt1`(
++  `key` smallint, 
++  `value` float)
+ COMMENT 'changed comment'
+ CLUSTERED BY ( 
+   key) 
+diff --git a/src/ql/src/test/results/clientpositive/show_create_table_db_table.q.out b/src/ql/src/test/results/clientpositive/show_create_table_db_table.q.out
+index 77b91bd..92bdff9 100644
+--- a/src/ql/src/test/results/clientpositive/show_create_table_db_table.q.out
++++ b/src/ql/src/test/results/clientpositive/show_create_table_db_table.q.out
+@@ -27,9 +27,9 @@ PREHOOK: Input: tmp_feng@tmp_showcrt
+ POSTHOOK: query: SHOW CREATE TABLE tmp_feng.tmp_showcrt
+ POSTHOOK: type: SHOW_CREATETABLE
+ POSTHOOK: Input: tmp_feng@tmp_showcrt
+-CREATE  TABLE tmp_feng.tmp_showcrt(
+-  key string, 
+-  value int)
++CREATE  TABLE `tmp_feng.tmp_showcrt`(
++  `key` string, 
++  `value` int)
+ ROW FORMAT SERDE 
+   'org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe' 
+ STORED AS INPUTFORMAT 
+diff --git a/src/ql/src/test/results/clientpositive/show_create_table_delimited.q.out b/src/ql/src/test/results/clientpositive/show_create_table_delimited.q.out
+index 3329825..088b075 100644
+--- a/src/ql/src/test/results/clientpositive/show_create_table_delimited.q.out
++++ b/src/ql/src/test/results/clientpositive/show_create_table_delimited.q.out
+@@ -19,10 +19,10 @@ PREHOOK: Input: default@tmp_showcrt1
+ POSTHOOK: query: SHOW CREATE TABLE tmp_showcrt1
+ POSTHOOK: type: SHOW_CREATETABLE
+ POSTHOOK: Input: default@tmp_showcrt1
+-CREATE  TABLE tmp_showcrt1(
+-  key int, 
+-  value string, 
+-  newvalue bigint)
++CREATE  TABLE `tmp_showcrt1`(
++  `key` int, 
++  `value` string, 
++  `newvalue` bigint)
+ ROW FORMAT DELIMITED 
+   FIELDS TERMINATED BY ',' 
+   COLLECTION ITEMS TERMINATED BY '|' 
+diff --git a/src/ql/src/test/results/clientpositive/show_create_table_partitioned.q.out b/src/ql/src/test/results/clientpositive/show_create_table_partitioned.q.out
+index 99533c7..b66ea9e 100644
+--- a/src/ql/src/test/results/clientpositive/show_create_table_partitioned.q.out
++++ b/src/ql/src/test/results/clientpositive/show_create_table_partitioned.q.out
+@@ -17,12 +17,12 @@ PREHOOK: Input: default@tmp_showcrt1
+ POSTHOOK: query: SHOW CREATE TABLE tmp_showcrt1
+ POSTHOOK: type: SHOW_CREATETABLE
+ POSTHOOK: Input: default@tmp_showcrt1
+-CREATE EXTERNAL TABLE tmp_showcrt1(
+-  key string, 
+-  newvalue boolean COMMENT 'a new value')
++CREATE EXTERNAL TABLE `tmp_showcrt1`(
++  `key` string, 
++  `newvalue` boolean COMMENT 'a new value')
+ COMMENT 'temporary table'
+ PARTITIONED BY ( 
+-  value bigint COMMENT 'some value')
++  `value` bigint COMMENT 'some value')
+ ROW FORMAT SERDE 
+   'org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe' 
+ STORED AS INPUTFORMAT 
+diff --git a/src/ql/src/test/results/clientpositive/show_create_table_serde.q.out b/src/ql/src/test/results/clientpositive/show_create_table_serde.q.out
+index 4579714..811ae4a 100644
+--- a/src/ql/src/test/results/clientpositive/show_create_table_serde.q.out
++++ b/src/ql/src/test/results/clientpositive/show_create_table_serde.q.out
+@@ -23,10 +23,10 @@ PREHOOK: Input: default@tmp_showcrt1
+ POSTHOOK: query: SHOW CREATE TABLE tmp_showcrt1
+ POSTHOOK: type: SHOW_CREATETABLE
+ POSTHOOK: Input: default@tmp_showcrt1
+-CREATE  TABLE tmp_showcrt1(
+-  key int, 
+-  value string, 
+-  newvalue bigint)
++CREATE  TABLE `tmp_showcrt1`(
++  `key` int, 
++  `value` string, 
++  `newvalue` bigint)
+ COMMENT 'temporary table'
+ ROW FORMAT SERDE 
+   'org.apache.hadoop.hive.serde2.columnar.ColumnarSerDe' 
+@@ -65,9 +65,9 @@ PREHOOK: Input: default@tmp_showcrt1
+ POSTHOOK: query: SHOW CREATE TABLE tmp_showcrt1
+ POSTHOOK: type: SHOW_CREATETABLE
+ POSTHOOK: Input: default@tmp_showcrt1
+-CREATE EXTERNAL TABLE tmp_showcrt1(
+-  key string, 
+-  value boolean)
++CREATE EXTERNAL TABLE `tmp_showcrt1`(
++  `key` string, 
++  `value` boolean)
+ ROW FORMAT SERDE 
+   'org.apache.hadoop.hive.serde2.columnar.ColumnarSerDe' 
+ STORED BY 
+diff --git a/src/ql/src/test/results/clientpositive/show_create_table_view.q.out b/src/ql/src/test/results/clientpositive/show_create_table_view.q.out
+index 035d454..9f5309e 100644
+--- a/src/ql/src/test/results/clientpositive/show_create_table_view.q.out
++++ b/src/ql/src/test/results/clientpositive/show_create_table_view.q.out
+@@ -13,7 +13,7 @@ PREHOOK: Input: default@tmp_copy_src
+ POSTHOOK: query: SHOW CREATE TABLE tmp_copy_src
+ POSTHOOK: type: SHOW_CREATETABLE
+ POSTHOOK: Input: default@tmp_copy_src
+-CREATE VIEW tmp_copy_src AS SELECT `src`.`key`, `src`.`value` FROM `default`.`src`
++CREATE VIEW `tmp_copy_src` AS SELECT `src`.`key`, `src`.`value` FROM `default`.`src`
+ PREHOOK: query: DROP VIEW tmp_copy_src
+ PREHOOK: type: DROPVIEW
+ PREHOOK: Input: default@tmp_copy_src
+-- 
+1.7.0.4
+

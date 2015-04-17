@@ -1,0 +1,302 @@
+From 92674729dab6c6039f42cb9d8e95a0f2fcc244c7 Mon Sep 17 00:00:00 2001
+From: Xuefu Zhang <xzhang@xzlt.(none)>
+Date: Sun, 6 Jul 2014 07:51:42 -0700
+Subject: [PATCH 367/375] CDH-20173: Backport HIVE-6459: Change the precison/scale for intermediate sum result in the avg() udf
+
+---
+ .../hive/ql/udf/generic/GenericUDAFAverage.java    |   36 +++++++++++++++-----
+ .../clientpositive/create_genericudaf.q.out        |    4 +-
+ .../results/clientpositive/decimal_precision.q.out |    2 +-
+ .../test/results/clientpositive/decimal_udf.q.out  |    2 +-
+ ql/src/test/results/clientpositive/groupby3.q.out  |    4 +-
+ .../test/results/clientpositive/groupby3_map.q.out |    4 +-
+ .../groupby3_map_multi_distinct.q.out              |    4 +-
+ .../results/clientpositive/groupby3_map_skew.q.out |    8 ++--
+ .../clientpositive/groupby_grouping_sets3.q.out    |    6 ++--
+ .../results/clientpositive/limit_pushdown.q.out    |    2 +-
+ .../clientpositive/udaf_number_format.q.out        |    2 +-
+ ql/src/test/results/clientpositive/udf3.q.out      |    2 +-
+ ql/src/test/results/clientpositive/udf8.q.out      |    2 +-
+ 13 files changed, 48 insertions(+), 30 deletions(-)
+
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDAFAverage.java b/src/ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDAFAverage.java
+index 1a00800..acd997c 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDAFAverage.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDAFAverage.java
+@@ -178,14 +178,16 @@ protected ObjectInspector getSumFieldWritableObjectInspector() {
+      * The result type has the same number of integer digits and 4 more decimal digits.
+      */
+     private DecimalTypeInfo deriveResultDecimalTypeInfo() {
+-      if (mode == Mode.PARTIAL1 || mode == Mode.COMPLETE) {
+-        int scale = inputOI.scale();
+-        int intPart = inputOI.precision() - scale;
++      int prec = inputOI.precision();
++      int scale = inputOI.scale();
++      if (mode == Mode.FINAL || mode == Mode.COMPLETE) {
++        int intPart = prec - scale;
++        // The avg() result type has the same number of integer digits and 4 more decimal digits.
+         scale = Math.min(scale + 4, HiveDecimal.MAX_SCALE - intPart);
+         return TypeInfoFactory.getDecimalTypeInfo(intPart + scale, scale);
+       } else {
+-        PrimitiveObjectInspector sfOI = (PrimitiveObjectInspector) sumFieldOI;
+-        return (DecimalTypeInfo) sfOI.getTypeInfo();
++        // For intermediate sum field
++        return GenericUDAFAverage.deriveSumFieldTypeInfo(prec, scale);
+       }
+     }
+ 
+@@ -291,25 +293,27 @@ public ObjectInspector init(Mode m, ObjectInspector[] parameters)
+         sumField = soi.getStructFieldRef("sum");
+         countFieldOI = (LongObjectInspector) countField.getFieldObjectInspector();
+         sumFieldOI = sumField.getFieldObjectInspector();
++        inputOI = (PrimitiveObjectInspector) soi.getStructFieldRef("input").getFieldObjectInspector();
+       }
+ 
+       // init output
+       if (mode == Mode.PARTIAL1 || mode == Mode.PARTIAL2) {
+         // The output of a partial aggregation is a struct containing
+         // a "long" count and a "double" sum.
+-
+         ArrayList<ObjectInspector> foi = new ArrayList<ObjectInspector>();
+         foi.add(PrimitiveObjectInspectorFactory.writableLongObjectInspector);
+         foi.add(getSumFieldWritableObjectInspector());
++        // We need to "remember" the input object inspector so that we need to know the input type
++        // in order to determine the sum field type (precision/scale) for Mode.PARTIAL2 and Mode.FINAL.
++        foi.add(inputOI);
+         ArrayList<String> fname = new ArrayList<String>();
+         fname.add("count");
+         fname.add("sum");
++        fname.add("input");
+         partialResult = new Object[2];
+         partialResult[0] = new LongWritable(0);
+         // index 1 set by child
+-        return ObjectInspectorFactory.getStandardStructObjectInspector(fname,
+-            foi);
+-
++        return ObjectInspectorFactory.getStandardStructObjectInspector(fname, foi);
+       } else {
+         return getSumFieldWritableObjectInspector();
+       }
+@@ -367,4 +371,18 @@ public Object terminate(AggregationBuffer aggregation) throws HiveException {
+       return doTerminate((AverageAggregationBuffer<TYPE>)aggregation);
+     }
+   }
++
++  /**
++   * The intermediate sum field has 10 more integer digits with the same scale.
++   * This is exposed as static so that the vectorized AVG operator use the same logic
++   * @param precision
++   * @param scale
++   * @return
++   */
++  public static DecimalTypeInfo deriveSumFieldTypeInfo(int precision, int scale) {
++    int intPart = precision - scale;
++    intPart = Math.min(intPart + 10, HiveDecimal.MAX_PRECISION - scale);
++    return TypeInfoFactory.getDecimalTypeInfo(intPart + scale, scale);
++  }
++
+ }
+diff --git a/src/ql/src/test/results/clientpositive/create_genericudaf.q.out b/src/ql/src/test/results/clientpositive/create_genericudaf.q.out
+index 726f5a9..4053def 100644
+--- a/src/ql/src/test/results/clientpositive/create_genericudaf.q.out
++++ b/src/ql/src/test/results/clientpositive/create_genericudaf.q.out
+@@ -61,9 +61,9 @@ STAGE PLANS:
+                   tag: -1
+                   value expressions:
+                         expr: _col0
+-                        type: struct<count:bigint,sum:double>
++                        type: struct<count:bigint,sum:double,input:int>
+                         expr: _col1
+-                        type: struct<count:bigint,sum:double>
++                        type: struct<count:bigint,sum:double,input:string>
+       Reduce Operator Tree:
+         Group By Operator
+           aggregations:
+diff --git a/src/ql/src/test/results/clientpositive/decimal_precision.q.out b/src/ql/src/test/results/clientpositive/decimal_precision.q.out
+index 7e88460..31f5628 100644
+--- a/src/ql/src/test/results/clientpositive/decimal_precision.q.out
++++ b/src/ql/src/test/results/clientpositive/decimal_precision.q.out
+@@ -552,7 +552,7 @@ STAGE PLANS:
+                   tag: -1
+                   value expressions:
+                         expr: _col0
+-                        type: struct<count:bigint,sum:decimal(24,14)>
++                        type: struct<count:bigint,sum:decimal(30,10),input:decimal(20,10)>
+                         expr: _col1
+                         type: decimal(30,10)
+       Reduce Operator Tree:
+diff --git a/src/ql/src/test/results/clientpositive/decimal_udf.q.out b/src/ql/src/test/results/clientpositive/decimal_udf.q.out
+index 0480475..d74ebb3 100644
+--- a/src/ql/src/test/results/clientpositive/decimal_udf.q.out
++++ b/src/ql/src/test/results/clientpositive/decimal_udf.q.out
+@@ -1549,7 +1549,7 @@ STAGE PLANS:
+                         expr: _col2
+                         type: bigint
+                         expr: _col3
+-                        type: struct<count:bigint,sum:decimal(24,14)>
++                        type: struct<count:bigint,sum:decimal(30,10),input:decimal(20,10)>
+       Reduce Operator Tree:
+         Group By Operator
+           aggregations:
+diff --git a/src/ql/src/test/results/clientpositive/groupby3.q.out b/src/ql/src/test/results/clientpositive/groupby3.q.out
+index 5a1d0f5..5596aef 100644
+--- a/src/ql/src/test/results/clientpositive/groupby3.q.out
++++ b/src/ql/src/test/results/clientpositive/groupby3.q.out
+@@ -94,9 +94,9 @@ STAGE PLANS:
+                     expr: _col0
+                     type: double
+                     expr: _col1
+-                    type: struct<count:bigint,sum:double>
++                    type: struct<count:bigint,sum:double,input:string>
+                     expr: _col2
+-                    type: struct<count:bigint,sum:double>
++                    type: struct<count:bigint,sum:double,input:string>
+                     expr: _col3
+                     type: string
+                     expr: _col4
+diff --git a/src/ql/src/test/results/clientpositive/groupby3_map.q.out b/src/ql/src/test/results/clientpositive/groupby3_map.q.out
+index 8944f80..3c21682 100644
+--- a/src/ql/src/test/results/clientpositive/groupby3_map.q.out
++++ b/src/ql/src/test/results/clientpositive/groupby3_map.q.out
+@@ -76,9 +76,9 @@ STAGE PLANS:
+                         expr: _col1
+                         type: double
+                         expr: _col2
+-                        type: struct<count:bigint,sum:double>
++                        type: struct<count:bigint,sum:double,input:string>
+                         expr: _col3
+-                        type: struct<count:bigint,sum:double>
++                        type: struct<count:bigint,sum:double,input:string>
+                         expr: _col4
+                         type: string
+                         expr: _col5
+diff --git a/src/ql/src/test/results/clientpositive/groupby3_map_multi_distinct.q.out b/src/ql/src/test/results/clientpositive/groupby3_map_multi_distinct.q.out
+index a301633..a31ded9 100644
+--- a/src/ql/src/test/results/clientpositive/groupby3_map_multi_distinct.q.out
++++ b/src/ql/src/test/results/clientpositive/groupby3_map_multi_distinct.q.out
+@@ -82,9 +82,9 @@ STAGE PLANS:
+                         expr: _col1
+                         type: double
+                         expr: _col2
+-                        type: struct<count:bigint,sum:double>
++                        type: struct<count:bigint,sum:double,input:string>
+                         expr: _col3
+-                        type: struct<count:bigint,sum:double>
++                        type: struct<count:bigint,sum:double,input:string>
+                         expr: _col4
+                         type: string
+                         expr: _col5
+diff --git a/src/ql/src/test/results/clientpositive/groupby3_map_skew.q.out b/src/ql/src/test/results/clientpositive/groupby3_map_skew.q.out
+index 3f12681..8efa0dd 100644
+--- a/src/ql/src/test/results/clientpositive/groupby3_map_skew.q.out
++++ b/src/ql/src/test/results/clientpositive/groupby3_map_skew.q.out
+@@ -80,9 +80,9 @@ STAGE PLANS:
+                         expr: _col1
+                         type: double
+                         expr: _col2
+-                        type: struct<count:bigint,sum:double>
++                        type: struct<count:bigint,sum:double,input:string>
+                         expr: _col3
+-                        type: struct<count:bigint,sum:double>
++                        type: struct<count:bigint,sum:double,input:string>
+                         expr: _col4
+                         type: string
+                         expr: _col5
+@@ -130,9 +130,9 @@ STAGE PLANS:
+                     expr: _col0
+                     type: double
+                     expr: _col1
+-                    type: struct<count:bigint,sum:double>
++                    type: struct<count:bigint,sum:double,input:string>
+                     expr: _col2
+-                    type: struct<count:bigint,sum:double>
++                    type: struct<count:bigint,sum:double,input:string>
+                     expr: _col3
+                     type: string
+                     expr: _col4
+diff --git a/src/ql/src/test/results/clientpositive/groupby_grouping_sets3.q.out b/src/ql/src/test/results/clientpositive/groupby_grouping_sets3.q.out
+index 68ce31b..2440b1b 100644
+--- a/src/ql/src/test/results/clientpositive/groupby_grouping_sets3.q.out
++++ b/src/ql/src/test/results/clientpositive/groupby_grouping_sets3.q.out
+@@ -91,7 +91,7 @@ STAGE PLANS:
+                   tag: -1
+                   value expressions:
+                         expr: _col3
+-                        type: struct<count:bigint,sum:double>
++                        type: struct<count:bigint,sum:double,input:string>
+                         expr: _col4
+                         type: bigint
+       Reduce Operator Tree:
+@@ -218,7 +218,7 @@ STAGE PLANS:
+                   tag: -1
+                   value expressions:
+                         expr: _col2
+-                        type: struct<count:bigint,sum:double>
++                        type: struct<count:bigint,sum:double,input:string>
+                         expr: _col3
+                         type: bigint
+       Reduce Operator Tree:
+@@ -268,7 +268,7 @@ STAGE PLANS:
+               tag: -1
+               value expressions:
+                     expr: _col3
+-                    type: struct<count:bigint,sum:double>
++                    type: struct<count:bigint,sum:double,input:string>
+                     expr: _col4
+                     type: bigint
+       Reduce Operator Tree:
+diff --git a/src/ql/src/test/results/clientpositive/limit_pushdown.q.out b/src/ql/src/test/results/clientpositive/limit_pushdown.q.out
+index 6aa5feb..227f6f2 100644
+--- a/src/ql/src/test/results/clientpositive/limit_pushdown.q.out
++++ b/src/ql/src/test/results/clientpositive/limit_pushdown.q.out
+@@ -330,7 +330,7 @@ STAGE PLANS:
+                   TopN Hash Memory Usage: 0.3
+                   value expressions:
+                         expr: _col1
+-                        type: struct<count:bigint,sum:double>
++                        type: struct<count:bigint,sum:double,input:double>
+       Reduce Operator Tree:
+         Group By Operator
+           aggregations:
+diff --git a/src/ql/src/test/results/clientpositive/udaf_number_format.q.out b/src/ql/src/test/results/clientpositive/udaf_number_format.q.out
+index 538afcc..ccf0497 100644
+--- a/src/ql/src/test/results/clientpositive/udaf_number_format.q.out
++++ b/src/ql/src/test/results/clientpositive/udaf_number_format.q.out
+@@ -43,7 +43,7 @@ STAGE PLANS:
+                         expr: _col0
+                         type: double
+                         expr: _col1
+-                        type: struct<count:bigint,sum:double>
++                        type: struct<count:bigint,sum:double,input:string>
+                         expr: _col2
+                         type: struct<count:bigint,sum:double,variance:double>
+                         expr: _col3
+diff --git a/src/ql/src/test/results/clientpositive/udf3.q.out b/src/ql/src/test/results/clientpositive/udf3.q.out
+index 0e22dc7..63cc8ab 100644
+--- a/src/ql/src/test/results/clientpositive/udf3.q.out
++++ b/src/ql/src/test/results/clientpositive/udf3.q.out
+@@ -46,7 +46,7 @@ STAGE PLANS:
+                         expr: _col1
+                         type: bigint
+                         expr: _col2
+-                        type: struct<count:bigint,sum:double>
++                        type: struct<count:bigint,sum:double,input:int>
+                         expr: _col3
+                         type: int
+                         expr: _col4
+diff --git a/src/ql/src/test/results/clientpositive/udf8.q.out b/src/ql/src/test/results/clientpositive/udf8.q.out
+index 15ac4f0..1d3936a 100644
+--- a/src/ql/src/test/results/clientpositive/udf8.q.out
++++ b/src/ql/src/test/results/clientpositive/udf8.q.out
+@@ -62,7 +62,7 @@ STAGE PLANS:
+                   tag: -1
+                   value expressions:
+                         expr: _col0
+-                        type: struct<count:bigint,sum:double>
++                        type: struct<count:bigint,sum:double,input:string>
+                         expr: _col1
+                         type: double
+                         expr: _col2
+-- 
+1.7.0.4
+

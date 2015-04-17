@@ -1,0 +1,25 @@
+From 7a6778c5da5aa25158c048478e9b73dd3c295be8 Mon Sep 17 00:00:00 2001
+From: Prasad Mujumdar <prasadm@cloudera.com>
+Date: Thu, 27 Feb 2014 22:32:35 -0800
+Subject: [PATCH 296/375] CLOUDERA-BULID: CDH-17602: Analyze hive unit test failures
+
+---
+ .../service/server/TestHS2ThreadAllocation.java    |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+
+diff --git a/src/itests/hive-unit/src/test/java/org/apache/hive/service/server/TestHS2ThreadAllocation.java b/src/itests/hive-unit/src/test/java/org/apache/hive/service/server/TestHS2ThreadAllocation.java
+index 283dfac..00e34a4 100644
+--- a/src/itests/hive-unit/src/test/java/org/apache/hive/service/server/TestHS2ThreadAllocation.java
++++ b/src/itests/hive-unit/src/test/java/org/apache/hive/service/server/TestHS2ThreadAllocation.java
+@@ -229,7 +229,7 @@ public void testHS2StabilityOnLargeConnections() throws InterruptedException {
+ 
+     // Check if a new connection is possible
+     try {
+-      connection = new HiveConnection("jdbc:hive2://localhost:10000/default", new Properties());
++      connection = new HiveConnection("jdbc:hive2://localhost:" + portNum +  "/default", new Properties());
+     } catch (SQLException e) {
+       e.printStackTrace();
+       Assert.fail("Cannot create connection with free threads");
+-- 
+1.7.0.4
+

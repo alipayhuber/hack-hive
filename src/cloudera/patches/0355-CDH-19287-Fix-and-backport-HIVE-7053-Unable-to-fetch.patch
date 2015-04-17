@@ -1,0 +1,43 @@
+From f63827d6e4bb7c0cc35008244333aabf2643cdd6 Mon Sep 17 00:00:00 2001
+From: xzhang <xzhang@xzdt.(none)>
+Date: Tue, 10 Jun 2014 10:51:37 -0700
+Subject: [PATCH 355/375] CDH-19287: Fix and backport HIVE-7053 Unable to fetch column stats from decimal columns
+
+---
+ .../hadoop/hive/metastore/StatObjectConverter.java |    6 +++---
+ 1 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/src/metastore/src/java/org/apache/hadoop/hive/metastore/StatObjectConverter.java b/src/metastore/src/java/org/apache/hadoop/hive/metastore/StatObjectConverter.java
+index dc0e266..31f388c 100644
+--- a/src/metastore/src/java/org/apache/hadoop/hive/metastore/StatObjectConverter.java
++++ b/src/metastore/src/java/org/apache/hadoop/hive/metastore/StatObjectConverter.java
+@@ -174,7 +174,7 @@ public static ColumnStatisticsObj getTableColumnStatisticsObj(
+       doubleStats.setLowValue(mStatsObj.getDoubleLowValue());
+       doubleStats.setNumDVs(mStatsObj.getNumDVs());
+       colStatsData.setDoubleStats(doubleStats);
+-    } else if (colType.equals("decimal")) {
++    } else if (colType.startsWith("decimal")) {
+       DecimalColumnStatsData decimalStats = new DecimalColumnStatsData();
+       decimalStats.setNumNulls(mStatsObj.getNumNulls());
+       decimalStats.setHighValue(createThriftDecimal(mStatsObj.getDecimalHighValue()));
+@@ -285,7 +285,7 @@ public static ColumnStatisticsObj getPartitionColumnStatisticsObj(
+      doubleStats.setLowValue(mStatsObj.getDoubleLowValue());
+      doubleStats.setNumDVs(mStatsObj.getNumDVs());
+      colStatsData.setDoubleStats(doubleStats);
+-   } else if (colType.equals("decimal")) {
++   } else if (colType.startsWith("decimal")) {
+      DecimalColumnStatsData decimalStats = new DecimalColumnStatsData();
+      decimalStats.setNumNulls(mStatsObj.getNumNulls());
+      decimalStats.setHighValue(createThriftDecimal(mStatsObj.getDecimalHighValue()));
+@@ -348,7 +348,7 @@ public static void fillColumnStatisticsData(String colType, ColumnStatisticsData
+       doubleStats.setLowValue((Double)dlow);
+       doubleStats.setNumDVs((Long)dist);
+       data.setDoubleStats(doubleStats);
+-    } else if (colType.equals("decimal")) {
++    } else if (colType.startsWith("decimal")) {
+       DecimalColumnStatsData decimalStats = new DecimalColumnStatsData();
+       decimalStats.setNumNulls((Long)nulls);
+       decimalStats.setHighValue(createThriftDecimal((String)dechigh));
+-- 
+1.7.0.4
+

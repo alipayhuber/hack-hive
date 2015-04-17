@@ -1,0 +1,29 @@
+From 7d7a47bc9a17dbdf8e2ea90f7aac7b383ec01ca8 Mon Sep 17 00:00:00 2001
+From: Brock Noland <brock@cloudera.com>
+Date: Tue, 3 Dec 2013 13:32:12 -0600
+Subject: [PATCH 173/375] FIXUP: PROPOSED: CDH-15926 - Backport HIVE-5897 - Fix hadoop2 execution environment Milestone 2
+
+---
+ itests/qtest/pom.xml |    6 ++++++
+ 1 files changed, 6 insertions(+), 0 deletions(-)
+
+diff --git a/src/itests/qtest/pom.xml b/src/itests/qtest/pom.xml
+index 08d0a23..64b8364 100644
+--- a/src/itests/qtest/pom.xml
++++ b/src/itests/qtest/pom.xml
+@@ -213,6 +213,12 @@
+         </dependency>
+         <dependency>
+           <groupId>org.apache.hadoop</groupId>
++          <artifactId>hadoop-archives</artifactId>
++          <version>${hadoop-23.version}</version>
++          <scope>test</scope>
++        </dependency>
++        <dependency>
++          <groupId>org.apache.hadoop</groupId>
+           <artifactId>hadoop-common</artifactId>
+           <version>${hadoop-23.version}</version>
+           <scope>test</scope>
+-- 
+1.7.0.4
+

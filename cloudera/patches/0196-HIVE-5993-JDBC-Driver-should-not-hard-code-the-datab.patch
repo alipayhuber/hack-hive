@@ -1,0 +1,83 @@
+From 8aadc67274bac58ca457c720d03d634bfe1ed56c Mon Sep 17 00:00:00 2001
+From: Prasad Suresh Mujumdar <prasadm@apache.org>
+Date: Fri, 13 Dec 2013 18:21:58 +0000
+Subject: [PATCH 196/375] HIVE-5993: JDBC Driver should not hard-code the database name (Szehon Ho via Prasad Mujumdar)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1550788 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../java/org/apache/hive/jdbc/TestJdbcDriver2.java |    2 +-
+ .../org/apache/hive/jdbc/HiveDatabaseMetaData.java |   26 ++++++++++++-------
+ 2 files changed, 17 insertions(+), 11 deletions(-)
+
+diff --git a/src/itests/hive-unit/src/test/java/org/apache/hive/jdbc/TestJdbcDriver2.java b/src/itests/hive-unit/src/test/java/org/apache/hive/jdbc/TestJdbcDriver2.java
+index b69d38f..3918f98 100644
+--- a/src/itests/hive-unit/src/test/java/org/apache/hive/jdbc/TestJdbcDriver2.java
++++ b/src/itests/hive-unit/src/test/java/org/apache/hive/jdbc/TestJdbcDriver2.java
+@@ -1249,7 +1249,7 @@ public void testDescribeTable() throws SQLException {
+   public void testDatabaseMetaData() throws SQLException {
+     DatabaseMetaData meta = con.getMetaData();
+ 
+-    assertEquals("Hive", meta.getDatabaseProductName());
++    assertEquals("Apache Hive", meta.getDatabaseProductName());
+     assertEquals(HiveVersionInfo.getVersion(), meta.getDatabaseProductVersion());
+     assertEquals(System.getProperty("hive.version"), meta.getDatabaseProductVersion());
+     assertTrue("verifying hive version pattern. got " + meta.getDatabaseProductVersion(),
+diff --git a/src/jdbc/src/java/org/apache/hive/jdbc/HiveDatabaseMetaData.java b/src/jdbc/src/java/org/apache/hive/jdbc/HiveDatabaseMetaData.java
+index 5087ded..fe39c0c 100644
+--- a/src/jdbc/src/java/org/apache/hive/jdbc/HiveDatabaseMetaData.java
++++ b/src/jdbc/src/java/org/apache/hive/jdbc/HiveDatabaseMetaData.java
+@@ -38,6 +38,7 @@
+ import org.apache.hive.service.cli.thrift.TGetFunctionsResp;
+ import org.apache.hive.service.cli.thrift.TGetInfoReq;
+ import org.apache.hive.service.cli.thrift.TGetInfoResp;
++import org.apache.hive.service.cli.thrift.TGetInfoType;
+ import org.apache.hive.service.cli.thrift.TGetSchemasReq;
+ import org.apache.hive.service.cli.thrift.TGetSchemasResp;
+ import org.apache.hive.service.cli.thrift.TGetTableTypesReq;
+@@ -265,7 +266,8 @@ public int getDatabaseMinorVersion() throws SQLException {
+   }
+ 
+   public String getDatabaseProductName() throws SQLException {
+-    return "Hive";
++    TGetInfoResp resp = getServerInfo(GetInfoType.CLI_DBMS_NAME.toTGetInfoType());
++    return resp.getInfoValue().getStringValue();
+   }
+ 
+   public String getDatabaseProductVersion() throws SQLException {
+@@ -273,15 +275,7 @@ public String getDatabaseProductVersion() throws SQLException {
+       return dbVersion;
+     }
+ 
+-    TGetInfoReq req = new TGetInfoReq(sessHandle, GetInfoType.CLI_DBMS_VER.toTGetInfoType());
+-    TGetInfoResp resp;
+-    try {
+-      resp = client.GetInfo(req);
+-    } catch (TException e) {
+-      throw new SQLException(e.getMessage(), "08S01", e);
+-    }
+-    Utils.verifySuccess(resp.getStatus());
+-
++    TGetInfoResp resp = getServerInfo(GetInfoType.CLI_DBMS_VER.toTGetInfoType());
+     this.dbVersion = resp.getInfoValue().getStringValue();
+     return dbVersion;
+   }
+@@ -1137,4 +1131,16 @@ public static void main(String[] args) throws SQLException {
+     System.out.println("DriverName: " + meta.getDriverName());
+     System.out.println("DriverVersion: " + meta.getDriverVersion());
+   }
++
++  private TGetInfoResp getServerInfo(TGetInfoType type) throws SQLException {
++    TGetInfoReq req = new TGetInfoReq(sessHandle, type);
++    TGetInfoResp resp;
++    try {
++      resp = client.GetInfo(req);
++    } catch (TException e) {
++      throw new SQLException(e.getMessage(), "08S01", e);
++    }
++    Utils.verifySuccess(resp.getStatus());
++    return resp;
++  }
+ }
+-- 
+1.7.0.4
+

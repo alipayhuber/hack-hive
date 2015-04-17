@@ -1,0 +1,25 @@
+From 5ddc06815cb935512783a1b5badbacabe8b58707 Mon Sep 17 00:00:00 2001
+From: Xuefu Zhang <xzhang@xzlt.(none)>
+Date: Fri, 7 Mar 2014 10:12:13 -0800
+Subject: [PATCH 304/375] Revert "CDH-17888: MR jobs from Hive parquet queries failed to run on a cluster"
+
+This reverts commit d78966f1d469c2fc4fc2994d5ddc477d3152668a.
+---
+ ql/pom.xml |    1 -
+ 1 files changed, 0 insertions(+), 1 deletions(-)
+
+diff --git a/src/ql/pom.xml b/src/ql/pom.xml
+index 024814f..6fc7cef 100644
+--- a/src/ql/pom.xml
++++ b/src/ql/pom.xml
+@@ -356,7 +356,6 @@
+                   <include>org.apache.hive:hive-exec</include>
+                   <include>org.apache.hive:hive-serde</include>
+                   <include>com.esotericsoftware.kryo:kryo</include>
+-                  <include>com.twitter:parquet-hadoop-bundle</include>
+                   <include>org.apache.thrift:libthrift</include>
+                   <include>commons-lang:commons-lang</include>
+                   <include>org.json:json</include>
+-- 
+1.7.0.4
+

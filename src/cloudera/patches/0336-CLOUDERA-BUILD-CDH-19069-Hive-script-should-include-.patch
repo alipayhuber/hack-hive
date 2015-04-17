@@ -1,0 +1,38 @@
+From 1a65cf6fce3818876cbfef9e1c6a57d5cadf56c0 Mon Sep 17 00:00:00 2001
+From: Prasad Mujumdar <prasadm@cloudera.com>
+Date: Mon, 12 May 2014 18:32:39 -0700
+Subject: [PATCH 336/375] CLOUDERA-BUILD:  CDH-19069:Hive script should include jar from SENTRY_HOME into classpath
+
+---
+ bin/ext/hiveserver2.sh |   15 +++++++++++++++
+ 1 files changed, 15 insertions(+), 0 deletions(-)
+
+diff --git a/src/bin/ext/hiveserver2.sh b/src/bin/ext/hiveserver2.sh
+index b57e96b..96f0c15 100644
+--- a/src/bin/ext/hiveserver2.sh
++++ b/src/bin/ext/hiveserver2.sh
+@@ -24,6 +24,21 @@ hiveserver2() {
+   fi
+   JAR=${HIVE_LIB}/hive-service-*.jar
+ 
++  # Set SENTRY_HOME if possible and add Sentry jars to classpath
++  if [[ -z "$SENTRY_HOME" ]]
++  then
++    if [[ -d ${HIVE_HOME}/../sentry ]]
++    then
++      export SENTRY_HOME=`readlink -m ${HIVE_HOME}/../sentry`
++    fi
++  fi
++  if [[ -n "$SENTRY_HOME" ]]
++  then
++    for f in ${SENTRY_HOME}/lib/*.jar; do
++      export HADOOP_CLASSPATH=${HADOOP_CLASSPATH}:${f}
++    done
++  fi
++
+   exec $HADOOP jar $JAR $CLASS "$@"
+ }
+ 
+-- 
+1.7.0.4
+

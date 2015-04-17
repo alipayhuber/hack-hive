@@ -1,0 +1,28 @@
+From ed09c7667d3dae1658071455b1460dbbb7870a35 Mon Sep 17 00:00:00 2001
+From: Prasad Mujumdar <prasadm@cloudera.com>
+Date: Wed, 8 Jan 2014 16:35:44 -0800
+Subject: [PATCH 220/375] CLOUDERA-BUILD: CDH-16507: Fix Hive MR2 test failures
+
+---
+ itests/qtest/pom.xml |    5 +++++
+ 1 files changed, 5 insertions(+), 0 deletions(-)
+
+diff --git a/src/itests/qtest/pom.xml b/src/itests/qtest/pom.xml
+index df0fbdf..4a63526 100644
+--- a/src/itests/qtest/pom.xml
++++ b/src/itests/qtest/pom.xml
+@@ -226,6 +226,11 @@
+         </dependency>
+         <dependency>
+           <groupId>org.apache.hadoop</groupId>
++          <artifactId>hadoop-mapreduce-client-jobclient</artifactId>
++          <version>${hadoop-23.version}</version>
++        </dependency>
++        <dependency>
++          <groupId>org.apache.hadoop</groupId>
+           <artifactId>hadoop-archives</artifactId>
+           <version>${hadoop-23.version}</version>
+           <scope>test</scope>
+-- 
+1.7.0.4
+

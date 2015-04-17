@@ -1,0 +1,530 @@
+From 7bff5723734f3a6fe9933b04c5e5e0e9193dfaa4 Mon Sep 17 00:00:00 2001
+From: xzhang <xzhang@xzdt.(none)>
+Date: Thu, 1 May 2014 15:19:35 -0700
+Subject: [PATCH 329/375] Revert "CDH-18711: HIVE-6891: Alter rename partition Perm inheritance and general partition/table group inheritance (Szehon Ho reviewed by Brock Noland)"
+
+This reverts commit feac2ef66b087c609a5bdb76598c84a28d086616.
+---
+ .../org/apache/hadoop/hive/common/FileUtils.java   |   57 ------
+ .../hadoop/hive/metastore/TestHiveMetaStore.java   |    2 +-
+ .../hive/ql/security/TestFolderPermissions.java    |  197 ++++----------------
+ .../hadoop/hive/metastore/HiveAlterHandler.java    |    2 +-
+ .../hadoop/hive/metastore/HiveMetaStore.java       |    8 +-
+ .../apache/hadoop/hive/metastore/Warehouse.java    |   24 ++-
+ .../org/apache/hadoop/hive/ql/metadata/Hive.java   |   22 ++-
+ 7 files changed, 78 insertions(+), 234 deletions(-)
+
+diff --git a/src/common/src/java/org/apache/hadoop/hive/common/FileUtils.java b/src/common/src/java/org/apache/hadoop/hive/common/FileUtils.java
+index 89fd416..c1f8842 100644
+--- a/src/common/src/java/org/apache/hadoop/hive/common/FileUtils.java
++++ b/src/common/src/java/org/apache/hadoop/hive/common/FileUtils.java
+@@ -18,25 +18,15 @@
+ 
+ package org.apache.hadoop.hive.common;
+ 
+-import java.io.FileNotFoundException;
+ import java.io.IOException;
+ import java.net.URI;
+-import java.net.URISyntaxException;
+-import java.util.ArrayList;
+ import java.util.BitSet;
+ import java.util.List;
+ 
+-import org.apache.commons.logging.Log;
+-import org.apache.commons.logging.LogFactory;
+ import org.apache.hadoop.conf.Configuration;
+ import org.apache.hadoop.fs.FileStatus;
+ import org.apache.hadoop.fs.FileSystem;
+-import org.apache.hadoop.fs.LocalFileSystem;
+ import org.apache.hadoop.fs.Path;
+-import org.apache.hadoop.fs.permission.FsAction;
+-import org.apache.hadoop.fs.permission.FsPermission;
+-import org.apache.hadoop.hive.conf.HiveConf;
+-import org.apache.hadoop.security.UserGroupInformation;
+ import org.apache.hadoop.util.Shell;
+ 
+ 
+@@ -45,8 +35,6 @@
+  */
+ public final class FileUtils {
+ 
+-  private static final Log LOG = LogFactory.getLog(FileUtils.class.getName());
+-
+   /**
+    * Variant of Path.makeQualified that qualifies the input path against the default file system
+    * indicated by the configuration
+@@ -309,49 +297,4 @@ public static void listStatusRecursively(FileSystem fs, FileStatus fileStatus,
+     }
+   }
+ 
+-  /**
+-   * Creates the directory and all necessary parent directories.
+-   * @param fs FileSystem to use
+-   * @param f path to create.
+-   * @param inheritPerms whether directory inherits the permission of the last-existing parent path
+-   * @return true if directory created successfully.  False otherwise, including if it exists.
+-   * @throws IOException exception in creating the directory
+-   */
+-  public static boolean mkdir(FileSystem fs, Path f, boolean inheritPerms) throws IOException {
+-    LOG.info("Creating directory if it doesn't exist: " + f);
+-    if (!inheritPerms) {
+-      //just create the directory
+-      return fs.mkdirs(f);
+-    } else {
+-      //Check if the directory already exists. We want to change the permission
+-      //to that of the parent directory only for newly created directories.
+-      try {
+-        return fs.getFileStatus(f).isDir();
+-      } catch (FileNotFoundException ignore) {
+-      }
+-      //inherit perms: need to find last existing parent path, and apply its permission on entire subtree.
+-      Path path = f;
+-      List<Path> pathsToSet = new ArrayList<Path>();
+-      while (!fs.exists(path)) {
+-        pathsToSet.add(path);
+-        path = path.getParent();
+-      }
+-      //at the end of this loop, path is the last-existing parent path.
+-      boolean success = fs.mkdirs(f);
+-      if (!success) {
+-        return false;
+-      } else {
+-        FsPermission parentPerm = fs.getFileStatus(path).getPermission();
+-        String parentGroup = fs.getFileStatus(path).getGroup();
+-        for (Path pathToSet : pathsToSet) {
+-          String currOwner = fs.getFileStatus(pathToSet).getOwner();
+-          LOG.info("Setting permission and group of parent directory: " + path.toString() +
+-            " on new directory: " + pathToSet.toString());
+-          fs.setPermission(pathToSet, parentPerm);
+-          fs.setOwner(pathToSet, currOwner, parentGroup);
+-        }
+-        return true;
+-      }
+-    }
+-  }
+ }
+diff --git a/src/itests/hive-unit/src/test/java/org/apache/hadoop/hive/metastore/TestHiveMetaStore.java b/src/itests/hive-unit/src/test/java/org/apache/hadoop/hive/metastore/TestHiveMetaStore.java
+index e50a404..d789616 100644
+--- a/src/itests/hive-unit/src/test/java/org/apache/hadoop/hive/metastore/TestHiveMetaStore.java
++++ b/src/itests/hive-unit/src/test/java/org/apache/hadoop/hive/metastore/TestHiveMetaStore.java
+@@ -385,7 +385,7 @@ public static void partitionTester(HiveMetaStoreClient client, HiveConf hiveConf
+ 
+       // create dir for /mpart5
+       Path mp5Path = new Path(mpart5.getSd().getLocation());
+-      warehouse.mkdirs(mp5Path, true);
++      warehouse.mkdirs(mp5Path);
+       assertTrue(fs.exists(mp5Path));
+       assertEquals(dbPermission, fs.getFileStatus(mp5Path).getPermission());
+ 
+diff --git a/src/itests/hive-unit/src/test/java/org/apache/hadoop/hive/ql/security/TestFolderPermissions.java b/src/itests/hive-unit/src/test/java/org/apache/hadoop/hive/ql/security/TestFolderPermissions.java
+index 3e38369..f1c7b7b 100644
+--- a/src/itests/hive-unit/src/test/java/org/apache/hadoop/hive/ql/security/TestFolderPermissions.java
++++ b/src/itests/hive-unit/src/test/java/org/apache/hadoop/hive/ql/security/TestFolderPermissions.java
+@@ -19,16 +19,12 @@
+ package org.apache.hadoop.hive.ql.security;
+ 
+ import java.net.URI;
+-import java.util.ArrayList;
+-import java.util.List;
+ 
+ import junit.framework.Assert;
++import junit.framework.TestCase;
+ 
+ import org.apache.hadoop.fs.FileSystem;
+-import org.apache.hadoop.fs.LocatedFileStatus;
+ import org.apache.hadoop.fs.Path;
+-import org.apache.hadoop.fs.PathFilter;
+-import org.apache.hadoop.fs.RemoteIterator;
+ import org.apache.hadoop.fs.permission.FsPermission;
+ import org.apache.hadoop.hive.cli.CliSessionState;
+ import org.apache.hadoop.hive.conf.HiveConf;
+@@ -37,35 +33,26 @@
+ import org.apache.hadoop.hive.ql.processors.CommandProcessorResponse;
+ import org.apache.hadoop.hive.ql.session.SessionState;
+ import org.apache.hadoop.hive.shims.ShimLoader;
+-import org.junit.BeforeClass;
+ import org.junit.Test;
+ 
+ /**
+  * This test the flag 'hive.warehouse.subdir.inherit.perms'.
+  */
+-public class TestFolderPermissions {
+-  protected static HiveConf conf;
+-  protected static Driver driver;
+-  protected static String dataFileDir;
+-  protected static Path dataFilePath;
+-  protected static String testDir;
+-  protected static FileSystem fs;
++public class TestFolderPermissions extends TestCase {
++  protected HiveConf conf;
++  protected Driver driver;
++  protected String dataFileDir;
++  protected Path dataFilePath;
++  protected String testDir;
+ 
+-  public static final PathFilter hiddenFileFilter = new PathFilter(){
+-    public boolean accept(Path p){
+-      String name = p.getName();
+-      return !name.startsWith("_") && !name.startsWith(".");
+-    }
+-  };
+ 
++  @Override
++  protected void setUp() throws Exception {
+ 
+-
+-  @BeforeClass
+-  public static void setUp() throws Exception {
++    super.setUp();
+     testDir = System.getProperty("test.warehouse.dir");
+ 
+-    conf = new HiveConf(TestFolderPermissions.class);
+-    fs = FileSystem.get(new URI(testDir), conf);
++    conf = new HiveConf(this.getClass());
+     dataFileDir = conf.get("test.data.files").replace('\\', '/')
+         .replace("c:", "");
+     dataFilePath = new Path(dataFileDir, "kv1.txt");
+@@ -73,174 +60,54 @@ public static void setUp() throws Exception {
+     int port = MetaStoreUtils.findFreePort();
+     conf.setBoolVar(HiveConf.ConfVars.HIVE_SUPPORT_CONCURRENCY, false);
+     conf.setBoolVar(HiveConf.ConfVars.HIVE_WAREHOUSE_SUBDIR_INHERIT_PERMS, true);
+-    conf.setVar(HiveConf.ConfVars.DYNAMICPARTITIONINGMODE, "nonstrict");
++
++    // Turn off metastore-side authorization
++    System.setProperty(HiveConf.ConfVars.METASTORE_PRE_EVENT_LISTENERS.varname,
++        "");
+ 
+     MetaStoreUtils.startMetaStore(port, ShimLoader.getHadoopThriftAuthBridge());
+ 
+     SessionState.start(new CliSessionState(conf));
+     driver = new Driver(conf);
+-
+-    setupDataTable();
+-  }
+-
+-
+-  private static void setupDataTable() throws Exception {
+-    CommandProcessorResponse ret = driver.run("DROP TABLE IF EXISTS mysrc");
+-    Assert.assertEquals(0,ret.getResponseCode());
+-
+-    ret = driver.run("CREATE TABLE mysrc (key STRING, value STRING) PARTITIONED BY (part1 string, part2 string) STORED AS TEXTFILE");
+-    Assert.assertEquals(0,ret.getResponseCode());
+-
+-    ret = driver.run("LOAD DATA LOCAL INPATH '" + dataFilePath + "' INTO TABLE mysrc PARTITION (part1='1',part2='1')");
+-    Assert.assertEquals(0,ret.getResponseCode());
+-
+-    ret = driver.run("LOAD DATA LOCAL INPATH '" + dataFilePath + "' INTO TABLE mysrc PARTITION (part1='2',part2='2')");
+-    Assert.assertEquals(0,ret.getResponseCode());
+-  }
+-
+-  @Test
+-  public void testCreateTablePerms() throws Exception {
+-    String testDb = "mydb";
+-    String tableName = "createtable";
+-    CommandProcessorResponse ret = driver.run("CREATE DATABASE " + testDb);
+-    Assert.assertEquals(0,ret.getResponseCode());
+-
+-    assertExistence(testDir + "/" + testDb + ".db");
+-    setPermissions(testDir + "/" + testDb + ".db", FsPermission.createImmutable((short) 0777));
+-
+-    ret = driver.run("USE " + testDb);
+-    Assert.assertEquals(0,ret.getResponseCode());
+-
+-    ret = driver.run("CREATE TABLE " + tableName + " (key string, value string)");
+-    Assert.assertEquals(0,ret.getResponseCode());
+-
+-    ret = driver.run("insert into table " + tableName + " select key,value from default.mysrc");
+-
+-    assertExistence(testDir + "/" + testDb + ".db/" + tableName);
+-    Assert.assertEquals("rwxrwxrwx", getPermissions(testDir + "/" + testDb + ".db/" + tableName).toString());
+-
+-    ret = driver.run("USE default");
+-    Assert.assertEquals(0,ret.getResponseCode());
+   }
+ 
+-
+   @Test
+   public void testStaticPartitionPerms() throws Exception {
+-    String tableName = "staticpart";
+-    CommandProcessorResponse ret = driver.run("CREATE TABLE " + tableName + " (key string, value string) partitioned by (part1 string, part2 string)");
+-    Assert.assertEquals(0,ret.getResponseCode());
+-
+-    assertExistence(testDir + "/" + tableName);
+-    setPermissions(testDir + "/" + tableName, FsPermission.createImmutable((short) 0777));
+-
+-
+-    ret = driver.run("insert into table " + tableName + " partition(part1='1', part2='1') select key,value from mysrc where part1='1' and part2='1'");
+-    Assert.assertEquals(0,ret.getResponseCode());
+-
+-    Assert.assertEquals("rwxrwxrwx", getPermissions(testDir + "/" + tableName + "/part1=1").toString());
+-    Assert.assertEquals("rwxrwxrwx", getPermissions(testDir + "/" + tableName + "/part1=1/part2=1").toString());
+ 
+-    Assert.assertTrue(listChildrenPerms(testDir + "/" + tableName + "/part1=1/part2=1").size() > 0);
+-    for (FsPermission perm : listChildrenPerms(testDir + "/" + tableName + "/part1=1/part2=1")) {
+-      Assert.assertEquals("rwxrwxrwx", perm.toString());
+-    }
+-  }
+-
+-  @Test
+-  public void testAlterPartitionPerms() throws Exception {
+-    String tableName = "alterpart";
+-    CommandProcessorResponse ret = driver.run("CREATE TABLE " + tableName + " (key string, value string) partitioned by (part1 int, part2 int, part3 int)");
+-    Assert.assertEquals(0,ret.getResponseCode());
+-
+-    assertExistence(testDir + "/" + tableName);
+-    setPermissions(testDir + "/" + tableName, FsPermission.createImmutable((short) 0777));
+-
+-    ret = driver.run("insert into table " + tableName + " partition(part1='1',part2='1',part3='1') select key,value from mysrc");
+-    Assert.assertEquals(0,ret.getResponseCode());
+-
+-    //alter partition
+-    ret = driver.run("alter table " + tableName + " partition (part1='1',part2='1',part3='1') rename to partition (part1='2',part2='2',part3='2')");
+-    Assert.assertEquals(0,ret.getResponseCode());
+-
+-    Assert.assertEquals("rwxrwxrwx", getPermissions(testDir + "/" + tableName + "/part1=2").toString());
+-    Assert.assertEquals("rwxrwxrwx", getPermissions(testDir + "/" + tableName + "/part1=2/part2=2").toString());
+-    Assert.assertEquals("rwxrwxrwx", getPermissions(testDir + "/" + tableName + "/part1=2/part2=2/part3=2").toString());
+-
+-    Assert.assertTrue(listChildrenPerms(testDir + "/" + tableName + "/part1=2/part2=2/part3=2").size() > 0);
+-    for (FsPermission perm : listChildrenPerms(testDir + "/" + tableName + "/part1=2/part2=2/part3=2")) {
+-      Assert.assertEquals("rwxrwxrwx", perm.toString());
+-    }
+-  }
+-
+-
+-  @Test
+-  public void testDynamicPartitions() throws Exception {
+-    String tableName = "dynamicpart";
+-
+-    CommandProcessorResponse ret = driver.run("CREATE TABLE " + tableName + " (key string, value string) partitioned by (part1 string, part2 string)");
+-    Assert.assertEquals(0,ret.getResponseCode());
+-
+-    assertExistence(testDir + "/" + tableName);
+-    setPermissions(testDir + "/" + tableName, FsPermission.createImmutable((short) 0777));
+-
+-    ret = driver.run("insert into table " + tableName + " partition (part1,part2) select key,value,part1,part2 from mysrc");
+-    Assert.assertEquals(0,ret.getResponseCode());
+-
+-    Assert.assertEquals("rwxrwxrwx", getPermissions(testDir + "/" + tableName + "/part1=1").toString());
+-    Assert.assertEquals("rwxrwxrwx", getPermissions(testDir + "/" + tableName + "/part1=1/part2=1").toString());
+-
+-    Assert.assertEquals("rwxrwxrwx", getPermissions(testDir + "/" + tableName + "/part1=2").toString());
+-    Assert.assertEquals("rwxrwxrwx", getPermissions(testDir + "/" + tableName + "/part1=2/part2=2").toString());
+-
+-    Assert.assertTrue(listChildrenPerms(testDir + "/" + tableName + "/part1=1/part2=1").size() > 0);
+-    for (FsPermission perm : listChildrenPerms(testDir + "/" + tableName + "/part1=1/part2=1")) {
+-      Assert.assertEquals("rwxrwxrwx", perm.toString());
+-    }
++    CommandProcessorResponse ret = driver.run("DROP TABLE IF EXISTS mysrc");
++    assertEquals(0,ret.getResponseCode());
+ 
+-    Assert.assertTrue(listChildrenPerms(testDir + "/" + tableName + "/part1=2/part2=2").size() > 0);
+-    for (FsPermission perm : listChildrenPerms(testDir + "/" + tableName + "/part1=2/part2=2")) {
+-      Assert.assertEquals("rwxrwxrwx", perm.toString());
+-    }
+-  }
++    ret = driver.run("CREATE TABLE mysrc (key STRING, value STRING) STORED AS TEXTFILE");
++    assertEquals(0,ret.getResponseCode());
+ 
+-  @Test
+-  public void testExternalTable() throws Exception {
+-    String tableName = "externaltable";
++    ret = driver.run("LOAD DATA LOCAL INPATH '" + dataFilePath + "' INTO TABLE mysrc");
++    assertEquals(0,ret.getResponseCode());
+ 
+-    String myLocation = testDir + "/myfolder";
+-    FileSystem fs = FileSystem.get(new URI(myLocation), conf);
+-    fs.mkdirs(new Path(myLocation), FsPermission.createImmutable((short) 0777));
++    ret = driver.run("CREATE TABLE newtable (key string, value string) partitioned by (part1 int, part2 int)");
++    assertEquals(0,ret.getResponseCode());
+ 
+-    CommandProcessorResponse ret = driver.run("CREATE TABLE " + tableName + " (key string, value string) LOCATION '" + myLocation + "'");
+-    Assert.assertEquals(0,ret.getResponseCode());
++    assertExistence(testDir + "/newtable");
++    setPermissions(testDir + "/newtable", FsPermission.createImmutable((short) 0777));
+ 
+-    ret = driver.run("insert into table " + tableName + " select key,value from mysrc");
+-    Assert.assertEquals(0,ret.getResponseCode());
++    ret = driver.run("insert into table newtable partition(part1='1',part2='1') select * from mysrc");
++    assertEquals(0,ret.getResponseCode());
+ 
+-    Assert.assertTrue(listChildrenPerms(myLocation).size() > 0);
+-    for (FsPermission perm : listChildrenPerms(myLocation)) {
+-      Assert.assertEquals("rwxrwxrwx", perm.toString());
+-    }
++    Assert.assertEquals("rwxrwxrwx", getPermissions(testDir + "/newtable/part1=1").toString());
++    Assert.assertEquals("rwxrwxrwx", getPermissions(testDir + "/newtable/part1=1/part2=1").toString());
+   }
+ 
+   private void setPermissions(String locn, FsPermission permissions) throws Exception {
++    FileSystem fs = FileSystem.get(new URI(locn), conf);
+     fs.setPermission(new Path(locn), permissions);
+   }
+ 
+   private FsPermission getPermissions(String locn) throws Exception {
++    FileSystem fs = FileSystem.get(new URI(locn), conf);
+     return fs.getFileStatus(new Path(locn)).getPermission();
+   }
+ 
+   private void assertExistence(String locn) throws Exception {
++    FileSystem fs = FileSystem.get(new URI(locn), conf);
+     Assert.assertTrue(fs.exists(new Path(locn)));
+   }
+-
+-  private List<FsPermission> listChildrenPerms(String locn) throws Exception {
+-    List<FsPermission> result = new ArrayList<FsPermission>();
+-    RemoteIterator<LocatedFileStatus> fileStatuses = fs.listLocatedStatus(new Path(locn));
+-    while (fileStatuses.hasNext()) {
+-      result.add(fileStatuses.next().getPermission());
+-    }
+-    return result;
+-  }
+ }
+diff --git a/src/metastore/src/java/org/apache/hadoop/hive/metastore/HiveAlterHandler.java b/src/metastore/src/java/org/apache/hadoop/hive/metastore/HiveAlterHandler.java
+index b29e5d6..3d883f0 100644
+--- a/src/metastore/src/java/org/apache/hadoop/hive/metastore/HiveAlterHandler.java
++++ b/src/metastore/src/java/org/apache/hadoop/hive/metastore/HiveAlterHandler.java
+@@ -381,7 +381,7 @@ public Partition alterPartition(final RawStore msdb, Warehouse wh, final String 
+           if (srcFs.exists(srcPath)) {
+             //if destPath's parent path doesn't exist, we should mkdir it
+             Path destParentPath = destPath.getParent();
+-            if (!wh.mkdirs(destParentPath, true)) {
++            if (!wh.mkdirs(destParentPath)) {
+                 throw new IOException("Unable to create path " + destParentPath);
+             }
+             srcFs.rename(srcPath, destPath);
+diff --git a/src/metastore/src/java/org/apache/hadoop/hive/metastore/HiveMetaStore.java b/src/metastore/src/java/org/apache/hadoop/hive/metastore/HiveMetaStore.java
+index e6e9212..c39c361 100644
+--- a/src/metastore/src/java/org/apache/hadoop/hive/metastore/HiveMetaStore.java
++++ b/src/metastore/src/java/org/apache/hadoop/hive/metastore/HiveMetaStore.java
+@@ -566,7 +566,7 @@ private void create_database_core(RawStore ms, final Database db)
+         firePreEvent(new PreCreateDatabaseEvent(db, this));
+ 
+         if (!wh.isDir(dbPath)) {
+-          if (!wh.mkdirs(dbPath, false)) {
++          if (!wh.mkdirs(dbPath)) {
+             throw new MetaException("Unable to create database path " + dbPath +
+                 ", failed to create database " + db.getName());
+           }
+@@ -1060,7 +1060,7 @@ private void create_table_core(final RawStore ms, final Table tbl,
+ 
+         if (tblPath != null) {
+           if (!wh.isDir(tblPath)) {
+-            if (!wh.mkdirs(tblPath, true)) {
++            if (!wh.mkdirs(tblPath)) {
+               throw new MetaException(tblPath
+                   + " is not a directory or unable to create one");
+             }
+@@ -1532,7 +1532,7 @@ private Partition append_partition_common(RawStore ms, String dbName, String tab
+         }
+ 
+         if (!wh.isDir(partLocation)) {
+-          if (!wh.mkdirs(partLocation, true)) {
++          if (!wh.mkdirs(partLocation)) {
+             throw new MetaException(partLocation
+                 + " is not a directory or unable to create one");
+           }
+@@ -1756,7 +1756,7 @@ public int add_partitions(final List<Partition> parts) throws MetaException,
+           // mkdirs() because if the file system is read-only, mkdirs will
+           // throw an exception even if the directory already exists.
+           if (!wh.isDir(partLocation)) {
+-            if (!wh.mkdirs(partLocation, true)) {
++            if (!wh.mkdirs(partLocation)) {
+               throw new MetaException(partLocation
+                   + " is not a directory or unable to create one");
+             }
+diff --git a/src/metastore/src/java/org/apache/hadoop/hive/metastore/Warehouse.java b/src/metastore/src/java/org/apache/hadoop/hive/metastore/Warehouse.java
+index be29984..e98db0f 100755
+--- a/src/metastore/src/java/org/apache/hadoop/hive/metastore/Warehouse.java
++++ b/src/metastore/src/java/org/apache/hadoop/hive/metastore/Warehouse.java
+@@ -43,7 +43,6 @@
+ import org.apache.hadoop.fs.FileSystem;
+ import org.apache.hadoop.fs.Path;
+ import org.apache.hadoop.fs.permission.FsAction;
+-import org.apache.hadoop.fs.permission.FsPermission;
+ import org.apache.hadoop.hive.common.FileUtils;
+ import org.apache.hadoop.hive.common.JavaUtils;
+ import org.apache.hadoop.hive.conf.HiveConf;
+@@ -66,6 +65,7 @@
+ 
+   private MetaStoreFS fsHandler = null;
+   private boolean storageAuthCheck = false;
++  private boolean inheritPerms = false;
+ 
+   public Warehouse(Configuration conf) throws MetaException {
+     this.conf = conf;
+@@ -77,6 +77,8 @@ public Warehouse(Configuration conf) throws MetaException {
+     fsHandler = getMetaStoreFsHandler(conf);
+     storageAuthCheck = HiveConf.getBoolVar(conf,
+         HiveConf.ConfVars.METASTORE_AUTHORIZATION_STORAGE_AUTH_CHECKS);
++    inheritPerms = HiveConf.getBoolVar(conf,
++        HiveConf.ConfVars.HIVE_WAREHOUSE_SUBDIR_INHERIT_PERMS);
+   }
+ 
+   private MetaStoreFS getMetaStoreFsHandler(Configuration conf)
+@@ -177,13 +179,25 @@ public Path getTablePath(Database db, String tableName)
+     return getDnsPath(new Path(getDatabasePath(db), tableName.toLowerCase()));
+   }
+ 
+-  public boolean mkdirs(Path f, boolean inheritPermCandidate) throws MetaException {
+-    boolean inheritPerms = HiveConf.getBoolVar(conf,
+-      HiveConf.ConfVars.HIVE_WAREHOUSE_SUBDIR_INHERIT_PERMS) && inheritPermCandidate;
++  public boolean mkdirs(Path f) throws MetaException {
+     FileSystem fs = null;
+     try {
+       fs = getFs(f);
+-      return FileUtils.mkdir(fs, f, inheritPerms);
++      LOG.debug("Creating directory if it doesn't exist: " + f);
++      //Check if the directory already exists. We want to change the permission
++      //to that of the parent directory only for newly created directories.
++      if (this.inheritPerms) {
++        try {
++          return fs.getFileStatus(f).isDir();
++        } catch (FileNotFoundException ignore) {
++        }
++      }
++      boolean success = fs.mkdirs(f);
++      if (this.inheritPerms && success) {
++        // Set the permission of parent directory.
++        fs.setPermission(f, fs.getFileStatus(f.getParent()).getPermission());
++      }
++      return success;
+     } catch (IOException e) {
+       closeFs(fs);
+       MetaStoreUtils.logAndThrowMetaException(e);
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/metadata/Hive.java b/src/ql/src/java/org/apache/hadoop/hive/ql/metadata/Hive.java
+index b1aa586..b76c800 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/metadata/Hive.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/metadata/Hive.java
+@@ -2227,7 +2227,27 @@ static protected void copyFiles(HiveConf conf, Path srcf, Path destf, FileSystem
+     try {
+       // create the destination if it does not exist
+       if (!fs.exists(destf)) {
+-        FileUtils.mkdir(fs, destf, inheritPerms);
++        if (inheritPerms) {
++          //need to find last existing path, and apply its permission on entire subtree.
++          Path path = destf;
++          List<Path> pathsToSet = new ArrayList<Path>();
++          while (!fs.exists(path)) {
++            pathsToSet.add(path);
++            path = path.getParent();
++          }
++
++          //at the end of this loop, path is the last existing path (the real parent).
++          fs.mkdirs(destf);
++          FsPermission parentPerm = fs.getFileStatus(path).getPermission();
++          for (Path pathToSet : pathsToSet) {
++            LOG.info("setting permission of parent folder: " + path.toString() +
++              " on new directory: " + pathToSet.toString());
++            fs.setPermission(pathToSet, parentPerm);
++          }
++        } else {
++          //simply make the directory.
++          fs.mkdirs(destf);
++        }
+       }
+     } catch (IOException e) {
+       throw new HiveException(
+-- 
+1.7.0.4
+

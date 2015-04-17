@@ -1,0 +1,88 @@
+From 53a0222eca9ffb3df3502535127fb410282ac06e Mon Sep 17 00:00:00 2001
+From: Shreepadma Venugopalan <shreepadma@cloudera.com>
+Date: Tue, 29 Jan 2013 19:30:19 -0800
+Subject: [PATCH 166/375] PROPOSED: CDH-14950: HIVE-5536: Provide the correct operation name in HookContext
+
+---
+ ql/src/java/org/apache/hadoop/hive/ql/Driver.java  |    3 ++-
+ .../java/org/apache/hadoop/hive/ql/QueryPlan.java  |    9 ++++++++-
+ .../apache/hadoop/hive/ql/hooks/HookContext.java   |   10 +++++-----
+ 3 files changed, 15 insertions(+), 7 deletions(-)
+
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/Driver.java b/src/ql/src/java/org/apache/hadoop/hive/ql/Driver.java
+index 38537cc..b42006c 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/Driver.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/Driver.java
+@@ -467,7 +467,8 @@ public int compile(String command, boolean resetTaskIds) {
+       perfLogger.PerfLogEnd(CLASS_NAME, PerfLogger.ANALYZE);
+ 
+       hiveOperation = SessionState.get().getHiveOperation();
+-      plan = new QueryPlan(command, sem, perfLogger.getStartTime(PerfLogger.DRIVER_RUN));
++      plan = new QueryPlan(command, sem, perfLogger.getStartTime(PerfLogger.DRIVER_RUN),
++           SessionState.get().getCommandType());
+ 
+       // test Only - serialize the query plan and deserialize it
+       if ("true".equalsIgnoreCase(System.getProperty("test.serialize.qplan"))) {
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/QueryPlan.java b/src/ql/src/java/org/apache/hadoop/hive/ql/QueryPlan.java
+index 2f69c8d..8994e46 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/QueryPlan.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/QueryPlan.java
+@@ -103,12 +103,14 @@
+   private QueryProperties queryProperties;
+ 
+   private transient Long queryStartTime;
++  private String operationName;
+ 
+   public QueryPlan() {
+     this.reducerTimeStatsPerJobList = new ArrayList<ReducerTimeStatsPerJob>();
+   }
+ 
+-  public QueryPlan(String queryString, BaseSemanticAnalyzer sem, Long startTime) {
++  public QueryPlan(String queryString, BaseSemanticAnalyzer sem, Long startTime,
++     String operationName) {
+     this.queryString = queryString;
+ 
+     rootTasks = new ArrayList<Task<? extends Serializable>>();
+@@ -129,6 +131,7 @@ public QueryPlan(String queryString, BaseSemanticAnalyzer sem, Long startTime) {
+     query.putToQueryAttributes("queryString", this.queryString);
+     queryProperties = sem.getQueryProperties();
+     queryStartTime = startTime;
++    this.operationName = operationName;
+   }
+ 
+   public String getQueryStr() {
+@@ -808,4 +811,8 @@ public Long getQueryStartTime() {
+   public void setQueryStartTime(Long queryStartTime) {
+     this.queryStartTime = queryStartTime;
+   }
++
++  public String getOperationName() {
++    return operationName;
++  }
+ }
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/hooks/HookContext.java b/src/ql/src/java/org/apache/hadoop/hive/ql/hooks/HookContext.java
+index 46326c5..460fabc 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/hooks/HookContext.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/hooks/HookContext.java
+@@ -150,13 +150,13 @@ public void setHookType(HookType hookType) {
+ 
+   public String getIpAddress() {
+     return this.ipAddress;
+-  }
++ }
+ 
+-  public String getOperationName() {
+-    return SessionState.get().getHiveOperation().name();
+-  }
++ public String getOperationName() {
++   return queryPlan.getOperationName();
++ }
+ 
+-  public String getUserName() {
++ public String getUserName() {
+     return this.userName;
+   }
+ }
+-- 
+1.7.0.4
+

@@ -1,0 +1,102 @@
+From a9a04d7c5336c8f2b17b1233dd293f1e8ac7cfe1 Mon Sep 17 00:00:00 2001
+From: szehon <szehon@unknown>
+Date: Tue, 22 Jul 2014 01:17:07 +0000
+Subject: [PATCH 372/375] HIVE-7450 : Database should inherit perms of warehouse dir (Szehon, reviewed by Brock and Navis)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1612442 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../hive/ql/security/FolderPermissionBase.java     |   48 ++++++++++++++++++-
+ .../hadoop/hive/metastore/HiveMetaStore.java       |    2 +-
+ 2 files changed, 46 insertions(+), 4 deletions(-)
+
+diff --git a/src/itests/hive-unit/src/test/java/org/apache/hadoop/hive/ql/security/FolderPermissionBase.java b/src/itests/hive-unit/src/test/java/org/apache/hadoop/hive/ql/security/FolderPermissionBase.java
+index 154cec5..cc5aeb6 100644
+--- a/src/itests/hive-unit/src/test/java/org/apache/hadoop/hive/ql/security/FolderPermissionBase.java
++++ b/src/itests/hive-unit/src/test/java/org/apache/hadoop/hive/ql/security/FolderPermissionBase.java
+@@ -38,7 +38,6 @@
+ import org.apache.hadoop.hive.ql.session.SessionState;
+ import org.apache.hadoop.hive.shims.HadoopShims.MiniDFSShim;
+ import org.apache.hadoop.hive.shims.ShimLoader;
+-import org.junit.BeforeClass;
+ import org.junit.Test;
+ 
+ /**
+@@ -98,7 +97,6 @@ public static void baseSetup() throws Exception {
+ 
+     SessionState.start(new CliSessionState(conf));
+     driver = new Driver(conf);
+-
+     setupDataTable();
+   }
+ 
+@@ -118,9 +116,53 @@ private static void setupDataTable() throws Exception {
+   }
+ 
+   @Test
+-  public void testCreateTable() throws Exception {
++  public void testCreateDb() throws Exception {
++    //see if db inherits permission from warehouse directory.
+     String testDb = "mydb";
+     String tableName = "createtable";
++
++    setPermission(warehouseDir.toString());
++    verifyPermission(warehouseDir.toString());
++
++    CommandProcessorResponse ret = driver.run("CREATE DATABASE " + testDb);
++    Assert.assertEquals(0,ret.getResponseCode());
++
++    assertExistence(warehouseDir + "/" + testDb + ".db");
++    verifyPermission(warehouseDir + "/" + testDb + ".db");
++
++    ret = driver.run("USE " + testDb);
++    Assert.assertEquals(0,ret.getResponseCode());
++
++    ret = driver.run("CREATE TABLE " + tableName + " (key string, value string)");
++    Assert.assertEquals(0,ret.getResponseCode());
++
++    verifyPermission(warehouseDir + "/" + testDb + ".db/" + tableName);
++
++    ret = driver.run("insert into table " + tableName + " select key,value from default.mysrc");
++    Assert.assertEquals(0,ret.getResponseCode());
++
++    assertExistence(warehouseDir + "/" + testDb + ".db/" + tableName);
++    verifyPermission(warehouseDir + "/" + testDb + ".db/" + tableName);
++
++    Assert.assertTrue(listStatus(warehouseDir + "/" + testDb + ".db/" + tableName).size() > 0);
++    for (String child : listStatus(warehouseDir + "/" + testDb + ".db/" + tableName)) {
++      verifyPermission(child);
++    }
++
++    ret = driver.run("USE default");
++    Assert.assertEquals(0,ret.getResponseCode());
++
++    //cleanup after the test.
++    fs.delete(warehouseDir, true);
++    fs.mkdirs(warehouseDir);
++    Assert.assertEquals(listStatus(warehouseDir.toString()).size(), 0);
++    setupDataTable();
++  }
++
++  @Test
++  public void testCreateTable() throws Exception {
++    String testDb = "mydb2";
++    String tableName = "createtable";
+     CommandProcessorResponse ret = driver.run("CREATE DATABASE " + testDb);
+     Assert.assertEquals(0,ret.getResponseCode());
+ 
+diff --git a/src/metastore/src/java/org/apache/hadoop/hive/metastore/HiveMetaStore.java b/src/metastore/src/java/org/apache/hadoop/hive/metastore/HiveMetaStore.java
+index e6e9212..b64779e 100644
+--- a/src/metastore/src/java/org/apache/hadoop/hive/metastore/HiveMetaStore.java
++++ b/src/metastore/src/java/org/apache/hadoop/hive/metastore/HiveMetaStore.java
+@@ -566,7 +566,7 @@ private void create_database_core(RawStore ms, final Database db)
+         firePreEvent(new PreCreateDatabaseEvent(db, this));
+ 
+         if (!wh.isDir(dbPath)) {
+-          if (!wh.mkdirs(dbPath, false)) {
++          if (!wh.mkdirs(dbPath, true)) {
+             throw new MetaException("Unable to create database path " + dbPath +
+                 ", failed to create database " + db.getName());
+           }
+-- 
+1.7.0.4
+

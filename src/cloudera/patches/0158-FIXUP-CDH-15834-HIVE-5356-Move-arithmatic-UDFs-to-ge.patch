@@ -1,0 +1,24 @@
+From 554001702d5551188f6a40fb94c985973d4d82f7 Mon Sep 17 00:00:00 2001
+From: Szehon Ho <szehon@cloudera.com>
+Date: Tue, 26 Nov 2013 17:55:53 -0800
+Subject: [PATCH 158/375] FIXUP: CDH-15834: HIVE-5356: Move arithmatic UDFs to generic UDF implementations (adding back a missing case for char, that had been ignored when doing initial downmerge)
+
+---
+ .../hadoop/hive/ql/exec/FunctionRegistry.java      |    1 +
+ 1 files changed, 1 insertions(+), 0 deletions(-)
+
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/FunctionRegistry.java b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/FunctionRegistry.java
+index d15a0f5..600cf45 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/FunctionRegistry.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/FunctionRegistry.java
+@@ -639,6 +639,7 @@ public static boolean isNumericType(PrimitiveTypeInfo typeInfo) {
+     case DOUBLE:
+     case STRING: // String or string equivalent is considered numeric when used in arithmetic operator.
+     case VARCHAR:
++    case CHAR:
+     case VOID: // NULL is considered numeric type for arithmetic operators.
+       return true;
+     default:
+-- 
+1.7.0.4
+

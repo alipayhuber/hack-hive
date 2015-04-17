@@ -1,0 +1,892 @@
+From 07e2266c44f46866ea118a5aab0ada0f9d483fe1 Mon Sep 17 00:00:00 2001
+From: Brock Noland <brock@apache.org>
+Date: Mon, 4 Nov 2013 21:32:20 +0000
+Subject: [PATCH 144/375] CDH-15745: HIVE-4523: round() function with specified decimal places not consistent with mysql (Xuefu Zhang via Brock Noland)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1538778 13f79535-47bb-0310-9956-ffa450edef68
+
+Conflicts:
+	ql/src/java/org/apache/hadoop/hive/ql/exec/vector/expressions/RoundWithNumDigitsDoubleToDouble.java
+	ql/src/java/org/apache/hadoop/hive/ql/optimizer/physical/Vectorizer.java
+	ql/src/java/org/apache/hadoop/hive/ql/udf/UDFRound.java
+	ql/src/test/org/apache/hadoop/hive/ql/exec/vector/TestVectorizationContext.java
+	ql/src/test/queries/clientpositive/udf_round.q
+	ql/src/test/results/clientpositive/decimal_udf.q.out
+	ql/src/test/results/clientpositive/udf_round.q.out
+---
+ .../hadoop/hive/ql/exec/FunctionRegistry.java      |    3 +-
+ .../org/apache/hadoop/hive/ql/udf/UDFRound.java    |  141 -----------
+ .../hive/ql/udf/generic/GenericUDFRound.java       |  263 ++++++++++++++++++++
+ .../hadoop/hive/ql/udf/generic/RoundUtils.java     |   60 +++++
+ .../apache/hadoop/hive/ql/udf/TestUDFRound.java    |   79 ------
+ .../hive/ql/udf/generic/TestGenericUDFRound.java   |  153 ++++++++++++
+ ql/src/test/queries/clientpositive/udf_round.q     |    4 +-
+ .../test/results/clientpositive/decimal_udf.q.out  |    2 +-
+ ql/src/test/results/clientpositive/udf_round.q.out |    8 +-
+ ql/src/test/results/compiler/plan/udf4.q.xml       |   27 +--
+ 10 files changed, 487 insertions(+), 253 deletions(-)
+ delete mode 100644 ql/src/java/org/apache/hadoop/hive/ql/udf/UDFRound.java
+ create mode 100644 ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDFRound.java
+ create mode 100644 ql/src/java/org/apache/hadoop/hive/ql/udf/generic/RoundUtils.java
+ delete mode 100644 ql/src/test/org/apache/hadoop/hive/ql/udf/TestUDFRound.java
+ create mode 100644 ql/src/test/org/apache/hadoop/hive/ql/udf/generic/TestGenericUDFRound.java
+
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/FunctionRegistry.java b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/FunctionRegistry.java
+index 3af804c..6a0cb72 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/FunctionRegistry.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/FunctionRegistry.java
+@@ -105,7 +105,6 @@
+ import org.apache.hadoop.hive.ql.udf.UDFRegExpReplace;
+ import org.apache.hadoop.hive.ql.udf.UDFRepeat;
+ import org.apache.hadoop.hive.ql.udf.UDFReverse;
+-import org.apache.hadoop.hive.ql.udf.UDFRound;
+ import org.apache.hadoop.hive.ql.udf.UDFRpad;
+ import org.apache.hadoop.hive.ql.udf.UDFSecond;
+ import org.apache.hadoop.hive.ql.udf.UDFSign;
+@@ -202,7 +201,7 @@
+ 
+     registerGenericUDF("size", GenericUDFSize.class);
+ 
+-    registerUDF("round", UDFRound.class, false);
++    registerGenericUDF("round", GenericUDFRound.class);
+     registerUDF("floor", UDFFloor.class, false);
+     registerUDF("sqrt", UDFSqrt.class, false);
+     registerUDF("ceil", UDFCeil.class, false);
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/udf/UDFRound.java b/src/ql/src/java/org/apache/hadoop/hive/ql/udf/UDFRound.java
+deleted file mode 100644
+index cfe4d84..0000000
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/udf/UDFRound.java
++++ /dev/null
+@@ -1,141 +0,0 @@
+-/**
+- * Licensed to the Apache Software Foundation (ASF) under one
+- * or more contributor license agreements.  See the NOTICE file
+- * distributed with this work for additional information
+- * regarding copyright ownership.  The ASF licenses this file
+- * to you under the Apache License, Version 2.0 (the
+- * "License"); you may not use this file except in compliance
+- * with the License.  You may obtain a copy of the License at
+- *
+- *     http://www.apache.org/licenses/LICENSE-2.0
+- *
+- * Unless required by applicable law or agreed to in writing, software
+- * distributed under the License is distributed on an "AS IS" BASIS,
+- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- * See the License for the specific language governing permissions and
+- * limitations under the License.
+- */
+-
+-package org.apache.hadoop.hive.ql.udf;
+-
+-import java.math.BigDecimal;
+-import java.math.RoundingMode;
+-
+-import org.apache.hadoop.hive.common.type.HiveDecimal;
+-import org.apache.hadoop.hive.ql.exec.Description;
+-import org.apache.hadoop.hive.ql.exec.UDF;
+-import org.apache.hadoop.hive.serde2.io.ByteWritable;
+-import org.apache.hadoop.hive.serde2.io.DoubleWritable;
+-import org.apache.hadoop.hive.serde2.io.HiveDecimalWritable;
+-import org.apache.hadoop.hive.serde2.io.ShortWritable;
+-import org.apache.hadoop.io.IntWritable;
+-import org.apache.hadoop.io.LongWritable;
+-
+-/**
+- * UDFRound.
+- *
+- */
+-@Description(name = "round",
+-    value = "_FUNC_(x[, d]) - round x to d decimal places",
+-    extended = "Example:\n"
+-    + "  > SELECT _FUNC_(12.3456, 1) FROM src LIMIT 1;\n" + "  12.3'")
+-public class UDFRound extends UDF {
+-  private final HiveDecimalWritable decimalWritable = new HiveDecimalWritable();
+-  private final DoubleWritable doubleWritable = new DoubleWritable();
+-  private final LongWritable longWritable = new LongWritable();
+-  private final IntWritable intWritable = new IntWritable();
+-  private final ShortWritable shortWritable = new ShortWritable();
+-  private final ByteWritable byteWritable = new ByteWritable();
+-
+-  public UDFRound() {
+-  }
+-
+-  private DoubleWritable evaluate(DoubleWritable n, int i) {
+-    double d = n.get();
+-    if (Double.isNaN(d) || Double.isInfinite(d)) {
+-      doubleWritable.set(d);
+-    } else {
+-      doubleWritable.set(BigDecimal.valueOf(d).setScale(i,
+-              RoundingMode.HALF_UP).doubleValue());
+-    }
+-    return doubleWritable;
+-  }
+-
+-  public DoubleWritable evaluate(DoubleWritable n) {
+-    if (n == null) {
+-      return null;
+-    }
+-    return evaluate(n, 0);
+-  }
+-
+-  public DoubleWritable evaluate(DoubleWritable n, IntWritable i) {
+-    if ((n == null) || (i == null)) {
+-      return null;
+-    }
+-    return evaluate(n, i.get());
+-  }
+-
+-  private HiveDecimalWritable evaluate(HiveDecimalWritable n, int i) {
+-    if (n == null) {
+-      return null;
+-    }
+-
+-    HiveDecimal bd = n.getHiveDecimal();
+-    bd = n.getHiveDecimal().setScale(i, HiveDecimal.ROUND_HALF_UP);
+-    if (bd == null) {
+-      return null;
+-    }
+-
+-    decimalWritable.set(bd);
+-    return decimalWritable;
+-  }
+-
+-  public HiveDecimalWritable evaluate(HiveDecimalWritable n) {
+-    return evaluate(n, 0);
+-  }
+-
+-  public HiveDecimalWritable evaluate(HiveDecimalWritable n, IntWritable i) {
+-    if (i == null) {
+-      return null;
+-    }
+-    return evaluate(n, i.get());
+-  }
+-
+-  public LongWritable evaluate(LongWritable n) {
+-    if (n == null) {
+-      return null;
+-    }
+-    longWritable.set(BigDecimal.valueOf(n.get()).setScale(0,
+-            RoundingMode.HALF_UP).longValue());
+-    return longWritable;
+-  }
+-
+-  public IntWritable evaluate(IntWritable n) {
+-    if (n == null) {
+-      return null;
+-    }
+-    intWritable.set(BigDecimal.valueOf(n.get()).setScale(0,
+-            RoundingMode.HALF_UP).intValue());
+-    return intWritable;
+-  }
+-
+-  public ShortWritable evaluate(ShortWritable n) {
+-    if (n == null) {
+-      return null;
+-    }
+-    shortWritable.set(BigDecimal.valueOf(n.get()).setScale(0,
+-            RoundingMode.HALF_UP).shortValue());
+-    return shortWritable;
+-  }
+-
+-  public ByteWritable evaluate(ByteWritable n) {
+-    if (n == null) {
+-      return null;
+-    }
+-    byteWritable.set(BigDecimal.valueOf(n.get()).setScale(0,
+-            RoundingMode.HALF_UP).byteValue());
+-    return byteWritable;
+-  }
+-
+-}
+-
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDFRound.java b/src/ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDFRound.java
+new file mode 100644
+index 0000000..996ba1f
+--- /dev/null
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/udf/generic/GenericUDFRound.java
+@@ -0,0 +1,263 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package org.apache.hadoop.hive.ql.udf.generic;
++
++import org.apache.hadoop.hive.common.type.HiveDecimal;
++import org.apache.hadoop.hive.ql.exec.Description;
++import org.apache.hadoop.hive.ql.exec.UDFArgumentException;
++import org.apache.hadoop.hive.ql.exec.UDFArgumentLengthException;
++import org.apache.hadoop.hive.ql.metadata.HiveException;
++import org.apache.hadoop.hive.serde2.io.ByteWritable;
++import org.apache.hadoop.hive.serde2.io.DoubleWritable;
++import org.apache.hadoop.hive.serde2.io.HiveDecimalWritable;
++import org.apache.hadoop.hive.serde2.io.ShortWritable;
++import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspector;
++import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspector.Category;
++import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspectorConverters;
++import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspectorConverters.Converter;
++import org.apache.hadoop.hive.serde2.objectinspector.PrimitiveObjectInspector;
++import org.apache.hadoop.hive.serde2.objectinspector.PrimitiveObjectInspector.PrimitiveCategory;
++import org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorFactory;
++import org.apache.hadoop.hive.serde2.objectinspector.primitive.WritableConstantByteObjectInspector;
++import org.apache.hadoop.hive.serde2.objectinspector.primitive.WritableConstantIntObjectInspector;
++import org.apache.hadoop.hive.serde2.objectinspector.primitive.WritableConstantLongObjectInspector;
++import org.apache.hadoop.hive.serde2.objectinspector.primitive.WritableConstantShortObjectInspector;
++import org.apache.hadoop.hive.serde2.typeinfo.DecimalTypeInfo;
++import org.apache.hadoop.hive.serde2.typeinfo.TypeInfoFactory;
++import org.apache.hadoop.io.FloatWritable;
++import org.apache.hadoop.io.IntWritable;
++import org.apache.hadoop.io.LongWritable;
++
++/**
++ * Note: rounding function permits rounding off integer digits in decimal numbers, which essentially
++ * downgrades the scale to negative territory. However, Hive decimal only allow non-negative scales.
++ * This can cause confusion, for example, when a decimal number 1234.567 of type decimal(7,3) is
++ * rounded with -2 scale, which produces a decimal number, 1200. The type of the output is
++ * decimal(5,0), which does not exactly represents what the number means. Thus, user should
++ * be aware of this, and use negative rounding for decimal with caution. However, Hive is in line
++ * with the behavior that MYSQL demonstrates.
++ *
++ * At a certain point, we should probably support negative scale for decimal type.
++ *
++ * GenericUDFRound.
++ *
++ */
++@Description(name = "round",
++  value = "_FUNC_(x[, d]) - round x to d decimal places",
++  extended = "Example:\n"
++    + "  > SELECT _FUNC_(12.3456, 1) FROM src LIMIT 1;\n" + "  12.3'")
++public class GenericUDFRound extends GenericUDF {
++  private transient PrimitiveObjectInspector inputOI;
++  private int scale = 0;
++
++  private transient PrimitiveCategory inputType;
++  private transient Converter converterFromString;
++
++  @Override
++  public ObjectInspector initialize(ObjectInspector[] arguments) throws UDFArgumentException {
++    if (arguments.length < 1 || arguments.length > 2) {
++      throw new UDFArgumentLengthException(
++          "ROUND requires one or two argument, got " + arguments.length);
++    }
++
++    inputOI = (PrimitiveObjectInspector) arguments[0];
++    if (inputOI.getCategory() != Category.PRIMITIVE) {
++      throw new UDFArgumentException(
++          "ROUND input only takes primitive types, got " + inputOI.getTypeName());
++    }
++
++    if (arguments.length == 2) {
++      PrimitiveObjectInspector scaleOI = (PrimitiveObjectInspector) arguments[1];
++      switch (scaleOI.getPrimitiveCategory()) {
++      case VOID:
++        break;
++      case BYTE:
++        if (!(scaleOI instanceof WritableConstantByteObjectInspector)) {
++          throw new UDFArgumentException("ROUND second argument only takes constant");
++        }
++        scale = ((WritableConstantByteObjectInspector)scaleOI).getWritableConstantValue().get();
++        break;
++      case SHORT:
++        if (!(scaleOI instanceof WritableConstantShortObjectInspector)) {
++          throw new UDFArgumentException("ROUND second argument only takes constant");
++        }
++        scale = ((WritableConstantShortObjectInspector)scaleOI).getWritableConstantValue().get();
++        break;
++      case INT:
++        if (!(scaleOI instanceof WritableConstantIntObjectInspector)) {
++          throw new UDFArgumentException("ROUND second argument only takes constant");
++        }
++        scale = ((WritableConstantIntObjectInspector)scaleOI).getWritableConstantValue().get();
++        break;
++      case LONG:
++        if (!(scaleOI instanceof WritableConstantLongObjectInspector)) {
++          throw new UDFArgumentException("ROUND second argument only takes constant");
++        }
++        long l = ((WritableConstantLongObjectInspector)scaleOI).getWritableConstantValue().get();
++        if (l < Integer.MIN_VALUE || l > Integer.MAX_VALUE) {
++          throw new UDFArgumentException("ROUND scale argument out of allowed range");
++        }
++        scale = (int)l;
++        break;
++      default:
++        throw new UDFArgumentException("ROUND second argument only takes integer constant");
++      }
++    }
++
++    inputType = inputOI.getPrimitiveCategory();
++    ObjectInspector outputOI = null;
++    switch (inputType) {
++    case DECIMAL:
++      DecimalTypeInfo inputTypeInfo = (DecimalTypeInfo) inputOI.getTypeInfo();
++      DecimalTypeInfo typeInfo = getOutputTypeInfo(inputTypeInfo, scale);
++      outputOI = PrimitiveObjectInspectorFactory.getPrimitiveWritableObjectInspector(typeInfo);
++      break;
++    case VOID:
++    case BYTE:
++    case SHORT:
++    case INT:
++    case LONG:
++    case FLOAT:
++    case DOUBLE:
++      outputOI = PrimitiveObjectInspectorFactory.getPrimitiveWritableObjectInspector(inputType);
++      break;
++    case STRING:
++    case VARCHAR:
++      outputOI = PrimitiveObjectInspectorFactory.getPrimitiveWritableObjectInspector(PrimitiveCategory.DOUBLE);
++      converterFromString = ObjectInspectorConverters.getConverter(inputOI, outputOI);
++      break;
++    default:
++      throw new UDFArgumentException("Only numeric data types are allowed for ROUND function. Got " +
++          inputType.name());
++    }
++
++    return outputOI;
++  }
++
++  private static DecimalTypeInfo getOutputTypeInfo(DecimalTypeInfo inputTypeInfo, int dec) {
++    int prec = inputTypeInfo.precision();
++    int scale = inputTypeInfo.scale();
++    int intParts = prec - scale;
++
++    // If we are rounding, we may introduce one more integer digit.
++    int newIntParts = dec < scale ? intParts + 1 : intParts;
++
++    int newScale = dec < 0 ? 0 : Math.min(dec, HiveDecimal.MAX_SCALE);
++
++    int newPrec = Math.min(newIntParts + newScale, HiveDecimal.MAX_PRECISION);
++
++    return TypeInfoFactory.getDecimalTypeInfo(newPrec, newScale);
++  }
++
++  @Override
++  public Object evaluate(DeferredObject[] arguments) throws HiveException {
++    if (arguments.length == 2 && (arguments[1] == null || arguments[1].get() == null)) {
++      return null;
++    }
++
++    if (arguments[0] == null) {
++      return null;
++    }
++
++    Object input = arguments[0].get();
++    if (input == null) {
++      return null;
++    }
++
++    switch (inputType) {
++    case VOID:
++      return null;
++    case DECIMAL:
++      HiveDecimalWritable decimalWritable = (HiveDecimalWritable) inputOI.getPrimitiveWritableObject(input);
++      HiveDecimal dec = RoundUtils.round(decimalWritable.getHiveDecimal(), scale);
++      if (dec == null) {
++        return null;
++      }
++      return new HiveDecimalWritable(dec);
++    case BYTE:
++      ByteWritable byteWritable = (ByteWritable)inputOI.getPrimitiveWritableObject(input);
++      if (scale >= 0) {
++        return byteWritable;
++      } else {
++        return new ByteWritable((byte)RoundUtils.round(byteWritable.get(), scale));
++      }
++    case SHORT:
++      ShortWritable shortWritable = (ShortWritable)inputOI.getPrimitiveWritableObject(input);
++      if (scale >= 0) {
++        return shortWritable;
++      } else {
++        return new ShortWritable((short)RoundUtils.round(shortWritable.get(), scale));
++      }
++    case INT:
++      IntWritable intWritable = (IntWritable)inputOI.getPrimitiveWritableObject(input);
++      if (scale >= 0) {
++        return intWritable;
++      } else {
++        return new IntWritable((int)RoundUtils.round(intWritable.get(), scale));
++      }
++    case LONG:
++      LongWritable longWritable = (LongWritable)inputOI.getPrimitiveWritableObject(input);
++      if (scale >= 0) {
++        return longWritable;
++      } else {
++        return new LongWritable(RoundUtils.round(longWritable.get(), scale));
++      }
++    case FLOAT:
++      float f = ((FloatWritable)inputOI.getPrimitiveWritableObject(input)).get();
++      return new FloatWritable((float)RoundUtils.round(f, scale));
++     case DOUBLE:
++       return round(((DoubleWritable)inputOI.getPrimitiveWritableObject(input)), scale);
++    case STRING:
++     case VARCHAR:
++       DoubleWritable doubleValue = (DoubleWritable) converterFromString.convert(input);
++       if (doubleValue == null) {
++         return null;
++       }
++       return round(doubleValue, scale);
++     default:
++       throw new UDFArgumentException("Only numeric data types are allowed for ROUND function. Got " +
++           inputType.name());
++    }
++  }
++
++  private static DoubleWritable round(DoubleWritable input, int scale) {
++    double d = input.get();
++    if (Double.isNaN(d) || Double.isInfinite(d)) {
++      return new DoubleWritable(d);
++    } else {
++      return new DoubleWritable(RoundUtils.round(d, scale));
++    }
++  }
++
++  @Override
++  public String getDisplayString(String[] children) {
++    StringBuilder sb = new StringBuilder();
++    sb.append("round(");
++    if (children.length > 0) {
++      sb.append(children[0]);
++      for (int i = 1; i < children.length; i++) {
++        sb.append(", ");
++        sb.append(children[i]);
++      }
++    }
++    sb.append(")");
++    return sb.toString();
++  }
++
++}
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/udf/generic/RoundUtils.java b/src/ql/src/java/org/apache/hadoop/hive/ql/udf/generic/RoundUtils.java
+new file mode 100644
+index 0000000..0b389a5
+--- /dev/null
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/udf/generic/RoundUtils.java
+@@ -0,0 +1,60 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package org.apache.hadoop.hive.ql.udf.generic;
++
++import java.math.BigDecimal;
++import java.math.RoundingMode;
++
++import org.apache.hadoop.hive.common.type.HiveDecimal;
++
++/**
++ * Utility class for generic round UDF.
++ *
++ */
++public class RoundUtils {
++
++  private RoundUtils() {
++  }
++
++  /**
++   * Rounding a double is approximate, as the double value itself is approximate.
++   * A double literal, such as 3.15, may not be represented internally exactly as
++   * 3.15. thus, the rounding value of it can be off on the surface. For accurate
++   * rounding, consider using decimal type.
++   *
++   * @param input input value
++   * @param scale decimal place
++   * @return rounded value
++   */
++  public static double round(double input, int scale) {
++    if (Double.isNaN(input) || Double.isInfinite(input)) {
++      return input;
++    }
++    return BigDecimal.valueOf(input).setScale(scale, RoundingMode.HALF_UP).doubleValue();
++  }
++
++  public static long round(long input, int scale) {
++    return BigDecimal.valueOf(input).setScale(scale, RoundingMode.HALF_UP).longValue();
++  }
++
++  public static HiveDecimal round(HiveDecimal input, int scale) {
++    return input.setScale(scale, HiveDecimal.ROUND_HALF_UP);
++  }
++
++}
+diff --git a/src/ql/src/test/org/apache/hadoop/hive/ql/udf/TestUDFRound.java b/src/ql/src/test/org/apache/hadoop/hive/ql/udf/TestUDFRound.java
+deleted file mode 100644
+index 992853d..0000000
+--- a/src/ql/src/test/org/apache/hadoop/hive/ql/udf/TestUDFRound.java
++++ /dev/null
+@@ -1,79 +0,0 @@
+-/**
+- * Licensed to the Apache Software Foundation (ASF) under one
+- * or more contributor license agreements.  See the NOTICE file
+- * distributed with this work for additional information
+- * regarding copyright ownership.  The ASF licenses this file
+- * to you under the Apache License, Version 2.0 (the
+- * "License"); you may not use this file except in compliance
+- * with the License.  You may obtain a copy of the License at
+- *
+- *     http://www.apache.org/licenses/LICENSE-2.0
+- *
+- * Unless required by applicable law or agreed to in writing, software
+- * distributed under the License is distributed on an "AS IS" BASIS,
+- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- * See the License for the specific language governing permissions and
+- * limitations under the License.
+- */
+-
+-package org.apache.hadoop.hive.ql.udf;
+-
+-import java.util.ArrayList;
+-import java.util.List;
+-
+-import org.apache.hadoop.hive.ql.exec.UDFArgumentException;
+-import org.apache.hadoop.hive.ql.parse.TypeCheckProcFactory;
+-import org.apache.hadoop.hive.ql.plan.ExprNodeDesc;
+-import org.apache.hadoop.hive.ql.testutil.BaseScalarUdfTest;
+-import org.apache.hadoop.hive.ql.testutil.DataBuilder;
+-import org.apache.hadoop.hive.ql.testutil.OperatorTestUtils;
+-import org.apache.hadoop.hive.serde2.io.DoubleWritable;
+-import org.apache.hadoop.hive.serde2.objectinspector.InspectableObject;
+-import org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorFactory;
+-import org.apache.hadoop.io.IntWritable;
+-
+-public class TestUDFRound extends BaseScalarUdfTest {
+-
+-  @Override
+-  public InspectableObject[] getBaseTable() {
+-    DataBuilder db = new DataBuilder();
+-    db.setColumnNames("a", "b", "c");
+-    db.setColumnTypes(
+-        PrimitiveObjectInspectorFactory.javaStringObjectInspector,
+-        PrimitiveObjectInspectorFactory.javaIntObjectInspector,
+-        PrimitiveObjectInspectorFactory.javaDoubleObjectInspector);
+-    db.addRow("one", 1, new Double("1.1"));
+-    db.addRow( null, null, null);
+-    db.addRow("two", 2,  new Double("2.1"));
+-    return db.createRows();
+-  }
+-
+-  @Override
+-  public InspectableObject[] getExpectedResult() {
+-    DataBuilder db = new DataBuilder();
+-    db.setColumnNames("_col1", "_col2", "_col3");
+-    db.setColumnTypes(PrimitiveObjectInspectorFactory.javaStringObjectInspector,
+-        PrimitiveObjectInspectorFactory.writableIntObjectInspector,
+-        PrimitiveObjectInspectorFactory.writableDoubleObjectInspector);
+-    db.addRow(null, new IntWritable(1), new DoubleWritable(1.0));
+-    db.addRow(null, null, null);
+-    db.addRow(null, new IntWritable(2), new DoubleWritable(2.0));
+-    return db.createRows();
+-  }
+-
+-  @Override
+-  public List<ExprNodeDesc> getExpressionList() throws UDFArgumentException {
+-    ExprNodeDesc expr1 = OperatorTestUtils.getStringColumn("a");
+-    ExprNodeDesc expr2 = OperatorTestUtils.getStringColumn("b");
+-    ExprNodeDesc expr3 = OperatorTestUtils.getStringColumn("c");
+-    ExprNodeDesc r1 = TypeCheckProcFactory.DefaultExprProcessor.getFuncExprNodeDesc("round", expr1);
+-    ExprNodeDesc r2 = TypeCheckProcFactory.DefaultExprProcessor.getFuncExprNodeDesc("round", expr2);
+-    ExprNodeDesc r3 = TypeCheckProcFactory.DefaultExprProcessor.getFuncExprNodeDesc("round", expr3);
+-    List<ExprNodeDesc> earr = new ArrayList<ExprNodeDesc>();
+-    earr.add(r1);
+-    earr.add(r2);
+-    earr.add(r3);
+-    return earr;
+-  }
+-
+-}
+diff --git a/src/ql/src/test/org/apache/hadoop/hive/ql/udf/generic/TestGenericUDFRound.java b/src/ql/src/test/org/apache/hadoop/hive/ql/udf/generic/TestGenericUDFRound.java
+new file mode 100644
+index 0000000..85c0b79
+--- /dev/null
++++ b/src/ql/src/test/org/apache/hadoop/hive/ql/udf/generic/TestGenericUDFRound.java
+@@ -0,0 +1,153 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package org.apache.hadoop.hive.ql.udf.generic;
++
++import java.util.ArrayList;
++import java.util.List;
++
++import junit.framework.Assert;
++
++import org.apache.hadoop.hive.common.type.HiveDecimal;
++import org.apache.hadoop.hive.ql.exec.UDFArgumentException;
++import org.apache.hadoop.hive.ql.parse.TypeCheckProcFactory;
++import org.apache.hadoop.hive.ql.plan.ExprNodeConstantDesc;
++import org.apache.hadoop.hive.ql.plan.ExprNodeDesc;
++import org.apache.hadoop.hive.ql.testutil.BaseScalarUdfTest;
++import org.apache.hadoop.hive.ql.testutil.DataBuilder;
++import org.apache.hadoop.hive.ql.testutil.OperatorTestUtils;
++import org.apache.hadoop.hive.serde2.io.ByteWritable;
++import org.apache.hadoop.hive.serde2.io.DoubleWritable;
++import org.apache.hadoop.hive.serde2.io.HiveDecimalWritable;
++import org.apache.hadoop.hive.serde2.io.ShortWritable;
++import org.apache.hadoop.hive.serde2.objectinspector.InspectableObject;
++import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspector;
++import org.apache.hadoop.hive.serde2.objectinspector.PrimitiveObjectInspector;
++import org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorFactory;
++import org.apache.hadoop.hive.serde2.typeinfo.DecimalTypeInfo;
++import org.apache.hadoop.hive.serde2.typeinfo.TypeInfoFactory;
++import org.apache.hadoop.io.FloatWritable;
++import org.apache.hadoop.io.IntWritable;
++import org.apache.hadoop.io.LongWritable;
++import org.junit.Test;
++
++public class TestGenericUDFRound extends BaseScalarUdfTest {
++  private static final String[] cols = {"s", "i", "d", "f", "b", "sh", "l", "dec"};
++
++  @Override
++  public InspectableObject[] getBaseTable() {
++    DataBuilder db = new DataBuilder();
++    db.setColumnNames(cols);
++    db.setColumnTypes(
++        PrimitiveObjectInspectorFactory.javaStringObjectInspector,
++        PrimitiveObjectInspectorFactory.javaIntObjectInspector,
++        PrimitiveObjectInspectorFactory.javaDoubleObjectInspector,
++        PrimitiveObjectInspectorFactory.javaFloatObjectInspector,
++        PrimitiveObjectInspectorFactory.javaByteObjectInspector,
++        PrimitiveObjectInspectorFactory.javaShortObjectInspector,
++        PrimitiveObjectInspectorFactory.javaLongObjectInspector,
++        PrimitiveObjectInspectorFactory.getPrimitiveJavaObjectInspector(TypeInfoFactory.getDecimalTypeInfo(15, 5)));
++    db.addRow("one", 170, new Double("1.1"), new Float("32.1234"), new Byte("25"), new Short("1234"), 123456L, HiveDecimal.create("983.7235"));
++    db.addRow( "-234", null, null, new Float("0.347232"), new Byte("109"), new Short("551"), 923L, HiveDecimal.create("983723.005"));
++    db.addRow("454.45", 22345,  new Double("-23.00009"), new Float("-3.4"), new Byte("76"), new Short("2321"), 9232L, HiveDecimal.create("-932032.7"));
++    return db.createRows();
++  }
++
++  @Override
++  public InspectableObject[] getExpectedResult() {
++    DataBuilder db = new DataBuilder();
++    db.setColumnNames("_col1", "_col2", "_col3", "_col4", "_col5", "_col6", "_col7", "_col8");
++    db.setColumnTypes(PrimitiveObjectInspectorFactory.javaStringObjectInspector,
++        PrimitiveObjectInspectorFactory.writableIntObjectInspector,
++        PrimitiveObjectInspectorFactory.writableDoubleObjectInspector,
++        PrimitiveObjectInspectorFactory.writableFloatObjectInspector,
++        PrimitiveObjectInspectorFactory.writableByteObjectInspector,
++        PrimitiveObjectInspectorFactory.writableShortObjectInspector,
++        PrimitiveObjectInspectorFactory.writableLongObjectInspector,
++        PrimitiveObjectInspectorFactory.writableHiveDecimalObjectInspector);
++    db.addRow(null, new IntWritable(170), new DoubleWritable(1.1), new FloatWritable(32f),
++        new ByteWritable((byte)0), new ShortWritable((short)1234), new LongWritable(123500L), new HiveDecimalWritable(HiveDecimal.create("983.724")));
++    db.addRow(new DoubleWritable(-200), null, null, new FloatWritable(0f),
++        new ByteWritable((byte)100), new ShortWritable((short)551), new LongWritable(900L), new HiveDecimalWritable(HiveDecimal.create("983723.005")));
++    db.addRow(new DoubleWritable(500), new IntWritable(22345),  new DoubleWritable(-23.000), new FloatWritable(-3f),
++        new ByteWritable((byte)100), new ShortWritable((short)2321), new LongWritable(9200L), new HiveDecimalWritable(HiveDecimal.create("-932032.7")));
++    return db.createRows();
++  }
++
++  @Override
++  public List<ExprNodeDesc> getExpressionList() throws UDFArgumentException {
++    List<ExprNodeDesc> exprs = new ArrayList<ExprNodeDesc>(cols.length);
++    for (int i = 0; i < cols.length; i++) {
++      exprs.add(OperatorTestUtils.getStringColumn(cols[i]));
++    }
++
++    ExprNodeDesc[] scales = { new ExprNodeConstantDesc(TypeInfoFactory.intTypeInfo, -2),
++        new ExprNodeConstantDesc(TypeInfoFactory.byteTypeInfo, (byte)0),
++        new ExprNodeConstantDesc(TypeInfoFactory.shortTypeInfo, (short)3),
++        new ExprNodeConstantDesc(TypeInfoFactory.intTypeInfo, 0),
++        new ExprNodeConstantDesc(TypeInfoFactory.longTypeInfo, -2L),
++        new ExprNodeConstantDesc(TypeInfoFactory.intTypeInfo, 0),
++        new ExprNodeConstantDesc(TypeInfoFactory.intTypeInfo, -2),
++        new ExprNodeConstantDesc(TypeInfoFactory.intTypeInfo, 3) };
++
++    List<ExprNodeDesc> earr = new ArrayList<ExprNodeDesc>();
++    for (int j = 0; j < cols.length; j++) {
++      ExprNodeDesc r = TypeCheckProcFactory.DefaultExprProcessor.getFuncExprNodeDesc("round", exprs.get(j), scales[j]);
++      earr.add(r);
++    }
++
++    return earr;
++  }
++
++  @Test
++  public void testDecimalRoundingMetaData() throws UDFArgumentException {
++    GenericUDFRound udf = new GenericUDFRound();
++    ObjectInspector[] inputOIs = {
++        PrimitiveObjectInspectorFactory.getPrimitiveWritableObjectInspector(TypeInfoFactory.getDecimalTypeInfo(7, 3)),
++        PrimitiveObjectInspectorFactory.getPrimitiveWritableConstantObjectInspector(TypeInfoFactory.intTypeInfo, new IntWritable(2))
++    };
++    PrimitiveObjectInspector outputOI = (PrimitiveObjectInspector) udf.initialize(inputOIs);
++    DecimalTypeInfo outputTypeInfo = (DecimalTypeInfo)outputOI.getTypeInfo();
++    Assert.assertEquals(TypeInfoFactory.getDecimalTypeInfo(7, 2), outputTypeInfo);
++  }
++
++  @Test
++  public void testDecimalRoundingMetaData1() throws UDFArgumentException {
++    GenericUDFRound udf = new GenericUDFRound();
++    ObjectInspector[] inputOIs = {
++        PrimitiveObjectInspectorFactory.getPrimitiveWritableObjectInspector(TypeInfoFactory.getDecimalTypeInfo(7, 3)),
++        PrimitiveObjectInspectorFactory.getPrimitiveWritableConstantObjectInspector(TypeInfoFactory.intTypeInfo, new IntWritable(-2))
++    };
++    PrimitiveObjectInspector outputOI = (PrimitiveObjectInspector) udf.initialize(inputOIs);
++    DecimalTypeInfo outputTypeInfo = (DecimalTypeInfo)outputOI.getTypeInfo();
++    Assert.assertEquals(TypeInfoFactory.getDecimalTypeInfo(5, 0), outputTypeInfo);
++  }
++
++  @Test
++  public void testDecimalRoundingMetaData2() throws UDFArgumentException {
++    GenericUDFRound udf = new GenericUDFRound();
++    ObjectInspector[] inputOIs = {
++        PrimitiveObjectInspectorFactory.getPrimitiveWritableObjectInspector(TypeInfoFactory.getDecimalTypeInfo(7, 3)),
++        PrimitiveObjectInspectorFactory.getPrimitiveWritableConstantObjectInspector(TypeInfoFactory.intTypeInfo, new IntWritable(5))
++    };
++    PrimitiveObjectInspector outputOI = (PrimitiveObjectInspector) udf.initialize(inputOIs);
++    DecimalTypeInfo outputTypeInfo = (DecimalTypeInfo)outputOI.getTypeInfo();
++    Assert.assertEquals(TypeInfoFactory.getDecimalTypeInfo(9, 5), outputTypeInfo);
++  }
++
++}
+diff --git a/src/ql/src/test/queries/clientpositive/udf_round.q b/src/ql/src/test/queries/clientpositive/udf_round.q
+index 18ebba8..e330b96 100644
+--- a/src/ql/src/test/queries/clientpositive/udf_round.q
++++ b/src/ql/src/test/queries/clientpositive/udf_round.q
+@@ -40,5 +40,5 @@ SELECT
+   round(3.141592653589793, 15), round(3.141592653589793, 16)
+ FROM src LIMIT 1;
+ 
+-SELECT round(1809242.3151111344, 9), round(-1809242.3151111344, 9)
+-FROM src LIMIT 1;
++SELECT round(1809242.3151111344, 9), round(-1809242.3151111344, 9), round(1809242.3151111344BD, 9), round(-1809242.3151111344BD, 9)
++FROM src LIMIT 1;
+\ No newline at end of file
+diff --git a/src/ql/src/test/results/clientpositive/decimal_udf.q.out b/src/ql/src/test/results/clientpositive/decimal_udf.q.out
+index 242cbbd..870c9ea 100644
+--- a/src/ql/src/test/results/clientpositive/decimal_udf.q.out
++++ b/src/ql/src/test/results/clientpositive/decimal_udf.q.out
+@@ -1996,7 +1996,7 @@ STAGE PLANS:
+             Select Operator
+               expressions:
+                     expr: round(key, 2)
+-                    type: decimal(65,30)
++                    type: decimal(38,2)
+               outputColumnNames: _col0
+               File Output Operator
+                 compressed: false
+diff --git a/src/ql/src/test/results/clientpositive/udf_round.q.out b/src/ql/src/test/results/clientpositive/udf_round.q.out
+index 9ad1d91..e168b42 100644
+--- a/src/ql/src/test/results/clientpositive/udf_round.q.out
++++ b/src/ql/src/test/results/clientpositive/udf_round.q.out
+@@ -40,7 +40,7 @@ FROM src LIMIT 1
+ POSTHOOK: type: QUERY
+ POSTHOOK: Input: default@src
+ #### A masked pattern was here ####
+-55555	55555.0	55555.0	55555.0	55555.0	55560.0	55600.0	56000.0	60000.0	100000.0	0.0	0.0	0.0
++55555	55555	55555	55555	55555	55560	55600	56000	60000	100000	0	0	0
+ PREHOOK: query: SELECT
+   round(125.315), round(125.315, 0),
+   round(125.315, 1), round(125.315, 2), round(125.315, 3), round(125.315, 4),
+@@ -109,14 +109,14 @@ POSTHOOK: type: QUERY
+ POSTHOOK: Input: default@src
+ #### A masked pattern was here ####
+ 0.0	0.0	0.0	0.0	0.0	0.0	0.0	0.0	0.0	0.0	0.0	0.0	0.0	0.0	0.0	0.0	3.0	3.1	3.14	3.142	3.1416	3.14159	3.141593	3.1415927	3.14159265	3.141592654	3.1415926536	3.14159265359	3.14159265359	3.1415926535898	3.1415926535898	3.14159265358979	3.141592653589793	3.141592653589793
+-PREHOOK: query: SELECT round(1809242.3151111344, 9), round(-1809242.3151111344, 9)
++PREHOOK: query: SELECT round(1809242.3151111344, 9), round(-1809242.3151111344, 9), round(1809242.3151111344BD, 9), round(-1809242.3151111344BD, 9)
+ FROM src LIMIT 1
+ PREHOOK: type: QUERY
+ PREHOOK: Input: default@src
+ #### A masked pattern was here ####
+-POSTHOOK: query: SELECT round(1809242.3151111344, 9), round(-1809242.3151111344, 9)
++POSTHOOK: query: SELECT round(1809242.3151111344, 9), round(-1809242.3151111344, 9), round(1809242.3151111344BD, 9), round(-1809242.3151111344BD, 9)
+ FROM src LIMIT 1
+ POSTHOOK: type: QUERY
+ POSTHOOK: Input: default@src
+ #### A masked pattern was here ####
+-1809242.315111134	-1809242.315111134
++1809242.315111134	-1809242.315111134	1809242.315111134	-1809242.315111134
+diff --git a/src/ql/src/test/results/compiler/plan/udf4.q.xml b/src/ql/src/test/results/compiler/plan/udf4.q.xml
+index ebf0ef9..67779e5 100644
+--- a/src/ql/src/test/results/compiler/plan/udf4.q.xml
++++ b/src/ql/src/test/results/compiler/plan/udf4.q.xml
+@@ -835,14 +835,7 @@
+                  </object> 
+                 </void> 
+                 <void property="genericUDF"> 
+-                 <object class="org.apache.hadoop.hive.ql.udf.generic.GenericUDFBridge"> 
+-                  <void property="udfClassName"> 
+-                   <string>org.apache.hadoop.hive.ql.udf.UDFRound</string> 
+-                  </void> 
+-                  <void property="udfName"> 
+-                   <string>round</string> 
+-                  </void> 
+-                 </object> 
++                 <object class="org.apache.hadoop.hive.ql.udf.generic.GenericUDFRound"/> 
+                 </void> 
+                 <void property="typeInfo"> 
+                  <object idref="PrimitiveTypeInfo0"/> 
+@@ -867,14 +860,7 @@
+                  </object> 
+                 </void> 
+                 <void property="genericUDF"> 
+-                 <object class="org.apache.hadoop.hive.ql.udf.generic.GenericUDFBridge"> 
+-                  <void property="udfClassName"> 
+-                   <string>org.apache.hadoop.hive.ql.udf.UDFRound</string> 
+-                  </void> 
+-                  <void property="udfName"> 
+-                   <string>round</string> 
+-                  </void> 
+-                 </object> 
++                 <object class="org.apache.hadoop.hive.ql.udf.generic.GenericUDFRound"/> 
+                 </void> 
+                 <void property="typeInfo"> 
+                  <object idref="PrimitiveTypeInfo0"/> 
+@@ -1243,14 +1229,7 @@
+                  </object> 
+                 </void> 
+                 <void property="genericUDF"> 
+-                 <object class="org.apache.hadoop.hive.ql.udf.generic.GenericUDFBridge"> 
+-                  <void property="udfClassName"> 
+-                   <string>org.apache.hadoop.hive.ql.udf.UDFRound</string> 
+-                  </void> 
+-                  <void property="udfName"> 
+-                   <string>round</string> 
+-                  </void> 
+-                 </object> 
++                 <object class="org.apache.hadoop.hive.ql.udf.generic.GenericUDFRound"/> 
+                 </void> 
+                 <void property="typeInfo"> 
+                  <object idref="PrimitiveTypeInfo0"/> 
+-- 
+1.7.0.4
+

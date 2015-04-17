@@ -1,0 +1,88 @@
+From 37331e37663729043da58541f084fda9533e139d Mon Sep 17 00:00:00 2001
+From: Thejas Madhavan Nair <thejas@apache.org>
+Date: Wed, 16 Oct 2013 02:44:15 +0000
+Subject: [PATCH 094/375] HIVE-5531: Hiverserver2 doesn't honor command line argument when initializing log4j (Shuaishuai Nie via Thejas Nair)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1532632 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../apache/hive/service/server/HiveServer2.java    |   21 ++++++++++---------
+ .../service/server/ServerOptionsProcessor.java     |    8 ++++++-
+ 2 files changed, 18 insertions(+), 11 deletions(-)
+
+diff --git a/src/service/src/java/org/apache/hive/service/server/HiveServer2.java b/src/service/src/java/org/apache/hive/service/server/HiveServer2.java
+index f41da68..b191f54 100644
+--- a/src/service/src/java/org/apache/hive/service/server/HiveServer2.java
++++ b/src/service/src/java/org/apache/hive/service/server/HiveServer2.java
+@@ -82,25 +82,26 @@ public synchronized void stop() {
+    * @param args
+    */
+   public static void main(String[] args) {
+-    //NOTE: It is critical to do this here so that log4j is reinitialized
+-    // before any of the other core hive classes are loaded
+-    try {
+-      LogUtils.initHiveLog4j();
+-    } catch (LogInitializationException e) {
+-      LOG.warn(e.getMessage());
+-    }
+-
+-    HiveStringUtils.startupShutdownMessage(HiveServer2.class, args, LOG);
+     try {
+       ServerOptionsProcessor oproc = new ServerOptionsProcessor("hiveserver2");
+       if (!oproc.process(args)) {
+-        LOG.fatal("Error starting HiveServer2 with given arguments");
++        System.err.println("Error starting HiveServer2 with given arguments");
+         System.exit(-1);
+       }
++
++      //NOTE: It is critical to do this here so that log4j is reinitialized
++      // before any of the other core hive classes are loaded
++      LogUtils.initHiveLog4j();
++
++      HiveStringUtils.startupShutdownMessage(HiveServer2.class, args, LOG);
++      //log debug message from "oproc" after log4j initialize properly
++      LOG.debug(oproc.getDebugMessage().toString());
+       HiveConf hiveConf = new HiveConf();
+       HiveServer2 server = new HiveServer2();
+       server.init(hiveConf);
+       server.start();
++    } catch (LogInitializationException e) {
++      LOG.warn(e.getMessage());
+     } catch (Throwable t) {
+       LOG.fatal("Error starting HiveServer2", t);
+       System.exit(-1);
+diff --git a/src/service/src/java/org/apache/hive/service/server/ServerOptionsProcessor.java b/src/service/src/java/org/apache/hive/service/server/ServerOptionsProcessor.java
+index fed9df2..bbb2a42 100644
+--- a/src/service/src/java/org/apache/hive/service/server/ServerOptionsProcessor.java
++++ b/src/service/src/java/org/apache/hive/service/server/ServerOptionsProcessor.java
+@@ -39,6 +39,7 @@
+   private final Options options = new Options();
+   private org.apache.commons.cli.CommandLine commandLine;
+   private final String serverName;
++  private StringBuilder debugMessage = new StringBuilder();
+ 
+ 
+   @SuppressWarnings("static-access")
+@@ -67,7 +68,8 @@ public boolean process(String[] argv) {
+       //get hiveconf param values and set the System property values
+       Properties confProps = commandLine.getOptionProperties("hiveconf");
+       for (String propKey : confProps.stringPropertyNames()) {
+-        LOG.debug("Setting " + propKey + "=" + confProps.getProperty(propKey) + ";");
++        //save logging message for log4j output latter after log4j initialize properly
++        debugMessage.append("Setting " + propKey + "=" + confProps.getProperty(propKey) + ";\n");
+         System.setProperty(propKey, confProps.getProperty(propKey));
+       }
+     } catch (ParseException e) {
+@@ -78,6 +80,10 @@ public boolean process(String[] argv) {
+     return true;
+   }
+ 
++  public StringBuilder getDebugMessage() {
++    return debugMessage;
++  }
++
+   private void printUsage() {
+     new HelpFormatter().printHelp(serverName, options);
+   }
+-- 
+1.7.0.4
+

@@ -1,0 +1,99 @@
+From 4cdcb9411f57a0b47ff6f22af23fb2af4ab6cf8f Mon Sep 17 00:00:00 2001
+From: Ashutosh Chauhan <hashutosh@apache.org>
+Date: Fri, 4 Oct 2013 13:23:35 +0000
+Subject: [PATCH 015/375] HIVE-5422 : Upgrade Kyro to 2.22 now that it is released (Brock Noland via Ashutosh Chauhan)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1529158 13f79535-47bb-0310-9956-ffa450edef68
+---
+ build.xml                |    1 +
+ hcatalog/pom.xml         |   10 ----------
+ ivy/ivysettings.xml      |    7 -------
+ ivy/libraries.properties |    2 +-
+ 4 files changed, 2 insertions(+), 18 deletions(-)
+
+diff --git a/src/build.xml b/src/build.xml
+index f3c7e9b..17b359c 100644
+--- a/src/build.xml
++++ b/src/build.xml
+@@ -537,6 +537,7 @@
+         <exclude name="**/*high-scale-lib-*"/>
+         <exclude name="**/hamcrest-core-*jar"/>
+         <exclude name="**/junit*.jar"/>
++        <exclude name="**/kryo*.jar"/>
+         <exclude name="**/asm*.jar"/>
+         <exclude name="**/mockito*.jar"/>
+         <exclude name="**/velocity*.jar"/>
+diff --git a/src/hcatalog/pom.xml b/src/hcatalog/pom.xml
+index 6889f21..34295d4 100644
+--- a/src/hcatalog/pom.xml
++++ b/src/hcatalog/pom.xml
+@@ -215,16 +215,6 @@
+         <enabled>false</enabled>
+       </snapshots>
+     </repository>
+-    <repository>
+-      <id>sonatype-snapshots</id>
+-      <url>https://oss.sonatype.org/content/repositories/snapshots/</url>
+-      <releases>
+-        <enabled>false</enabled>
+-      </releases>
+-      <snapshots>
+-        <enabled>true</enabled>
+-      </snapshots>
+-    </repository>
+   </repositories>
+ 
+     <dependencies>
+diff --git a/src/ivy/ivysettings.xml b/src/ivy/ivysettings.xml
+index 51ce5ac..d230f2c 100644
+--- a/src/ivy/ivysettings.xml
++++ b/src/ivy/ivysettings.xml
+@@ -47,10 +47,6 @@
+              checkmodified="${ivy.checkmodified}" 
+              changingPattern="${ivy.changingPattern}"/>
+ 
+-    <ibiblio name="sonatype-snapshot" root="https://oss.sonatype.org/content/repositories/snapshots/" m2compatible="true"
+-             checkmodified="${ivy.checkmodified}" 
+-             changingPattern="${ivy.changingPattern}"/>
+-
+     <url name="datanucleus-repo" m2compatible="true">
+       <artifact pattern="${datanucleus.repo}/[organisation]/[module]/[revision]/[module]-[revision](-[classifier]).[ext]"/>
+     </url>
+@@ -72,7 +68,6 @@
+       <resolver ref="maven2"/>
+       <resolver ref="datanucleus-repo"/>
+       <resolver ref="sourceforge"/>
+-      <resolver ref="sonatype-snapshot"/>
+     </chain>
+ 
+     <chain name="internal" dual="true">
+@@ -82,13 +77,11 @@
+       <resolver ref="maven2"/>
+       <resolver ref="datanucleus-repo"/>
+       <resolver ref="sourceforge"/>
+-      <resolver ref="sonatype-snapshot"/>
+     </chain>
+ 
+     <chain name="external">
+       <resolver ref="maven2"/>
+       <resolver ref="datanucleus-repo"/>
+-      <resolver ref="sonatype-snapshot"/>
+     </chain>
+ 
+   </resolvers>
+diff --git a/src/ivy/libraries.properties b/src/ivy/libraries.properties
+index 97ae280..3790649 100644
+--- a/src/ivy/libraries.properties
++++ b/src/ivy/libraries.properties
+@@ -53,7 +53,7 @@ jetty.version=6.1.26
+ jline.version=0.9.94
+ json.version=20090211
+ junit.version=4.10
+-kryo.version=2.22-SNAPSHOT
++kryo.version=2.22
+ libfb303.version=0.9.0
+ libthrift.version=0.9.0
+ log4j.version=1.2.16
+-- 
+1.7.0.4
+

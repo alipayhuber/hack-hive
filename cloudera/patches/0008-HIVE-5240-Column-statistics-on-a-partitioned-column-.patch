@@ -1,0 +1,78 @@
+From 5a0fd195964e29ca85c43e950ee6d609aae04632 Mon Sep 17 00:00:00 2001
+From: Navis Ryu <navis@apache.org>
+Date: Thu, 12 Sep 2013 02:07:42 +0000
+Subject: [PATCH 008/375] HIVE-5240 : Column statistics on a partitioned column should fail early with proper error message (Prasanth J via Navis)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1522118 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../java/org/apache/hadoop/hive/ql/ErrorMsg.java   |    2 +
+ .../hive/ql/parse/ColumnStatsSemanticAnalyzer.java |   26 ++++++++++++++++++++
+ 2 files changed, 28 insertions(+), 0 deletions(-)
+
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/ErrorMsg.java b/src/ql/src/java/org/apache/hadoop/hive/ql/ErrorMsg.java
+index 832bf5e..d22009a 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/ErrorMsg.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/ErrorMsg.java
+@@ -404,6 +404,8 @@
+   COLUMNSTATSCOLLECTOR_PARSE_ERROR(30009, "Encountered parse error while parsing rewritten query"),
+   COLUMNSTATSCOLLECTOR_IO_ERROR(30010, "Encountered I/O exception while parsing rewritten query"),
+   DROP_COMMAND_NOT_ALLOWED_FOR_PARTITION(30011, "Partition protected from being dropped"),
++  COLUMNSTATSCOLLECTOR_INVALID_COLUMN(30012, "Column statistics are not supported "
++      + "for partition columns"),
+     ;
+ 
+   private int errorCode;
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/ColumnStatsSemanticAnalyzer.java b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/ColumnStatsSemanticAnalyzer.java
+index 5e3a513..8a3ded5 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/ColumnStatsSemanticAnalyzer.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/ColumnStatsSemanticAnalyzer.java
+@@ -31,6 +31,7 @@
+ import org.apache.hadoop.hive.metastore.api.FieldSchema;
+ import org.apache.hadoop.hive.ql.Context;
+ import org.apache.hadoop.hive.ql.ErrorMsg;
++import org.apache.hadoop.hive.ql.exec.Utilities;
+ import org.apache.hadoop.hive.ql.metadata.HiveException;
+ import org.apache.hadoop.hive.ql.metadata.Partition;
+ import org.apache.hadoop.hive.ql.metadata.Table;
+@@ -520,6 +521,7 @@ public ColumnStatsSemanticAnalyzer(HiveConf conf, ASTNode tree) throws SemanticE
+       originalTree = tree;
+       boolean isPartitionStats = isPartitionLevelStats(tree);
+       PartitionList partList = null;
++      checkForPartitionColumns(colNames, getPartitionKeys(tableName));
+ 
+       if (isPartitionStats) {
+         isTableLevel = false;
+@@ -543,6 +545,30 @@ public ColumnStatsSemanticAnalyzer(HiveConf conf, ASTNode tree) throws SemanticE
+     }
+   }
+ 
++  private List<String> getPartitionKeys(String tableName) throws SemanticException {
++    List<FieldSchema> fields;
++    try {
++      fields = db.getTable(tableName).getPartitionKeys();
++    } catch (HiveException e) {
++      throw new SemanticException(ErrorMsg.INVALID_TABLE.getMsg(tableName));
++    }
++
++    return Utilities.getColumnNamesFromFieldSchema(fields);
++  }
++
++  private void checkForPartitionColumns(List<String> specifiedCols, List<String> partCols)
++      throws SemanticException {
++    // Raise error if user has specified partition column for stats
++    for (String pc : partCols) {
++      for (String sc : specifiedCols) {
++        if (pc.equalsIgnoreCase(sc)) {
++          throw new SemanticException(ErrorMsg.COLUMNSTATSCOLLECTOR_INVALID_COLUMN.getMsg()
++              + " [Try removing column '" + sc + "' from column list]");
++        }
++      }
++    }
++  }
++
+   @Override
+   public void analyze(ASTNode ast, Context origCtx) throws SemanticException {
+     QB qb;
+-- 
+1.7.0.4
+

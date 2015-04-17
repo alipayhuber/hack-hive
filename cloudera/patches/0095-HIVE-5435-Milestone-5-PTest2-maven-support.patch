@@ -1,0 +1,1051 @@
+From 18e23cc9a1f58530c6dab9173e2eb39119629b6b Mon Sep 17 00:00:00 2001
+From: Brock Noland <brock@apache.org>
+Date: Wed, 16 Oct 2013 18:15:17 +0000
+Subject: [PATCH 095/375] HIVE-5435 - Milestone 5: PTest2 maven support
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1532839 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../apache/hive/ptest/execution/HostExecutor.java  |    3 +-
+ .../org/apache/hive/ptest/execution/PTest.java     |   12 ++-
+ .../hive/ptest/execution/conf/QFileTestBatch.java  |   12 +++-
+ .../hive/ptest/execution/conf/TestBatch.java       |    2 +
+ .../ptest/execution/conf/TestConfiguration.java    |   70 +++++++++++++++---
+ .../hive/ptest/execution/conf/TestParser.java      |   15 +++--
+ .../hive/ptest/execution/conf/UnitTestBatch.java   |   11 +++-
+ .../ptest/execution/ssh/RSyncCommandExecutor.java  |    4 +-
+ testutils/ptest2/src/main/resources/batch-exec.vm  |   75 +++++++++++++-------
+ testutils/ptest2/src/main/resources/source-prep.vm |   30 ++++++--
+ .../hive/ptest/execution/TestExecutionPhase.java   |    4 +-
+ .../hive/ptest/execution/TestHostExecutor.java     |    8 +-
+ .../apache/hive/ptest/execution/TestScripts.java   |    7 ++-
+ ...TestScripts.testAlternativeTestJVM.approved.txt |   75 +++++++++++++-------
+ .../execution/TestScripts.testBatch.approved.txt   |   75 +++++++++++++-------
+ .../execution/TestScripts.testPrepGit.approved.txt |   30 ++++++--
+ .../TestScripts.testPrepNone.approved.txt          |   30 ++++++--
+ .../execution/TestScripts.testPrepSvn.approved.txt |   30 ++++++--
+ .../ptest/execution/conf/TestQFileTestBatch.java   |    6 +-
+ .../hive/ptest/execution/conf/TestTestParser.java  |    4 +-
+ 20 files changed, 356 insertions(+), 147 deletions(-)
+
+diff --git a/src/testutils/ptest2/src/main/java/org/apache/hive/ptest/execution/HostExecutor.java b/src/testutils/ptest2/src/main/java/org/apache/hive/ptest/execution/HostExecutor.java
+index ddd26aa..df59963 100644
+--- a/src/testutils/ptest2/src/main/java/org/apache/hive/ptest/execution/HostExecutor.java
++++ b/src/testutils/ptest2/src/main/java/org/apache/hive/ptest/execution/HostExecutor.java
+@@ -187,7 +187,8 @@ private boolean executeTestBatch(Drone drone, TestBatch batch, Set<TestBatch> fa
+     File script = new File(mLocalScratchDirectory, scriptName);
+     Map<String, String> templateVariables = Maps.newHashMap(mTemplateDefaults);
+     templateVariables.put("instanceName", drone.getInstanceName());
+-    templateVariables.put("batchName",batch.getName());
++    templateVariables.put("batchName", batch.getName());
++    templateVariables.put("testClass", batch.getTestClass());
+     templateVariables.put("testArguments", batch.getTestArguments());
+     templateVariables.put("localDir", drone.getLocalDirectory());
+     templateVariables.put("logDir", drone.getLocalLogDirectory());
+diff --git a/src/testutils/ptest2/src/main/java/org/apache/hive/ptest/execution/PTest.java b/src/testutils/ptest2/src/main/java/org/apache/hive/ptest/execution/PTest.java
+index 8b2e458..2d36467 100644
+--- a/src/testutils/ptest2/src/main/java/org/apache/hive/ptest/execution/PTest.java
++++ b/src/testutils/ptest2/src/main/java/org/apache/hive/ptest/execution/PTest.java
+@@ -103,19 +103,23 @@ public PTest(final TestConfiguration configuration, final ExecutionContext execu
+     put("repository", configuration.getRepository()).
+     put("repositoryName", configuration.getRepositoryName()).
+     put("repositoryType", configuration.getRepositoryType()).
++    put("buildTool", configuration.getBuildTool()).
+     put("branch", configuration.getBranch()).
+     put("clearLibraryCache", String.valueOf(configuration.isClearLibraryCache())).
+     put("workingDir", mExecutionContext.getLocalWorkingDirectory()).
+-    put("antArgs", configuration.getAntArgs()).
+-    put("antTestArgs", configuration.getAntTestArgs()).
+     put("buildTag", buildTag).
+     put("logDir", logDir.getAbsolutePath()).
+     put("javaHome", configuration.getJavaHome()).
+     put("javaHomeForTests", configuration.getJavaHomeForTests()).
+     put("antEnvOpts", configuration.getAntEnvOpts()).
+-    put("antTestTarget", configuration.getAntTestTarget());
++    put("antArgs", configuration.getAntArgs()).
++    put("antTestArgs", configuration.getAntTestArgs()).
++    put("antTestTarget", configuration.getAntTestTarget()).
++    put("mavenEnvOpts", configuration.getMavenEnvOpts()).
++    put("mavenArgs", configuration.getMavenArgs()).
++    put("mavenTestArgs", configuration.getMavenTestArgs());
+     final ImmutableMap<String, String> templateDefaults = templateDefaultsBuilder.build();
+-    TestParser testParser = new TestParser(configuration.getContext(),
++    TestParser testParser = new TestParser(configuration.getContext(), configuration.getTestCasePropertyName(),
+         new File(mExecutionContext.getLocalWorkingDirectory(), configuration.getRepositoryName() + "-source"),
+         logger);
+ 
+diff --git a/src/testutils/ptest2/src/main/java/org/apache/hive/ptest/execution/conf/QFileTestBatch.java b/src/testutils/ptest2/src/main/java/org/apache/hive/ptest/execution/conf/QFileTestBatch.java
+index 5d690fd..61ecc88 100644
+--- a/src/testutils/ptest2/src/main/java/org/apache/hive/ptest/execution/conf/QFileTestBatch.java
++++ b/src/testutils/ptest2/src/main/java/org/apache/hive/ptest/execution/conf/QFileTestBatch.java
+@@ -25,13 +25,15 @@
+ 
+ public class QFileTestBatch implements TestBatch {
+ 
++  private final String testCasePropertyName;
+   private final String driver;
+   private final String queryFilesProperty;
+   private final String name;
+   private final Set<String> tests;
+   private final boolean isParallel;
+-  public QFileTestBatch(String driver, String queryFilesProperty,
+-      Set<String> tests, boolean isParallel) {
++  public QFileTestBatch(String testCasePropertyName, String driver, 
++      String queryFilesProperty, Set<String> tests, boolean isParallel) {
++    this.testCasePropertyName = testCasePropertyName;
+     this.driver = driver;
+     this.queryFilesProperty = queryFilesProperty;
+     this.tests = tests;
+@@ -51,8 +53,12 @@ public String getName() {
+     return name;
+   }
+   @Override
++  public String getTestClass() {
++    return driver;
++  }
++  @Override
+   public String getTestArguments() {
+-    return String.format("-Dtestcase=%s -D%s=%s", driver, queryFilesProperty,
++    return String.format("-D%s=%s -D%s=%s", testCasePropertyName, driver, queryFilesProperty,
+         Joiner.on(",").join(tests));
+   }
+ 
+diff --git a/src/testutils/ptest2/src/main/java/org/apache/hive/ptest/execution/conf/TestBatch.java b/src/testutils/ptest2/src/main/java/org/apache/hive/ptest/execution/conf/TestBatch.java
+index e6d548b..fc5a7c5 100644
+--- a/src/testutils/ptest2/src/main/java/org/apache/hive/ptest/execution/conf/TestBatch.java
++++ b/src/testutils/ptest2/src/main/java/org/apache/hive/ptest/execution/conf/TestBatch.java
+@@ -21,6 +21,8 @@
+ public interface TestBatch {
+ 
+   public String getTestArguments();
++  
++  public String getTestClass();
+ 
+   public String getName();
+ 
+diff --git a/src/testutils/ptest2/src/main/java/org/apache/hive/ptest/execution/conf/TestConfiguration.java b/src/testutils/ptest2/src/main/java/org/apache/hive/ptest/execution/conf/TestConfiguration.java
+index e4a0a20..6bac461 100644
+--- a/src/testutils/ptest2/src/main/java/org/apache/hive/ptest/execution/conf/TestConfiguration.java
++++ b/src/testutils/ptest2/src/main/java/org/apache/hive/ptest/execution/conf/TestConfiguration.java
+@@ -40,21 +40,32 @@
+   public static final String ANT_ENV_OPTS = "antEnvOpts";
+   public static final String ANT_TEST_ARGS = "antTestArgs";
+   public static final String ANT_TEST_TARGET = "antTestTarget";
+-  
++  public static final String MAVEN_ENV_OPTS = "mavenEnvOpts";
++  public static final String MAVEN_TEST_ARGS = "mavenTestArgs";
++  public static final String MAVEN_TEST_TARGET = "mavenTestTarget";
++
+   private static final String REPOSITORY_TYPE = "repositoryType";
+   private static final String GIT = "git";
+   private static final String SVN = "svn";
++  private static final String ANT = "ant";
++  private static final String MAVEN = "maven";
++  private static final String MAVEN_ARGS = "mavenArgs";
+   private static final String ANT_ARGS = "antArgs";
+   private static final String JIRA_URL = "jiraUrl";
+   private static final String JIRA_USER = "jiraUser";
+   private static final String JIRA_PASSWORD = "jiraPassword";
+   private static final String JENKINS_URL = "jenkinsURL";
+-
++  private static final String TEST_CASE_PROPERTY_NAME = "testCasePropertyName";
++  private static final String BUILD_TOOL = "buildTool";
++  
+   private final Context context;
+   private String antArgs;
+   private String antTestArgs;
+   private String antEnvOpts;
+   private String antTestTarget;
++  private String mavenArgs;
++  private String mavenTestArgs;
++  private String mavenEnvOpts;
+   private String repositoryType;
+   private String repository;
+   private String repositoryName;
+@@ -66,6 +77,9 @@
+   private final String jiraUrl;
+   private final String jiraUser;
+   private final String jiraPassword;
++  private final String testCasePropertyName;
++  private final String buildTool;
++  
+   private String jiraName;
+   private boolean clearLibraryCache;
+ 
+@@ -83,10 +97,17 @@ public TestConfiguration(Context context, Logger logger)
+     } else {
+       throw new IllegalArgumentException("Unkown repository type '" + repositoryType + "'");
+     }
+-    antArgs =  Preconditions.checkNotNull(context.getString(ANT_ARGS), ANT_ARGS).trim();
++    buildTool = context.getString(BUILD_TOOL, ANT).trim();
++    if(!(MAVEN.endsWith(buildTool) || ANT.equals(buildTool))) {
++      throw new IllegalArgumentException("Unkown build tool type '" + buildTool + "'");
++    }
++    antArgs =  context.getString(ANT_ARGS, "").trim();
+     antTestArgs =  context.getString(ANT_TEST_ARGS, "").trim();
+     antEnvOpts =  context.getString(ANT_ENV_OPTS, "").trim();
+     antTestTarget = context.getString(ANT_TEST_TARGET, "test").trim();
++    mavenArgs =  context.getString(MAVEN_ARGS, "").trim();
++    mavenTestArgs =  context.getString(MAVEN_TEST_ARGS, "").trim();
++    mavenEnvOpts =  context.getString(MAVEN_ENV_OPTS, "").trim();
+     javaHome =  context.getString(JAVA_HOME, "").trim();
+     javaHomeForTests = context.getString(JAVA_HOME_TEST, "").trim();
+     patch = Strings.nullToEmpty(null);
+@@ -95,7 +116,7 @@ public TestConfiguration(Context context, Logger logger)
+     jiraUser = context.getString(JIRA_USER, "").trim();
+     jiraPassword = context.getString(JIRA_PASSWORD, "").trim();
+     jenkinsURL = context.getString(JENKINS_URL, "https://builds.apache.org/job").trim();
+-
++    testCasePropertyName = context.getString(TEST_CASE_PROPERTY_NAME, "testcase").trim();
+   }
+   public Context getContext() {
+     return context;
+@@ -115,6 +136,9 @@ public boolean isClearLibraryCache() {
+   public void setClearLibraryCache(boolean clearLibraryCache) {
+     this.clearLibraryCache = clearLibraryCache;
+   }
++  public String getBuildTool() {
++    return buildTool;
++  }
+   public String getJiraUrl() {
+     return jiraUrl;
+   }
+@@ -148,6 +172,15 @@ public String getAntEnvOpts() {
+   public String getAntTestTarget() {
+     return antTestTarget;
+   }
++  public String getMavenArgs() {
++    return mavenArgs;
++  }
++  public String getMavenTestArgs() {
++    return mavenTestArgs;
++  }
++  public String getMavenEnvOpts() {
++    return mavenEnvOpts;
++  }
+   public String getJavaHome() {
+     return javaHome;
+   }
+@@ -157,6 +190,9 @@ public String getJavaHomeForTests() {
+   public String getPatch() {
+     return patch;
+   }
++  public String getTestCasePropertyName() {
++    return testCasePropertyName;
++  }
+   public void setPatch(String patch) {
+     this.patch = Strings.nullToEmpty(patch);
+   }
+@@ -187,17 +223,29 @@ public void setAntEnvOpts(String antEnvOpts) {
+   public void setAntTestTarget(String antTestTarget) {
+     this.antTestTarget = Strings.nullToEmpty(antTestTarget);
+   }
++  public void setMavenArgs(String mavenArgs) {
++    this.mavenArgs = Strings.nullToEmpty(mavenArgs);
++  }
++  public void setMavenTestArgs(String mavenTestArgs) {
++    this.mavenTestArgs = mavenTestArgs;
++  }
++  public void setMavenEnvOpts(String mavenEnvOpts) {
++    this.mavenEnvOpts = Strings.nullToEmpty(mavenEnvOpts);
++  }
+   @Override
+   public String toString() {
+     return "TestConfiguration [antArgs=" + antArgs + ", antTestArgs="
+         + antTestArgs + ", antEnvOpts=" + antEnvOpts + ", antTestTarget="
+-        + antTestTarget + ", repositoryType=" + repositoryType
+-        + ", repository=" + repository + ", repositoryName=" + repositoryName
+-        + ", patch=" + patch + ", javaHome=" + javaHome + ", javaHomeForTests="
+-        + javaHomeForTests + ", branch=" + branch + ", jenkinsURL="
+-        + jenkinsURL + ", jiraUrl=" + jiraUrl + ", jiraUser=" + jiraUser
+-        + ", jiraPassword=" + jiraPassword + ", jiraName=" + jiraName
+-        + ", clearLibraryCache=" + clearLibraryCache + "]";
++        + antTestTarget + ", mavenArgs=" + mavenArgs + ", mavenTestArgs="
++        + mavenTestArgs + ", mavenEnvOpts=" + mavenEnvOpts
++        + ", repositoryType=" + repositoryType + ", repository=" + repository
++        + ", repositoryName=" + repositoryName + ", patch=" + patch
++        + ", javaHome=" + javaHome + ", javaHomeForTests=" + javaHomeForTests
++        + ", branch=" + branch + ", jenkinsURL=" + jenkinsURL + ", jiraUrl="
++        + jiraUrl + ", jiraUser=" + jiraUser + ", jiraPassword=" + jiraPassword
++        + ", testCasePropertyName=" + testCasePropertyName + ", buildTool="
++        + buildTool + ", jiraName=" + jiraName + ", clearLibraryCache="
++        + clearLibraryCache + "]";
+   }
+   public static TestConfiguration fromInputStream(InputStream inputStream, Logger logger)
+       throws IOException {
+diff --git a/src/testutils/ptest2/src/main/java/org/apache/hive/ptest/execution/conf/TestParser.java b/src/testutils/ptest2/src/main/java/org/apache/hive/ptest/execution/conf/TestParser.java
+index 3edd7cd..3155f08 100644
+--- a/src/testutils/ptest2/src/main/java/org/apache/hive/ptest/execution/conf/TestParser.java
++++ b/src/testutils/ptest2/src/main/java/org/apache/hive/ptest/execution/conf/TestParser.java
+@@ -37,11 +37,14 @@
+ public class TestParser {
+ 
+   private final Context context;
++  private final String testCasePropertyName;
+   private final File sourceDirectory;
+   private final Logger logger;
+ 
+-  public TestParser(Context context, File sourceDirectory, Logger logger) {
++  public TestParser(Context context, String testCasePropertyName, 
++      File sourceDirectory, Logger logger) {
+     this.context = context;
++    this.testCasePropertyName = testCasePropertyName;
+     this.sourceDirectory = sourceDirectory;
+     this.logger = logger;
+   }
+@@ -82,10 +85,10 @@ public TestParser(Context context, File sourceDirectory, Logger logger) {
+           } else if(included.isEmpty() || included.contains(testName)) {
+             if(isolated.contains(testName)) {
+               logger.info("Executing isolated unit test " + testName);
+-              result.add(new UnitTestBatch(testName, false));
++              result.add(new UnitTestBatch(testCasePropertyName, testName, false));
+             } else {
+               logger.info("Executing parallel unit test " + testName);
+-              result.add(new UnitTestBatch(testName, true));
++              result.add(new UnitTestBatch(testCasePropertyName, testName, true));
+             }
+           }
+         }
+@@ -157,17 +160,17 @@ public TestParser(Context context, File sourceDirectory, Logger logger) {
+         logger.info("Exlcuding test " + driver + " " + test);
+       } else if(isolated.contains(test)) {
+         logger.info("Executing isolated test " + driver + " " + test);
+-        testBatches.add(new QFileTestBatch(driver, queryFilesProperty, Sets.newHashSet(test), isParallel));
++        testBatches.add(new QFileTestBatch(testCasePropertyName, driver, queryFilesProperty, Sets.newHashSet(test), isParallel));
+       } else {
+         if(testBatch.size() >= batchSize) {
+-          testBatches.add(new QFileTestBatch(driver, queryFilesProperty, Sets.newHashSet(testBatch), isParallel));
++          testBatches.add(new QFileTestBatch(testCasePropertyName, driver, queryFilesProperty, Sets.newHashSet(testBatch), isParallel));
+           testBatch = Lists.newArrayList();
+         }
+         testBatch.add(test);
+       }
+     }
+     if(!testBatch.isEmpty()) {
+-      testBatches.add(new QFileTestBatch(driver, queryFilesProperty, Sets.newHashSet(testBatch), isParallel));
++      testBatches.add(new QFileTestBatch(testCasePropertyName, driver, queryFilesProperty, Sets.newHashSet(testBatch), isParallel));
+     }
+     return testBatches;
+   }
+diff --git a/src/testutils/ptest2/src/main/java/org/apache/hive/ptest/execution/conf/UnitTestBatch.java b/src/testutils/ptest2/src/main/java/org/apache/hive/ptest/execution/conf/UnitTestBatch.java
+index 39385aa..ca1adec 100644
+--- a/src/testutils/ptest2/src/main/java/org/apache/hive/ptest/execution/conf/UnitTestBatch.java
++++ b/src/testutils/ptest2/src/main/java/org/apache/hive/ptest/execution/conf/UnitTestBatch.java
+@@ -20,15 +20,18 @@
+ 
+ public class UnitTestBatch implements TestBatch {
+ 
++  private final String testCasePropertyName;
+   private final String testName;
+   private final boolean isParallel;
+-  public UnitTestBatch(String testName, boolean isParallel) {
++
++  public UnitTestBatch(String testCasePropertyName, String testName, boolean isParallel) {
++    this.testCasePropertyName = testCasePropertyName;
+     this.testName = testName;
+     this.isParallel = isParallel;
+   }
+   @Override
+   public String getTestArguments() {
+-    return String.format("-Dtestcase=%s", testName);
++    return String.format("-D%s=%s", testCasePropertyName, testName);
+   }
+ 
+   @Override
+@@ -36,6 +39,10 @@ public String getName() {
+     return testName;
+   }
+   @Override
++  public String getTestClass() {
++    return testName;
++  }
++  @Override
+   public String toString() {
+     return "UnitTestBatch [testName=" + testName + ", isParallel=" + isParallel
+         + "]";
+diff --git a/src/testutils/ptest2/src/main/java/org/apache/hive/ptest/execution/ssh/RSyncCommandExecutor.java b/src/testutils/ptest2/src/main/java/org/apache/hive/ptest/execution/ssh/RSyncCommandExecutor.java
+index 1ba4400..331f69b 100644
+--- a/src/testutils/ptest2/src/main/java/org/apache/hive/ptest/execution/ssh/RSyncCommandExecutor.java
++++ b/src/testutils/ptest2/src/main/java/org/apache/hive/ptest/execution/ssh/RSyncCommandExecutor.java
+@@ -53,12 +53,12 @@ public void execute(RSyncCommand command) {
+         retry = false;
+         if(command.getType() == RSyncCommand.Type.TO_LOCAL) {
+           cmd = new LocalCommand(mLogger, collector,
+-              String.format("timeout 1h rsync -qaPe \"ssh -i %s\" --timeout 600 %s@%s:%s %s",
++              String.format("timeout 1h rsync -vaPe \"ssh -i %s\" --timeout 600 %s@%s:%s %s",
+                   command.getPrivateKey(), command.getUser(), command.getHost(),
+                   command.getRemoteFile(), command.getLocalFile()));
+         } else if(command.getType() == RSyncCommand.Type.FROM_LOCAL) {
+           cmd = new LocalCommand(mLogger, collector,
+-              String.format("timeout 1h rsync -qaPe \"ssh -i %s\" --timeout 600 --delete --delete-during --force %s %s@%s:%s",
++              String.format("timeout 1h rsync -vaPe \"ssh -i %s\" --timeout 600 --delete --delete-during --force %s %s@%s:%s",
+                   command.getPrivateKey(), command.getLocalFile(), command.getUser(), command.getHost(),
+                   command.getRemoteFile()));
+         } else {
+diff --git a/src/testutils/ptest2/src/main/resources/batch-exec.vm b/src/testutils/ptest2/src/main/resources/batch-exec.vm
+index 86f5c44..ee550a1 100644
+--- a/src/testutils/ptest2/src/main/resources/batch-exec.vm
++++ b/src/testutils/ptest2/src/main/resources/batch-exec.vm
+@@ -18,7 +18,8 @@
+ set -x
+ umask 0022
+ echo $$
+-ps fauxww
++ps -e -o pid,pgrp,user,args
++ps x -o  "%p %r %y %x %c "
+ chmod -R u+w $logDir
+ rm -rf $logDir
+ # makes $logDir and $logDir/tmp
+@@ -33,28 +34,57 @@ then
+   export PATH=$JAVA_HOME/bin/:$PATH
+ fi
+ export ANT_OPTS="-Xmx1g -XX:MaxPermSize=256m -Djava.io.tmpdir=$logDir/tmp ${antEnvOpts}"
++export M2_OPTS="-Xmx1g -XX:MaxPermSize=256m -Djava.io.tmpdir=$logDir/tmp ${mavenEnvOpts}"
+ export HADOOP_ROOT_LOGGER=INFO,console
+ export HADOOP_OPTS="-Dhive.log.dir=$logDir -Dhive.query.id=hadoop -Djava.io.tmpdir=$logDir/tmp"
+ cd $localDir/$instanceName/${repositoryName}-source || exit 1
+-find ./build -name 'TEST-*.xml' -delete
+-find ./build -name 'hive.log' -delete
+-find ./ -name junit_metastore_db | xargs -r rm -rf 
+ if [[ -s batch.pid ]]
+ then
+-  pid="`<batch.pid`"
+-  if kill -9 -$pid 2>/dev/null
++  while read pid
++  do
++    if kill -9 -$pid 2>/dev/null
++    then
++      echo "Killed process group $pid"
++      sleep 1
++    fi
++  done < batch.pid
++fi
++echo "$$" > batch.pid
++find ./ -name 'TEST-*.xml' -delete
++find ./ -name 'hive.log' -delete
++find ./ -name junit_metastore_db | xargs -r rm -rf
++ret=0
++if [[ "${buildTool}" == "maven" ]]
++then
++  testModule=$(find ./ -name '${testClass}.java' | awk -F'/' '{print $2}')
++  if [[ -z "$testModule" ]]
+   then
+-    echo "Killed process group $pid"
+-    sleep 1
++  	testModule=./
+   fi
++  pushd $testModule
++  timeout 2h mvn -o test -Dmaven.repo.local=$localDir/$instanceName/maven \
++    $mavenArgs $mavenTestArgs $testArguments 1>$logDir/maven-test.txt 2>&1 </dev/null &
++#[[
++  pid=$!
++]]#
++  popd
++elif [[ "${buildTool}" == "ant" ]]
++then
++  timeout 2h ant ${antTestTarget} -Dtest.junit.output.format=xml \
++    -Divy.default.ivy.user.dir=$localDir/$instanceName/ivy \
++    -Divy.default.always.check.exact.revision=false \
++    -Divy.cache.ttl.default=eternal -Divy.checkmodified=false \
++    -Dmvn.local.repo=$localDir/$instanceName/maven \
++    $antArgs $antTestArgs $testArguments 1>$logDir/ant-test.txt 2>&1 </dev/null &
++#[[
++  pid=$!
++]]#
++else
++  echo "Unknown build tool ${buildTool}"
++  exit 127
+ fi
+-echo "$$" > batch.pid
+-timeout 2h ant ${antTestTarget} -Dtest.junit.output.format=xml \
+-   -Divy.default.ivy.user.dir=$localDir/$instanceName/ivy \
+-   -Divy.default.always.check.exact.revision=false \
+-   -Divy.cache.ttl.default=eternal -Divy.checkmodified=false \
+-   -Dmvn.local.repo=$localDir/$instanceName/maven \
+-   $antArgs $antTestArgs $testArguments 1>$logDir/ant-test.txt 2>&1
++echo $pid >> batch.pid
++wait $pid
+ ret=$?
+ if [[ $ret -ne 0 ]]
+ then
+@@ -65,19 +95,12 @@ then
+     echo "Number of failed tests $numOfFailedTests exceeded threshold, not copying source"
+   fi
+ fi
+-if [[ -f $localDir/$instanceName/${repositoryName}-source/build/ql/tmp/hive.log ]]
+-then
+-  mv $localDir/$instanceName/${repositoryName}-source/build/ql/tmp/hive.log $logDir/hive.log
+-fi
+-batchName=$batchName
+-for testOutputFile in $(find $localDir/$instanceName/${repositoryName}-source/ -name 'TEST-*.xml')
+-do
+-  mv "$testOutputFile" "$logDir/TEST-$batchName-$(basename $testOutputFile)"
+-done
++find ./ -type f -name hive.log | \
++  xargs -I {} sh -c 'f=$(basename {}); test -f ${logDir}/$f && f=$f-$(uuidgen); mv {} ${logDir}/$f'
++find ./ -type f -name 'TEST-*.xml' | \
++  xargs -I {} sh -c 'f=TEST-${batchName}-$(basename {}); test -f ${logDir}/$f && f=$f-$(uuidgen); mv {} ${logDir}/$f'
+ if [[ -f $logDir/.log ]]
+ then
+   mv $logDir/.log $logDir/dot.log
+-else
+-  echo "$logDir/.log does not exist"
+ fi
+ exit $ret
+diff --git a/src/testutils/ptest2/src/main/resources/source-prep.vm b/src/testutils/ptest2/src/main/resources/source-prep.vm
+index 89239a1..d405bac 100644
+--- a/src/testutils/ptest2/src/main/resources/source-prep.vm
++++ b/src/testutils/ptest2/src/main/resources/source-prep.vm
+@@ -22,9 +22,14 @@ then
+   export PATH=$JAVA_HOME/bin/:$PATH
+ fi
+ export ANT_OPTS="-Xmx1g -XX:MaxPermSize=256m ${antEnvOpts}"
++export M2_OPTS="-Xmx1g -XX:MaxPermSize=256m ${mavenEnvOpts}"
+ cd $workingDir/
+ (
+-  mkdir -p {maven,ivy}
++  if [[ "$clearLibraryCache" == "true" ]]
++  then
++    rm -rf ivy maven
++  fi
++  mkdir -p maven ivy
+   if [[ "${repositoryType}" = "svn" ]]
+   then
+     if [[ -n "$branch" ]]
+@@ -77,11 +82,22 @@ cd $workingDir/
+     chmod +x $patchCommandPath
+     $patchCommandPath $patchFilePath
+   fi
+-  if [[ "$clearLibraryCache" == "true" ]]
++  if [[ "${buildTool}" == "maven" ]]
+   then
+-    rm -rf $workingDir/ivy $workingDir/maven
+-    mkdir $workingDir/ivy $workingDir/maven
+-  fi
+-  ant $antArgs -Divy.default.ivy.user.dir=$workingDir/ivy -Dmvn.local.repo=$workingDir/maven clean package test -Dtestcase=nothing
++    rm -rf $workingDir/maven/org/apache/hive
++    mvn clean install -DskipTests -Dmaven.repo.local=$workingDir/maven
++    mvn test -Dmaven.repo.local=$workingDir/maven -Dtest=nothing
++    cd itests
++    mvn clean install -DskipTests -Dmaven.repo.local=$workingDir/maven
++    mvn test -Dmaven.repo.local=$workingDir/maven -Dtest=nothing
++  elif [[ "${buildTool}" == "ant" ]]
++  then
++    ant $antArgs -Divy.default.ivy.user.dir=$workingDir/ivy \
++      -Dmvn.local.repo=$workingDir/maven clean package test \
++      -Dtestcase=nothing
++   else
++     echo "Unknown build tool ${buildTool}"
++     exit 127
++   fi
+ ) 2>&1 | tee $logDir/source-prep.txt
+-exit ${PIPESTATUS[0]}
+\ No newline at end of file
++exit ${PIPESTATUS[0]}
+diff --git a/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/TestExecutionPhase.java b/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/TestExecutionPhase.java
+index ffdaff9..09f237e 100644
+--- a/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/TestExecutionPhase.java
++++ b/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/TestExecutionPhase.java
+@@ -69,11 +69,11 @@ private ExecutionPhase getPhase() throws IOException {
+   private void setupQFile(boolean isParallel) throws Exception {
+     testDir = Dirs.create( new File(baseDir, "test"));
+     Assert.assertTrue(new File(testDir, QFILENAME).createNewFile());
+-    testBatch = new QFileTestBatch(DRIVER, "qfile", Sets.newHashSet(QFILENAME), isParallel);
++    testBatch = new QFileTestBatch("testcase", DRIVER, "qfile", Sets.newHashSet(QFILENAME), isParallel);
+     testBatches = Collections.singletonList(testBatch);
+   }
+   private void setupUnitTest() throws Exception {
+-    testBatch = new UnitTestBatch(DRIVER, false);
++    testBatch = new UnitTestBatch("testcase", DRIVER, false);
+     testBatches = Collections.singletonList(testBatch);
+   }
+   private void copyTestOutput(String resource, File directory, String name) throws Exception {
+diff --git a/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/TestHostExecutor.java b/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/TestHostExecutor.java
+index e05402e..0799dfd 100644
+--- a/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/TestHostExecutor.java
++++ b/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/TestHostExecutor.java
+@@ -104,10 +104,10 @@ public void setup() throws Exception {
+     parallelWorkQueue = new LinkedBlockingQueue<TestBatch>();
+     isolatedWorkQueue = new LinkedBlockingQueue<TestBatch>();
+     failedTestResults = Sets.newHashSet();
+-    testBatchParallel1 = new UnitTestBatch(DRIVER_PARALLEL_1, true);
+-    testBatchParallel2 = new UnitTestBatch(DRIVER_PARALLEL_2, true);
+-    testBatchIsolated1 = new UnitTestBatch(DRIVER_ISOLATED_1, false);
+-    testBatchIsolated2 = new UnitTestBatch(DRIVER_ISOLATED_2, false);
++    testBatchParallel1 = new UnitTestBatch("testcase", DRIVER_PARALLEL_1, true);
++    testBatchParallel2 = new UnitTestBatch("testcase", DRIVER_PARALLEL_2, true);
++    testBatchIsolated1 = new UnitTestBatch("testcase", DRIVER_ISOLATED_1, false);
++    testBatchIsolated2 = new UnitTestBatch("testcase", DRIVER_ISOLATED_2, false);
+     executor = MoreExecutors.listeningDecorator(Executors.newFixedThreadPool(2));
+     localCommandFactory = new MockLocalCommandFactory(LOG);
+     localCommand = mock(LocalCommand.class);
+diff --git a/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/TestScripts.java b/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/TestScripts.java
+index 82e940f..25ad692 100644
+--- a/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/TestScripts.java
++++ b/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/TestScripts.java
+@@ -53,7 +53,6 @@ public void teardown() throws Exception {
+       FileUtils.deleteQuietly(baseDir);
+     }
+   }
+-
+   @Test
+   public void testBatch() throws Throwable {
+     Map<String, String> templateVariables = Maps.newHashMap();
+@@ -62,7 +61,9 @@ public void testBatch() throws Throwable {
+     templateVariables.put("branch", "branch-1");
+     templateVariables.put("localDir", "/some/local/dir");
+     templateVariables.put("workingDir", "/some/working/dir");
++    templateVariables.put("buildTool", "maven");
+     templateVariables.put("antArgs", "-Dant=arg1");
++    templateVariables.put("testClass", "TestCliDriver");
+     templateVariables.put("buildTag", "build-1");
+     templateVariables.put("logDir", "/some/log/dir");
+     templateVariables.put("instanceName", "instance-1");
+@@ -87,6 +88,8 @@ public void testAlternativeTestJVM() throws Throwable {
+     templateVariables.put("branch", "branch-1");
+     templateVariables.put("localDir", "/some/local/dir");
+     templateVariables.put("workingDir", "/some/working/dir");
++    templateVariables.put("buildTool", "ant");
++    templateVariables.put("testClass", "TestCliDriver");
+     templateVariables.put("antArgs", "-Dant=arg1");
+     templateVariables.put("buildTag", "build-1");
+     templateVariables.put("logDir", "/some/log/dir");
+@@ -112,6 +115,7 @@ public void testPrepNone() throws Throwable {
+     templateVariables.put("branch", "branch-1");
+     templateVariables.put("localDir", "/some/local/dir");
+     templateVariables.put("workingDir", "/some/working/dir");
++    templateVariables.put("buildTool", "ant");
+     templateVariables.put("antArgs", "-Dant=arg1");
+     templateVariables.put("buildTag", "build-1");
+     templateVariables.put("logDir", "/some/log/dir");
+@@ -151,6 +155,7 @@ public void testPrepSvn() throws Throwable {
+     templateVariables.put("branch", "");
+     templateVariables.put("localDir", "/some/local/dir");
+     templateVariables.put("workingDir", "/some/working/dir");
++    templateVariables.put("buildTool", "maven");
+     templateVariables.put("antArgs", "-Dant=arg1");
+     templateVariables.put("buildTag", "build-1");
+     templateVariables.put("logDir", "/some/log/dir");
+diff --git a/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/TestScripts.testAlternativeTestJVM.approved.txt b/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/TestScripts.testAlternativeTestJVM.approved.txt
+index 4ff81b1..42741d0 100644
+--- a/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/TestScripts.testAlternativeTestJVM.approved.txt
++++ b/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/TestScripts.testAlternativeTestJVM.approved.txt
+@@ -17,7 +17,8 @@
+ set -x
+ umask 0022
+ echo $$
+-ps fauxww
++ps -e -o pid,pgrp,user,args
++ps x -o  "%p %r %y %x %c "
+ chmod -R u+w /some/log/dir
+ rm -rf /some/log/dir
+ # makes /some/log/dir and /some/log/dir/tmp
+@@ -32,28 +33,57 @@ then
+   export PATH=$JAVA_HOME/bin/:$PATH
+ fi
+ export ANT_OPTS="-Xmx1g -XX:MaxPermSize=256m -Djava.io.tmpdir=/some/log/dir/tmp -Dhttp.proxyHost=somehost -Dhttp.proxyPort=3128"
++export M2_OPTS="-Xmx1g -XX:MaxPermSize=256m -Djava.io.tmpdir=/some/log/dir/tmp ${mavenEnvOpts}"
+ export HADOOP_ROOT_LOGGER=INFO,console
+ export HADOOP_OPTS="-Dhive.log.dir=/some/log/dir -Dhive.query.id=hadoop -Djava.io.tmpdir=/some/log/dir/tmp"
+ cd /some/local/dir/instance-1/apache-source || exit 1
+-find ./build -name 'TEST-*.xml' -delete
+-find ./build -name 'hive.log' -delete
+-find ./ -name junit_metastore_db | xargs -r rm -rf 
+ if [[ -s batch.pid ]]
+ then
+-  pid="`<batch.pid`"
+-  if kill -9 -$pid 2>/dev/null
++  while read pid
++  do
++    if kill -9 -$pid 2>/dev/null
++    then
++      echo "Killed process group $pid"
++      sleep 1
++    fi
++  done < batch.pid
++fi
++echo "$$" > batch.pid
++find ./ -name 'TEST-*.xml' -delete
++find ./ -name 'hive.log' -delete
++find ./ -name junit_metastore_db | xargs -r rm -rf
++ret=0
++if [[ "ant" == "maven" ]]
++then
++  testModule=$(find ./ -name 'TestCliDriver.java' | awk -F'/' '{print $2}')
++  if [[ -z "$testModule" ]]
+   then
+-    echo "Killed process group $pid"
+-    sleep 1
++  	testModule=./
+   fi
++  pushd $testModule
++  timeout 2h mvn -o test -Dmaven.repo.local=/some/local/dir/instance-1/maven \
++    $mavenArgs $mavenTestArgs -Dtest=arg1 1>/some/log/dir/maven-test.txt 2>&1 </dev/null &
++
++  pid=$!
++
++  popd
++elif [[ "ant" == "ant" ]]
++then
++  timeout 2h ant ${antTestTarget} -Dtest.junit.output.format=xml \
++    -Divy.default.ivy.user.dir=/some/local/dir/instance-1/ivy \
++    -Divy.default.always.check.exact.revision=false \
++    -Divy.cache.ttl.default=eternal -Divy.checkmodified=false \
++    -Dmvn.local.repo=/some/local/dir/instance-1/maven \
++    -Dant=arg1  -Dtest=arg1 1>/some/log/dir/ant-test.txt 2>&1 </dev/null &
++
++  pid=$!
++
++else
++  echo "Unknown build tool ant"
++  exit 127
+ fi
+-echo "$$" > batch.pid
+-timeout 2h ant ${antTestTarget} -Dtest.junit.output.format=xml \
+-   -Divy.default.ivy.user.dir=/some/local/dir/instance-1/ivy \
+-   -Divy.default.always.check.exact.revision=false \
+-   -Divy.cache.ttl.default=eternal -Divy.checkmodified=false \
+-   -Dmvn.local.repo=/some/local/dir/instance-1/maven \
+-   -Dant=arg1  -Dtest=arg1 1>/some/log/dir/ant-test.txt 2>&1
++echo $pid >> batch.pid
++wait $pid
+ ret=$?
+ if [[ $ret -ne 0 ]]
+ then
+@@ -64,19 +94,12 @@ then
+     echo "Number of failed tests 20 exceeded threshold, not copying source"
+   fi
+ fi
+-if [[ -f /some/local/dir/instance-1/apache-source/build/ql/tmp/hive.log ]]
+-then
+-  mv /some/local/dir/instance-1/apache-source/build/ql/tmp/hive.log /some/log/dir/hive.log
+-fi
+-batchName=batch-1
+-for testOutputFile in $(find /some/local/dir/instance-1/apache-source/ -name 'TEST-*.xml')
+-do
+-  mv "$testOutputFile" "/some/log/dir/TEST-$batchName-$(basename $testOutputFile)"
+-done
++find ./ -type f -name hive.log | \
++  xargs -I {} sh -c 'f=$(basename {}); test -f /some/log/dir/$f && f=$f-$(uuidgen); mv {} /some/log/dir/$f'
++find ./ -type f -name 'TEST-*.xml' | \
++  xargs -I {} sh -c 'f=TEST-batch-1-$(basename {}); test -f /some/log/dir/$f && f=$f-$(uuidgen); mv {} /some/log/dir/$f'
+ if [[ -f /some/log/dir/.log ]]
+ then
+   mv /some/log/dir/.log /some/log/dir/dot.log
+-else
+-  echo "/some/log/dir/.log does not exist"
+ fi
+ exit $ret
+diff --git a/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/TestScripts.testBatch.approved.txt b/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/TestScripts.testBatch.approved.txt
+index a567ca5..a483ae4 100644
+--- a/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/TestScripts.testBatch.approved.txt
++++ b/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/TestScripts.testBatch.approved.txt
+@@ -17,7 +17,8 @@
+ set -x
+ umask 0022
+ echo $$
+-ps fauxww
++ps -e -o pid,pgrp,user,args
++ps x -o  "%p %r %y %x %c "
+ chmod -R u+w /some/log/dir
+ rm -rf /some/log/dir
+ # makes /some/log/dir and /some/log/dir/tmp
+@@ -32,28 +33,57 @@ then
+   export PATH=$JAVA_HOME/bin/:$PATH
+ fi
+ export ANT_OPTS="-Xmx1g -XX:MaxPermSize=256m -Djava.io.tmpdir=/some/log/dir/tmp -Dhttp.proxyHost=somehost -Dhttp.proxyPort=3128"
++export M2_OPTS="-Xmx1g -XX:MaxPermSize=256m -Djava.io.tmpdir=/some/log/dir/tmp ${mavenEnvOpts}"
+ export HADOOP_ROOT_LOGGER=INFO,console
+ export HADOOP_OPTS="-Dhive.log.dir=/some/log/dir -Dhive.query.id=hadoop -Djava.io.tmpdir=/some/log/dir/tmp"
+ cd /some/local/dir/instance-1/apache-source || exit 1
+-find ./build -name 'TEST-*.xml' -delete
+-find ./build -name 'hive.log' -delete
+-find ./ -name junit_metastore_db | xargs -r rm -rf 
+ if [[ -s batch.pid ]]
+ then
+-  pid="`<batch.pid`"
+-  if kill -9 -$pid 2>/dev/null
++  while read pid
++  do
++    if kill -9 -$pid 2>/dev/null
++    then
++      echo "Killed process group $pid"
++      sleep 1
++    fi
++  done < batch.pid
++fi
++echo "$$" > batch.pid
++find ./ -name 'TEST-*.xml' -delete
++find ./ -name 'hive.log' -delete
++find ./ -name junit_metastore_db | xargs -r rm -rf
++ret=0
++if [[ "maven" == "maven" ]]
++then
++  testModule=$(find ./ -name 'TestCliDriver.java' | awk -F'/' '{print $2}')
++  if [[ -z "$testModule" ]]
+   then
+-    echo "Killed process group $pid"
+-    sleep 1
++  	testModule=./
+   fi
++  pushd $testModule
++  timeout 2h mvn -o test -Dmaven.repo.local=/some/local/dir/instance-1/maven \
++    $mavenArgs $mavenTestArgs -Dtest=arg1 1>/some/log/dir/maven-test.txt 2>&1 </dev/null &
++
++  pid=$!
++
++  popd
++elif [[ "maven" == "ant" ]]
++then
++  timeout 2h ant testonly -Dtest.junit.output.format=xml \
++    -Divy.default.ivy.user.dir=/some/local/dir/instance-1/ivy \
++    -Divy.default.always.check.exact.revision=false \
++    -Divy.cache.ttl.default=eternal -Divy.checkmodified=false \
++    -Dmvn.local.repo=/some/local/dir/instance-1/maven \
++    -Dant=arg1 -DgrammarBuild.notRequired=true -Dskip.javadoc=true -Dtest=arg1 1>/some/log/dir/ant-test.txt 2>&1 </dev/null &
++
++  pid=$!
++
++else
++  echo "Unknown build tool maven"
++  exit 127
+ fi
+-echo "$$" > batch.pid
+-timeout 2h ant testonly -Dtest.junit.output.format=xml \
+-   -Divy.default.ivy.user.dir=/some/local/dir/instance-1/ivy \
+-   -Divy.default.always.check.exact.revision=false \
+-   -Divy.cache.ttl.default=eternal -Divy.checkmodified=false \
+-   -Dmvn.local.repo=/some/local/dir/instance-1/maven \
+-   -Dant=arg1 -DgrammarBuild.notRequired=true -Dskip.javadoc=true -Dtest=arg1 1>/some/log/dir/ant-test.txt 2>&1
++echo $pid >> batch.pid
++wait $pid
+ ret=$?
+ if [[ $ret -ne 0 ]]
+ then
+@@ -64,19 +94,12 @@ then
+     echo "Number of failed tests 20 exceeded threshold, not copying source"
+   fi
+ fi
+-if [[ -f /some/local/dir/instance-1/apache-source/build/ql/tmp/hive.log ]]
+-then
+-  mv /some/local/dir/instance-1/apache-source/build/ql/tmp/hive.log /some/log/dir/hive.log
+-fi
+-batchName=batch-1
+-for testOutputFile in $(find /some/local/dir/instance-1/apache-source/ -name 'TEST-*.xml')
+-do
+-  mv "$testOutputFile" "/some/log/dir/TEST-$batchName-$(basename $testOutputFile)"
+-done
++find ./ -type f -name hive.log | \
++  xargs -I {} sh -c 'f=$(basename {}); test -f /some/log/dir/$f && f=$f-$(uuidgen); mv {} /some/log/dir/$f'
++find ./ -type f -name 'TEST-*.xml' | \
++  xargs -I {} sh -c 'f=TEST-batch-1-$(basename {}); test -f /some/log/dir/$f && f=$f-$(uuidgen); mv {} /some/log/dir/$f'
+ if [[ -f /some/log/dir/.log ]]
+ then
+   mv /some/log/dir/.log /some/log/dir/dot.log
+-else
+-  echo "/some/log/dir/.log does not exist"
+ fi
+ exit $ret
+diff --git a/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/TestScripts.testPrepGit.approved.txt b/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/TestScripts.testPrepGit.approved.txt
+index b09e426..e3f6758 100644
+--- a/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/TestScripts.testPrepGit.approved.txt
++++ b/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/TestScripts.testPrepGit.approved.txt
+@@ -21,9 +21,14 @@ then
+   export PATH=$JAVA_HOME/bin/:$PATH
+ fi
+ export ANT_OPTS="-Xmx1g -XX:MaxPermSize=256m -Dhttp.proxyHost=somehost -Dhttp.proxyPort=3128"
++export M2_OPTS="-Xmx1g -XX:MaxPermSize=256m ${mavenEnvOpts}"
+ cd /some/working/dir/
+ (
+-  mkdir -p {maven,ivy}
++  if [[ "true" == "true" ]]
++  then
++    rm -rf ivy maven
++  fi
++  mkdir -p maven ivy
+   if [[ "git" = "svn" ]]
+   then
+     if [[ -n "branch-1" ]]
+@@ -76,11 +81,22 @@ cd /some/working/dir/
+     chmod +x $patchCommandPath
+     $patchCommandPath $patchFilePath
+   fi
+-  if [[ "true" == "true" ]]
++  if [[ "${buildTool}" == "maven" ]]
+   then
+-    rm -rf /some/working/dir/ivy /some/working/dir/maven
+-    mkdir /some/working/dir/ivy /some/working/dir/maven
+-  fi
+-  ant -Dant=arg1 -Divy.default.ivy.user.dir=/some/working/dir/ivy -Dmvn.local.repo=/some/working/dir/maven clean package test -Dtestcase=nothing
++    rm -rf /some/working/dir/maven/org/apache/hive
++    mvn clean install -DskipTests -Dmaven.repo.local=/some/working/dir/maven
++    mvn test -Dmaven.repo.local=/some/working/dir/maven -Dtest=nothing
++    cd itests
++    mvn clean install -DskipTests -Dmaven.repo.local=/some/working/dir/maven
++    mvn test -Dmaven.repo.local=/some/working/dir/maven -Dtest=nothing
++  elif [[ "${buildTool}" == "ant" ]]
++  then
++    ant -Dant=arg1 -Divy.default.ivy.user.dir=/some/working/dir/ivy \
++      -Dmvn.local.repo=/some/working/dir/maven clean package test \
++      -Dtestcase=nothing
++   else
++     echo "Unknown build tool ${buildTool}"
++     exit 127
++   fi
+ ) 2>&1 | tee /some/log/dir/source-prep.txt
+-exit ${PIPESTATUS[0]}
+\ No newline at end of file
++exit ${PIPESTATUS[0]}
+diff --git a/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/TestScripts.testPrepNone.approved.txt b/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/TestScripts.testPrepNone.approved.txt
+index b056f0a..c860413 100644
+--- a/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/TestScripts.testPrepNone.approved.txt
++++ b/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/TestScripts.testPrepNone.approved.txt
+@@ -21,9 +21,14 @@ then
+   export PATH=$JAVA_HOME/bin/:$PATH
+ fi
+ export ANT_OPTS="-Xmx1g -XX:MaxPermSize=256m -Dhttp.proxyHost=somehost -Dhttp.proxyPort=3128"
++export M2_OPTS="-Xmx1g -XX:MaxPermSize=256m ${mavenEnvOpts}"
+ cd /some/working/dir/
+ (
+-  mkdir -p {maven,ivy}
++  if [[ "false" == "true" ]]
++  then
++    rm -rf ivy maven
++  fi
++  mkdir -p maven ivy
+   if [[ "${repositoryType}" = "svn" ]]
+   then
+     if [[ -n "branch-1" ]]
+@@ -76,11 +81,22 @@ cd /some/working/dir/
+     chmod +x $patchCommandPath
+     $patchCommandPath $patchFilePath
+   fi
+-  if [[ "false" == "true" ]]
++  if [[ "ant" == "maven" ]]
+   then
+-    rm -rf /some/working/dir/ivy /some/working/dir/maven
+-    mkdir /some/working/dir/ivy /some/working/dir/maven
+-  fi
+-  ant -Dant=arg1 -Divy.default.ivy.user.dir=/some/working/dir/ivy -Dmvn.local.repo=/some/working/dir/maven clean package test -Dtestcase=nothing
++    rm -rf /some/working/dir/maven/org/apache/hive
++    mvn clean install -DskipTests -Dmaven.repo.local=/some/working/dir/maven
++    mvn test -Dmaven.repo.local=/some/working/dir/maven -Dtest=nothing
++    cd itests
++    mvn clean install -DskipTests -Dmaven.repo.local=/some/working/dir/maven
++    mvn test -Dmaven.repo.local=/some/working/dir/maven -Dtest=nothing
++  elif [[ "ant" == "ant" ]]
++  then
++    ant -Dant=arg1 -Divy.default.ivy.user.dir=/some/working/dir/ivy \
++      -Dmvn.local.repo=/some/working/dir/maven clean package test \
++      -Dtestcase=nothing
++   else
++     echo "Unknown build tool ant"
++     exit 127
++   fi
+ ) 2>&1 | tee /some/log/dir/source-prep.txt
+-exit ${PIPESTATUS[0]}
+\ No newline at end of file
++exit ${PIPESTATUS[0]}
+diff --git a/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/TestScripts.testPrepSvn.approved.txt b/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/TestScripts.testPrepSvn.approved.txt
+index b2f9586..2e01422 100644
+--- a/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/TestScripts.testPrepSvn.approved.txt
++++ b/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/TestScripts.testPrepSvn.approved.txt
+@@ -21,9 +21,14 @@ then
+   export PATH=$JAVA_HOME/bin/:$PATH
+ fi
+ export ANT_OPTS="-Xmx1g -XX:MaxPermSize=256m -Dhttp.proxyHost=somehost -Dhttp.proxyPort=3128"
++export M2_OPTS="-Xmx1g -XX:MaxPermSize=256m ${mavenEnvOpts}"
+ cd /some/working/dir/
+ (
+-  mkdir -p {maven,ivy}
++  if [[ "true" == "true" ]]
++  then
++    rm -rf ivy maven
++  fi
++  mkdir -p maven ivy
+   if [[ "svn" = "svn" ]]
+   then
+     if [[ -n "" ]]
+@@ -76,11 +81,22 @@ cd /some/working/dir/
+     chmod +x $patchCommandPath
+     $patchCommandPath $patchFilePath
+   fi
+-  if [[ "true" == "true" ]]
++  if [[ "maven" == "maven" ]]
+   then
+-    rm -rf /some/working/dir/ivy /some/working/dir/maven
+-    mkdir /some/working/dir/ivy /some/working/dir/maven
+-  fi
+-  ant -Dant=arg1 -Divy.default.ivy.user.dir=/some/working/dir/ivy -Dmvn.local.repo=/some/working/dir/maven clean package test -Dtestcase=nothing
++    rm -rf /some/working/dir/maven/org/apache/hive
++    mvn clean install -DskipTests -Dmaven.repo.local=/some/working/dir/maven
++    mvn test -Dmaven.repo.local=/some/working/dir/maven -Dtest=nothing
++    cd itests
++    mvn clean install -DskipTests -Dmaven.repo.local=/some/working/dir/maven
++    mvn test -Dmaven.repo.local=/some/working/dir/maven -Dtest=nothing
++  elif [[ "maven" == "ant" ]]
++  then
++    ant -Dant=arg1 -Divy.default.ivy.user.dir=/some/working/dir/ivy \
++      -Dmvn.local.repo=/some/working/dir/maven clean package test \
++      -Dtestcase=nothing
++   else
++     echo "Unknown build tool maven"
++     exit 127
++   fi
+ ) 2>&1 | tee /some/log/dir/source-prep.txt
+-exit ${PIPESTATUS[0]}
+\ No newline at end of file
++exit ${PIPESTATUS[0]}
+diff --git a/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/conf/TestQFileTestBatch.java b/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/conf/TestQFileTestBatch.java
+index 9b1dde2..67349fc 100644
+--- a/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/conf/TestQFileTestBatch.java
++++ b/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/conf/TestQFileTestBatch.java
+@@ -42,7 +42,7 @@ public void setup() {
+ 
+   @Test
+   public void testParallel() throws Exception {
+-    QFileTestBatch batch = new QFileTestBatch(DRIVER, QUERY_FILES_PROPERTY, tests, true);
++    QFileTestBatch batch = new QFileTestBatch("testcase", DRIVER, QUERY_FILES_PROPERTY, tests, true);
+     Assert.assertTrue(batch.isParallel());
+     Assert.assertEquals(DRIVER, batch.getDriver());
+     Assert.assertEquals(Joiner.on("-").join(DRIVER, "a", "b", "c"), batch.getName());
+@@ -52,13 +52,13 @@ public void testParallel() throws Exception {
+   @Test
+   public void testMoreThanThreeTests() throws Exception {
+     Assert.assertTrue(tests.add("d"));
+-    QFileTestBatch batch = new QFileTestBatch(DRIVER, QUERY_FILES_PROPERTY, tests, true);
++    QFileTestBatch batch = new QFileTestBatch("testcase", DRIVER, QUERY_FILES_PROPERTY, tests, true);
+     Assert.assertEquals(Joiner.on("-").join(DRIVER, "a", "b", "c", "and", "1", "more"),
+         batch.getName());
+   }
+   @Test
+   public void testNotParallel() throws Exception {
+-    QFileTestBatch batch = new QFileTestBatch(DRIVER, QUERY_FILES_PROPERTY, tests, false);
++    QFileTestBatch batch = new QFileTestBatch("testcase", DRIVER, QUERY_FILES_PROPERTY, tests, false);
+     Assert.assertFalse(batch.isParallel());
+   }
+ }
+diff --git a/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/conf/TestTestParser.java b/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/conf/TestTestParser.java
+index 75926f8..35680b4 100644
+--- a/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/conf/TestTestParser.java
++++ b/src/testutils/ptest2/src/test/java/org/apache/hive/ptest/execution/conf/TestTestParser.java
+@@ -86,7 +86,7 @@ public void testParseWithExcludes() throws Exception {
+     context.put("qFileTest.f.isolate", "isolated");
+     context.put("qFileTest.f.groups.excluded", "excluded.q");
+     context.put("qFileTest.f.groups.isolated", "isolated.q");
+-    testParser = new TestParser(context, workingDirectory, LOG);
++    testParser = new TestParser(context, "testcase", workingDirectory, LOG);
+     List<TestBatch> testBatches = testParser.parse().get();
+     Assert.assertEquals(4, testBatches.size());
+   }
+@@ -103,7 +103,7 @@ public void testParseWithIncludes() throws Exception {
+     context.put("qFileTest.f.queryFilesProperty", "qfile");
+     context.put("qFileTest.f.groups.included", "included.q isolated.q");
+     context.put("qFileTest.f.groups.isolated", "isolated.q");
+-    testParser = new TestParser(context, workingDirectory, LOG);
++    testParser = new TestParser(context, "testcase", workingDirectory, LOG);
+     List<TestBatch> testBatches = testParser.parse().get();
+     Assert.assertEquals(4, testBatches.size());
+   }
+-- 
+1.7.0.4
+

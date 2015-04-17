@@ -1,0 +1,237 @@
+From 8b6c6c14bb7e575738c3293391b766b95c012ff1 Mon Sep 17 00:00:00 2001
+From: Brock Noland <brock@apache.org>
+Date: Thu, 19 Dec 2013 16:24:18 +0000
+Subject: [PATCH 215/375] CLOUDERA-BUILD: HIVE-5966 - Fix eclipse:eclipse post shim aggregation changes (Szehon Ho via Brock Noland)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1552339 13f79535-47bb-0310-9956-ffa450edef68
+
+Conflicts:
+	shims/aggregator/pom.xml
+
+Removed unused 0.20 and 0.20 references from aggregator/pom.xml and ql/pom.xml
+---
+ ql/pom.xml                              |    4 +-
+ shims/aggregator/pom.xml                |   55 +++++++++++++++++++++
+ shims/assembly/pom.xml                  |   79 -------------------------------
+ shims/assembly/src/assemble/uberjar.xml |   33 -------------
+ shims/pom.xml                           |    2 +-
+ 5 files changed, 59 insertions(+), 114 deletions(-)
+ create mode 100644 shims/aggregator/pom.xml
+ delete mode 100644 shims/assembly/pom.xml
+ delete mode 100644 shims/assembly/src/assemble/uberjar.xml
+
+diff --git a/src/ql/pom.xml b/src/ql/pom.xml
+index aec0282..ef98931 100644
+--- a/src/ql/pom.xml
++++ b/src/ql/pom.xml
+@@ -360,7 +360,9 @@
+                   <include>commons-lang:commons-lang</include>
+                   <include>org.json:json</include>
+                   <include>org.apache.avro:arvro-mapred</include>
+-                  <include>org.apache.hive:hive-shims</include>
++                  <include>org.apache.hive.shims:hive-shims-0.23</include>
++                  <include>org.apache.hive.shims:hive-shims-common</include>
++                  <include>org.apache.hive.shims:hive-shims-common-secure</include>
+                   <include>com.googlecode.javaewah:JavaEWAH</include>
+                   <include>javolution:javolution</include>
+                   <include>com.google.protobuf:protobuf-java</include>
+diff --git a/src/shims/aggregator/pom.xml b/src/shims/aggregator/pom.xml
+new file mode 100644
+index 0000000..e1f1506
+--- /dev/null
++++ b/src/shims/aggregator/pom.xml
+@@ -0,0 +1,55 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<!--
++  Licensed under the Apache License, Version 2.0 (the "License");
++  you may not use this file except in compliance with the License.
++  You may obtain a copy of the License at
++
++      http://www.apache.org/licenses/LICENSE-2.0
++
++  Unless required by applicable law or agreed to in writing, software
++  distributed under the License is distributed on an "AS IS" BASIS,
++  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++  See the License for the specific language governing permissions and
++  limitations under the License.
++-->
++<project xmlns="http://maven.apache.org/POM/4.0.0"
++         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
++         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
++  <modelVersion>4.0.0</modelVersion>
++  <parent>
++    <groupId>org.apache.hive</groupId>
++    <artifactId>hive</artifactId>
++    <version>0.12.0-cdh5.0.0-SNAPSHOT</version>
++    <relativePath>../../pom.xml</relativePath>
++  </parent>
++
++  <artifactId>hive-shims</artifactId>
++  <packaging>jar</packaging>
++  <name>Hive Shims</name>
++
++  <properties>
++    <hive.path.to.root>../..</hive.path.to.root>
++  </properties>
++
++  <dependencies>
++    <!-- dependencies are always listed in sorted order by groupId, artifectId -->
++    <dependency>
++      <groupId>org.apache.hive.shims</groupId>
++      <artifactId>hive-shims-common</artifactId>
++      <version>${project.version}</version>
++      <scope>compile</scope>
++    </dependency>
++    <dependency>
++      <groupId>org.apache.hive.shims</groupId>
++      <artifactId>hive-shims-common-secure</artifactId>
++      <version>${project.version}</version>
++      <scope>compile</scope>
++    </dependency>
++    <dependency>
++      <groupId>org.apache.hive.shims</groupId>
++      <artifactId>hive-shims-0.23</artifactId>
++      <version>${project.version}</version>
++      <scope>runtime</scope>
++    </dependency>
++  </dependencies>
++</project>
+diff --git a/src/shims/assembly/pom.xml b/src/shims/assembly/pom.xml
+deleted file mode 100644
+index 50e93a5..0000000
+--- a/src/shims/assembly/pom.xml
++++ /dev/null
+@@ -1,79 +0,0 @@
+-<?xml version="1.0" encoding="UTF-8"?>
+-<!--
+-  Licensed under the Apache License, Version 2.0 (the "License");
+-  you may not use this file except in compliance with the License.
+-  You may obtain a copy of the License at
+-
+-      http://www.apache.org/licenses/LICENSE-2.0
+-
+-  Unless required by applicable law or agreed to in writing, software
+-  distributed under the License is distributed on an "AS IS" BASIS,
+-  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+-  See the License for the specific language governing permissions and
+-  limitations under the License.
+--->
+-<project xmlns="http://maven.apache.org/POM/4.0.0"
+-         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+-  <modelVersion>4.0.0</modelVersion>
+-  <parent>
+-    <groupId>org.apache.hive</groupId>
+-    <artifactId>hive</artifactId>
+-    <version>0.12.0-cdh5.0.0-SNAPSHOT</version>
+-    <relativePath>../../pom.xml</relativePath>
+-  </parent>
+-
+-  <artifactId>hive-shims</artifactId>
+-  <packaging>jar</packaging>
+-  <name>Hive Shims</name>
+-
+-  <properties>
+-    <hive.path.to.root>../..</hive.path.to.root>
+-  </properties>
+-
+-  <dependencies>
+-    <!-- dependencies are always listed in sorted order by groupId, artifectId -->
+-    <dependency>
+-      <groupId>org.apache.hive.shims</groupId>
+-      <artifactId>hive-shims-common</artifactId>
+-      <version>${project.version}</version>
+-      <optional>true</optional>
+-    </dependency>
+-    <dependency>
+-      <groupId>org.apache.hive.shims</groupId>
+-      <artifactId>hive-shims-common-secure</artifactId>
+-      <version>${project.version}</version>
+-      <optional>true</optional>
+-    </dependency>
+-    <dependency>
+-      <groupId>org.apache.hive.shims</groupId>
+-      <artifactId>hive-shims-0.23</artifactId>
+-      <version>${project.version}</version>
+-      <optional>true</optional>
+-    </dependency>
+-  </dependencies>
+-
+-  <build>
+-    <plugins>
+-      <plugin>
+-        <groupId>org.apache.maven.plugins</groupId>
+-        <artifactId>maven-assembly-plugin</artifactId>
+-        <configuration>
+-          <appendAssemblyId>false</appendAssemblyId>
+-          <descriptors>
+-            <descriptor>src/assemble/uberjar.xml</descriptor>
+-          </descriptors>
+-        </configuration>
+-        <executions>
+-          <execution>
+-            <id>uberjar</id>
+-            <phase>package</phase>
+-            <goals>
+-              <goal>single</goal>
+-            </goals>
+-          </execution>
+-        </executions>
+-      </plugin>
+-    </plugins>
+-  </build>
+-</project>
+diff --git a/src/shims/assembly/src/assemble/uberjar.xml b/src/shims/assembly/src/assemble/uberjar.xml
+deleted file mode 100644
+index 3eba66d..0000000
+--- a/src/shims/assembly/src/assemble/uberjar.xml
++++ /dev/null
+@@ -1,33 +0,0 @@
+-<?xml version="1.0" encoding="UTF-8"?>
+-<!--
+-  Licensed under the Apache License, Version 2.0 (the "License");
+-  you may not use this file except in compliance with the License.
+-  You may obtain a copy of the License at
+-
+-      http://www.apache.org/licenses/LICENSE-2.0
+-
+-  Unless required by applicable law or agreed to in writing, software
+-  distributed under the License is distributed on an "AS IS" BASIS,
+-  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+-  See the License for the specific language governing permissions and
+-  limitations under the License.
+--->
+-<assembly>
+-  <id>uberjar</id>
+-  <formats>
+-    <format>jar</format>
+-  </formats>
+-  <includeBaseDirectory>false</includeBaseDirectory>
+-  <dependencySets>
+-    <dependencySet>
+-      <unpack>true</unpack>
+-      <scope>runtime</scope>
+-      <useProjectArtifact>true</useProjectArtifact>
+-      <useTransitiveDependencies>false</useTransitiveDependencies>
+-      <excludes>
+-        <exclude>org.slf4j:slf4j-api</exclude>
+-        <exclude>org.slf4j:slf4j-log4j12</exclude>
+-      </excludes>
+-    </dependencySet>
+-  </dependencySets>
+-</assembly>
+diff --git a/src/shims/pom.xml b/src/shims/pom.xml
+index d4f919a..d85422c 100644
+--- a/src/shims/pom.xml
++++ b/src/shims/pom.xml
+@@ -35,6 +35,6 @@
+     <module>common</module>
+     <module>common-secure</module>
+     <module>0.23</module>
+-    <module>assembly</module>
++    <module>aggregator</module>
+   </modules>
+ </project>
+-- 
+1.7.0.4
+

@@ -1,0 +1,53 @@
+From fd671f64d70c0d2a8cafcd810f889448ec2b33d6 Mon Sep 17 00:00:00 2001
+From: Xuefu Zhang <xzhang@xzlt.(none)>
+Date: Wed, 15 Jan 2014 15:59:44 -0800
+Subject: [PATCH 229/375] CDH-16736: Fix additional test failures
+
+---
+ .../test/queries/clientpositive/union_remove_18.q  |    2 +-
+ .../results/clientpositive/union_remove_18.q.out   |    6 +++---
+ 2 files changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/src/ql/src/test/queries/clientpositive/union_remove_18.q b/src/ql/src/test/queries/clientpositive/union_remove_18.q
+index 4786500..6352bc3 100644
+--- a/src/ql/src/test/queries/clientpositive/union_remove_18.q
++++ b/src/ql/src/test/queries/clientpositive/union_remove_18.q
+@@ -50,4 +50,4 @@ show partitions outputTbl1;
+ set hive.input.format=org.apache.hadoop.hive.ql.io.HiveInputFormat;
+ select * from outputTbl1 where ds = '11' order by key, values;
+ select * from outputTbl1 where ds = '18' order by key, values;
+-select * from outputTbl1 where ds is not null order by key, values;
++select * from outputTbl1 where ds is not null order by key, values, ds;
+diff --git a/src/ql/src/test/results/clientpositive/union_remove_18.q.out b/src/ql/src/test/results/clientpositive/union_remove_18.q.out
+index bc8046f..df21a50 100644
+--- a/src/ql/src/test/results/clientpositive/union_remove_18.q.out
++++ b/src/ql/src/test/results/clientpositive/union_remove_18.q.out
+@@ -371,7 +371,7 @@ POSTHOOK: Lineage: outputtbl1 PARTITION(ds=28).key EXPRESSION [(inputtbl1)inputt
+ POSTHOOK: Lineage: outputtbl1 PARTITION(ds=28).values EXPRESSION [(inputtbl1)inputtbl1.null, (inputtbl1)inputtbl1.null, ]
+ 8	1	18
+ 8	1	18
+-PREHOOK: query: select * from outputTbl1 where ds is not null order by key, values
++PREHOOK: query: select * from outputTbl1 where ds is not null order by key, values, ds
+ PREHOOK: type: QUERY
+ PREHOOK: Input: default@outputtbl1
+ PREHOOK: Input: default@outputtbl1@ds=11
+@@ -381,7 +381,7 @@ PREHOOK: Input: default@outputtbl1@ds=17
+ PREHOOK: Input: default@outputtbl1@ds=18
+ PREHOOK: Input: default@outputtbl1@ds=28
+ #### A masked pattern was here ####
+-POSTHOOK: query: select * from outputTbl1 where ds is not null order by key, values
++POSTHOOK: query: select * from outputTbl1 where ds is not null order by key, values, ds
+ POSTHOOK: type: QUERY
+ POSTHOOK: Input: default@outputtbl1
+ POSTHOOK: Input: default@outputtbl1@ds=11
+@@ -412,6 +412,6 @@ POSTHOOK: Lineage: outputtbl1 PARTITION(ds=28).values EXPRESSION [(inputtbl1)inp
+ 7	1	17
+ 7	1	17
+ 8	1	18
++8	1	18
+ 8	1	28
+ 8	1	28
+-8	1	18
+-- 
+1.7.0.4
+

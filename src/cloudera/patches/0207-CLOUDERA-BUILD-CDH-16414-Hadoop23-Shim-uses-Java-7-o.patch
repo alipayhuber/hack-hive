@@ -1,0 +1,25 @@
+From 062bcceb8ea9f5c3ede3652ce03f0556490ae26b Mon Sep 17 00:00:00 2001
+From: Brock Noland <brock@cloudera.com>
+Date: Mon, 23 Dec 2013 13:33:33 -0600
+Subject: [PATCH 207/375] CLOUDERA-BUILD: CDH-16414 - Hadoop23 Shim uses Java 7 only constructor
+
+---
+ .../apache/hadoop/hive/shims/Hadoop23Shims.java    |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+
+diff --git a/src/shims/0.23/src/main/java/org/apache/hadoop/hive/shims/Hadoop23Shims.java b/src/shims/0.23/src/main/java/org/apache/hadoop/hive/shims/Hadoop23Shims.java
+index 1aabd8d..f7edc0e 100644
+--- a/src/shims/0.23/src/main/java/org/apache/hadoop/hive/shims/Hadoop23Shims.java
++++ b/src/shims/0.23/src/main/java/org/apache/hadoop/hive/shims/Hadoop23Shims.java
+@@ -213,7 +213,7 @@ public void setTotalOrderPartitionFile(JobConf jobConf, Path partitionFile){
+         method.invoke(null, jobConf, partitionFile);
+       }
+     } catch(Exception e) {
+-      throw new AssertionError("Unable to find TotalOrderPartitioner.setPartitionFile", e);
++      throw new IllegalStateException("Unable to find TotalOrderPartitioner.setPartitionFile", e);
+     }
+   }
+ 
+-- 
+1.7.0.4
+

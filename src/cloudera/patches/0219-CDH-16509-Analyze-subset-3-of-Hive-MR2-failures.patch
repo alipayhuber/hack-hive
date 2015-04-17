@@ -1,0 +1,27 @@
+From e9f106ea04f993fb7f9dca7b8ac8db03cd9fbe33 Mon Sep 17 00:00:00 2001
+From: Szehon Ho <szehon@cloudera.com>
+Date: Wed, 8 Jan 2014 14:34:42 -0800
+Subject: [PATCH 219/375] CDH-16509: Analyze subset 3 of Hive MR2 failures.
+
+Regenerating test output to not expect 'COLUMN_STATS_ACCURATE' which was added in HIVE-3777 and which is not required for downstream.
+---
+ .../results/clientpositive/nullformatCTAS.q.out    |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+
+diff --git a/src/ql/src/test/results/clientpositive/nullformatCTAS.q.out b/src/ql/src/test/results/clientpositive/nullformatCTAS.q.out
+index 54d7432..25a0755 100644
+--- a/src/ql/src/test/results/clientpositive/nullformatCTAS.q.out
++++ b/src/ql/src/test/results/clientpositive/nullformatCTAS.q.out
+@@ -172,8 +172,8 @@ OUTPUTFORMAT
+ LOCATION
+ #### A masked pattern was here ####
+ TBLPROPERTIES (
++  'numPartitions'='0', 
+   'numFiles'='1', 
+-  'COLUMN_STATS_ACCURATE'='true', 
+ #### A masked pattern was here ####
+   'numRows'='10', 
+   'totalSize'='80', 
+-- 
+1.7.0.4
+

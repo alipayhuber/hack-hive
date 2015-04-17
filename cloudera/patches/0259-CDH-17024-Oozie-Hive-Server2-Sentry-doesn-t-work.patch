@@ -1,0 +1,275 @@
+From 091fbf4dc55f482764c131bafe7daa2a2731867b Mon Sep 17 00:00:00 2001
+From: Prasad Mujumdar <prasadm@cloudera.com>
+Date: Wed, 29 Jan 2014 11:15:06 -0800
+Subject: [PATCH 259/375]  CDH-17024: Oozie + Hive Server2 + Sentry doesn't work
+
+---
+ .../src/java/org/apache/hive/beeline/Commands.java |    7 ++--
+ .../java/org/apache/hadoop/hive/conf/HiveConf.java |    1 +
+ .../apache/hive/service/auth/HiveAuthFactory.java  |   33 ++++++++++++++++++++
+ .../hive/service/cli/session/HiveSessionImpl.java  |   19 +++++++++--
+ .../hive/service/cli/thrift/ThriftCLIService.java  |   19 ++---------
+ .../hive/thrift/DelegationTokenSecretManager.java  |   13 ++++++++
+ .../hive/thrift/HadoopThriftAuthBridge20S.java     |    5 +++
+ .../hadoop/hive/thrift/HadoopThriftAuthBridge.java |    1 +
+ 8 files changed, 77 insertions(+), 21 deletions(-)
+
+diff --git a/src/beeline/src/java/org/apache/hive/beeline/Commands.java b/src/beeline/src/java/org/apache/hive/beeline/Commands.java
+index 8b0dbc3..8694864 100644
+--- a/src/beeline/src/java/org/apache/hive/beeline/Commands.java
++++ b/src/beeline/src/java/org/apache/hive/beeline/Commands.java
+@@ -1182,8 +1182,8 @@ private boolean stopRecording(String line) {
+     } catch (Exception e) {
+       beeLine.handleException(e);
+     }
+-    beeLine.output(beeLine.loc("record-closed", beeLine.getRecordOutputFile()));
+     beeLine.setRecordOutputFile(null);
++    beeLine.output(beeLine.loc("record-closed", beeLine.getRecordOutputFile()));
+     return true;
+   }
+ 
+@@ -1202,8 +1202,9 @@ private boolean startRecording(String line) {
+     }
+ 
+     try {
+-      beeLine.setRecordOutputFile(new OutputFile(parts[1]));
+-      beeLine.output(beeLine.loc("record-started", beeLine.getRecordOutputFile()));
++      OutputFile recordOutput = new OutputFile(parts[1]);
++      beeLine.output(beeLine.loc("record-started", recordOutput));
++      beeLine.setRecordOutputFile(recordOutput);
+       return true;
+     } catch (Exception e) {
+       return beeLine.error(e);
+diff --git a/src/common/src/java/org/apache/hadoop/hive/conf/HiveConf.java b/src/common/src/java/org/apache/hadoop/hive/conf/HiveConf.java
+index b23e1b8..1a37ad5 100644
+--- a/src/common/src/java/org/apache/hadoop/hive/conf/HiveConf.java
++++ b/src/common/src/java/org/apache/hadoop/hive/conf/HiveConf.java
+@@ -780,6 +780,7 @@
+     HIVE_SERVER2_SSL_KEYSTORE_PATH("hive.server2.keystore.path", ""),
+     HIVE_SERVER2_SSL_KEYSTORE_PASSWORD("hive.server2.keystore.password", ""),
+     HIVE_SERVER2_ALLOW_USER_SUBSTITUTION("hive.server2.allow.user.substitution", true),
++    HIVE_SERVER2_SESSION_USER("hive.server2.session.user", ""),
+ 
+     HIVE_SERVER2_IN_MEM_LOGGING("hive.server2.in.mem.logging", true),
+     HIVE_SERVER2_IN_MEM_LOG_SIZE("hive.server2.in.mem.log.size", 128 * 1024),
+diff --git a/src/service/src/java/org/apache/hive/service/auth/HiveAuthFactory.java b/src/service/src/java/org/apache/hive/service/auth/HiveAuthFactory.java
+index 30b0c35..6759903 100644
+--- a/src/service/src/java/org/apache/hive/service/auth/HiveAuthFactory.java
++++ b/src/service/src/java/org/apache/hive/service/auth/HiveAuthFactory.java
+@@ -34,6 +34,7 @@
+ import org.apache.hadoop.hive.thrift.HadoopThriftAuthBridge;
+ import org.apache.hive.service.cli.HiveSQLException;
+ import org.apache.hive.service.cli.thrift.ThriftCLIService;
++import org.apache.hadoop.security.UserGroupInformation;
+ import org.apache.thrift.TProcessorFactory;
+ import org.apache.thrift.transport.TSSLTransportFactory;
+ import org.apache.thrift.transport.TServerSocket;
+@@ -264,4 +265,36 @@ public void renewDelegationToken(String delegationToken) throws HiveSQLException
+     }
+   }
+ 
++  public String getUserFromToken(String delegationToken) throws HiveSQLException {
++    if (saslServer == null) {
++      throw new HiveSQLException(
++          "Delegation token only supported over kerberos authentication");
++    }
++    try {
++      return saslServer.getUserFromToken(delegationToken);
++    } catch (IOException e) {
++      throw new HiveSQLException("Error extracting user from delegation token " + delegationToken, e);
++    }
++  }
++
++  public static void verifyProxyAccess(String realUser, String proxyUser, String ipAddress,
++      HiveConf hiveConf) throws HiveSQLException {
++    UserGroupInformation sessionUgi;
++
++    try {
++      if (ShimLoader.getHadoopShims().isSecurityEnabled()) {
++        sessionUgi = ShimLoader.getHadoopShims().createProxyUser(realUser);
++      } else {
++        sessionUgi = ShimLoader.getHadoopShims().createRemoteUser(realUser, null);
++      }
++      if (!proxyUser.equalsIgnoreCase(realUser)) {
++        ShimLoader.getHadoopShims().
++          authorizeProxyAccess(proxyUser, sessionUgi, ipAddress, hiveConf);
++      }
++    } catch (IOException e) {
++      throw new HiveSQLException("Failed to validate proxy privilage of " + realUser +
++          " for " + proxyUser, e);
++    }
++  }
++
+ }
+diff --git a/src/service/src/java/org/apache/hive/service/cli/session/HiveSessionImpl.java b/src/service/src/java/org/apache/hive/service/cli/session/HiveSessionImpl.java
+index 66439b2..c3be2a3 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/session/HiveSessionImpl.java
++++ b/src/service/src/java/org/apache/hive/service/cli/session/HiveSessionImpl.java
+@@ -34,6 +34,7 @@
+ import org.apache.hadoop.hive.metastore.api.MetaException;
+ import org.apache.hadoop.hive.ql.history.HiveHistory;
+ import org.apache.hadoop.hive.ql.session.SessionState;
++import org.apache.hadoop.hive.shims.ShimLoader;
+ import org.apache.hive.common.util.HiveVersionInfo;
+ import org.apache.hive.service.auth.HiveAuthFactory;
+ import org.apache.hive.service.cli.FetchOrientation;
+@@ -94,6 +95,7 @@ public HiveSessionImpl(String username, String password, Map<String, String> ses
+     // set an explicit session name to control the download directory name
+     hiveConf.set(ConfVars.HIVESESSIONID.varname,
+         sessionHandle.getHandleIdentifier().toString());
++    hiveConf.setVar(ConfVars.HIVE_SERVER2_SESSION_USER, username);
+     sessionState = new SessionState(hiveConf);
+     SessionState.start(sessionState);
+   }
+@@ -397,6 +399,7 @@ public String getUserName() {
+   }
+   public void setUserName(String userName) {
+     this.username = userName;
++    getHiveConf().setVar(ConfVars.HIVE_SERVER2_SESSION_USER, username);
+   }
+ 
+   @Override
+@@ -469,19 +472,29 @@ public void setIpAddress(String ipAddress) {
+   @Override
+   public String getDelegationToken(HiveAuthFactory authFactory, String owner, String renewer)
+       throws HiveSQLException {
+-    throw new HiveSQLException("Delegation token access is only allowed with impersonation");
++    HiveAuthFactory.verifyProxyAccess(getUsername(), owner, getIpAddress(), getHiveConf());
++    return authFactory.getDelegationToken(owner, renewer);
+   }
+ 
+   @Override
+   public void cancelDelegationToken(HiveAuthFactory authFactory, String tokenStr)
+       throws HiveSQLException {
+-    throw new HiveSQLException("Delegation token access is only allowed with impersonation");
++    HiveAuthFactory.verifyProxyAccess(getUsername(), getUserFromToken(authFactory, tokenStr),
++        getIpAddress(), getHiveConf());
++    authFactory.cancelDelegationToken(tokenStr);
+   }
+ 
+   @Override
+   public void renewDelegationToken(HiveAuthFactory authFactory, String tokenStr)
+       throws HiveSQLException {
+-    throw new HiveSQLException("Delegation token access is only allowed with impersonation");
++    HiveAuthFactory.verifyProxyAccess(getUsername(), getUserFromToken(authFactory, tokenStr),
++        getIpAddress(), getHiveConf());
++    authFactory.renewDelegationToken(tokenStr);
++  }
++
++  // extract the real user from the given token string
++  private String getUserFromToken(HiveAuthFactory authFactory, String tokenStr) throws HiveSQLException {
++    return authFactory.getUserFromToken(tokenStr);
+   }
+ 
+   //Log capture
+diff --git a/src/service/src/java/org/apache/hive/service/cli/thrift/ThriftCLIService.java b/src/service/src/java/org/apache/hive/service/cli/thrift/ThriftCLIService.java
+index 5ec1f8a..6f27c08 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/thrift/ThriftCLIService.java
++++ b/src/service/src/java/org/apache/hive/service/cli/thrift/ThriftCLIService.java
+@@ -150,6 +150,7 @@ public TCancelDelegationTokenResp CancelDelegationToken(TCancelDelegationTokenRe
+       try {
+         cliService.cancelDelegationToken(new SessionHandle(req.getSessionHandle()),
+             hiveAuthFactory, req.getDelegationToken());
++        resp.setStatus(OK_STATUS);
+       } catch (HiveSQLException e) {
+         LOG.error("Error canceling delegation token", e);
+         resp.setStatus(HiveSQLException.toTStatus(e));
+@@ -168,13 +169,13 @@ public TRenewDelegationTokenResp RenewDelegationToken(TRenewDelegationTokenReq r
+       try {
+         cliService.renewDelegationToken(new SessionHandle(req.getSessionHandle()),
+             hiveAuthFactory, req.getDelegationToken());
++        resp.setStatus(OK_STATUS);
+       } catch (HiveSQLException e) {
+         LOG.error("Error obtaining renewing token", e);
+         resp.setStatus(HiveSQLException.toTStatus(e));
+       }
+     }
+     return resp;
+-
+   }
+ 
+   private TStatus unsecureTokenErrorStatus() {
+@@ -542,20 +543,8 @@ private String getProxyUser(String realUser, Map<String, String> sessionConf,
+     }
+  
+     // Verify proxy user privilege of the realUser for the proxyUser
+-    try {
+-      UserGroupInformation sessionUgi;
+-      if (ShimLoader.getHadoopShims().isSecurityEnabled()) {
+-        sessionUgi = ShimLoader.getHadoopShims().createProxyUser(realUser);
+-      } else {
+-        sessionUgi = ShimLoader.getHadoopShims().createRemoteUser(realUser, null);
+-      }
+-      ShimLoader.getHadoopShims().
+-          authorizeProxyAccess(proxyUser, sessionUgi, ipAddress, hiveConf);
+-      return proxyUser;
+-    } catch (IOException e) {
+-      throw new HiveSQLException("Failed to validate proxy privilage of " + realUser +
+-          " for " + proxyUser, e);
+-    }
++    HiveAuthFactory.verifyProxyAccess(realUser, proxyUser, ipAddress, hiveConf);
++    return proxyUser;
+   }
+ }
+ 
+diff --git a/src/shims/common-secure/src/main/java/org/apache/hadoop/hive/thrift/DelegationTokenSecretManager.java b/src/shims/common-secure/src/main/java/org/apache/hadoop/hive/thrift/DelegationTokenSecretManager.java
+index 29114f0..19d1fbf 100644
+--- a/src/shims/common-secure/src/main/java/org/apache/hadoop/hive/thrift/DelegationTokenSecretManager.java
++++ b/src/shims/common-secure/src/main/java/org/apache/hadoop/hive/thrift/DelegationTokenSecretManager.java
+@@ -18,6 +18,8 @@
+ 
+ package org.apache.hadoop.hive.thrift;
+ 
++import java.io.ByteArrayInputStream;
++import java.io.DataInputStream;
+ import java.io.IOException;
+ 
+ import org.apache.hadoop.io.Text;
+@@ -83,5 +85,16 @@ public synchronized String getDelegationToken(String renewer) throws IOException
+         ident, this);
+     return t.encodeToUrlString();
+   }
++
++  public String getUserFromToken(String tokenStr) throws IOException {
++    Token<DelegationTokenIdentifier> delegationToken = new Token<DelegationTokenIdentifier>();
++    delegationToken.decodeFromUrlString(tokenStr);
++
++    ByteArrayInputStream buf = new ByteArrayInputStream(delegationToken.getIdentifier());
++    DataInputStream in = new DataInputStream(buf);
++    DelegationTokenIdentifier id = createIdentifier();
++    id.readFields(in);
++    return id.getUser().getShortUserName();
++  }
+ }
+ 
+diff --git a/src/shims/common-secure/src/main/java/org/apache/hadoop/hive/thrift/HadoopThriftAuthBridge20S.java b/src/shims/common-secure/src/main/java/org/apache/hadoop/hive/thrift/HadoopThriftAuthBridge20S.java
+index cf06055..f26fabc 100644
+--- a/src/shims/common-secure/src/main/java/org/apache/hadoop/hive/thrift/HadoopThriftAuthBridge20S.java
++++ b/src/shims/common-secure/src/main/java/org/apache/hadoop/hive/thrift/HadoopThriftAuthBridge20S.java
+@@ -421,6 +421,11 @@ public long renewDelegationToken(String tokenStrForm) throws IOException {
+      }
+ 
+      @Override
++     public String getUserFromToken(String tokenStr) throws IOException {
++       return secretManager.getUserFromToken(tokenStr);
++     }
++
++     @Override
+      public void cancelDelegationToken(String tokenStrForm) throws IOException {
+        secretManager.cancelDelegationToken(tokenStrForm);
+      }
+diff --git a/src/shims/common/src/main/java/org/apache/hadoop/hive/thrift/HadoopThriftAuthBridge.java b/src/shims/common/src/main/java/org/apache/hadoop/hive/thrift/HadoopThriftAuthBridge.java
+index 5f9e951..e69373a 100644
+--- a/src/shims/common/src/main/java/org/apache/hadoop/hive/thrift/HadoopThriftAuthBridge.java
++++ b/src/shims/common/src/main/java/org/apache/hadoop/hive/thrift/HadoopThriftAuthBridge.java
+@@ -98,6 +98,7 @@ public abstract String getDelegationTokenWithService(String owner, String renewe
+      public abstract String getRemoteUser();
+      public abstract long renewDelegationToken(String tokenStrForm) throws IOException;
+      public abstract void cancelDelegationToken(String tokenStrForm) throws IOException;
++     public abstract String getUserFromToken(String tokenStr) throws IOException;
+    }
+  }
+ 
+-- 
+1.7.0.4
+

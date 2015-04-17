@@ -1,0 +1,128 @@
+From 84102c60aa72d227d9147022607667800acbc9f8 Mon Sep 17 00:00:00 2001
+From: Xuefu Zhang <xuefu@apache.org>
+Date: Fri, 6 Dec 2013 21:05:33 +0000
+Subject: [PATCH 195/375] HIVE-3181: getDatabaseMajor/Minor version does not return values (Szehon via Xuefu, reviewed by Navis)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1548722 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../java/org/apache/hive/jdbc/TestJdbcDriver2.java |    4 +++
+ .../java/org/apache/hive/jdbc/HiveConnection.java  |    3 ++
+ .../org/apache/hive/jdbc/HiveDatabaseMetaData.java |   13 +++++++--
+ jdbc/src/java/org/apache/hive/jdbc/Utils.java      |   26 ++++++++++++++++++++
+ 4 files changed, 43 insertions(+), 3 deletions(-)
+
+diff --git a/src/itests/hive-unit/src/test/java/org/apache/hive/jdbc/TestJdbcDriver2.java b/src/itests/hive-unit/src/test/java/org/apache/hive/jdbc/TestJdbcDriver2.java
+index 70b3c54..b69d38f 100644
+--- a/src/itests/hive-unit/src/test/java/org/apache/hive/jdbc/TestJdbcDriver2.java
++++ b/src/itests/hive-unit/src/test/java/org/apache/hive/jdbc/TestJdbcDriver2.java
+@@ -1262,6 +1262,10 @@ public void testDatabaseMetaData() throws SQLException {
+     assertFalse(meta.supportsMultipleResultSets());
+     assertFalse(meta.supportsStoredProcedures());
+     assertTrue(meta.supportsAlterTableWithAddColumn());
++
++    //-1 indicates malformed version.
++    assertTrue(meta.getDatabaseMajorVersion() > -1);
++    assertTrue(meta.getDatabaseMinorVersion() > -1);
+   }
+ 
+   @Test
+diff --git a/src/jdbc/src/java/org/apache/hive/jdbc/HiveConnection.java b/src/jdbc/src/java/org/apache/hive/jdbc/HiveConnection.java
+index f1204de..90394a6 100644
+--- a/src/jdbc/src/java/org/apache/hive/jdbc/HiveConnection.java
++++ b/src/jdbc/src/java/org/apache/hive/jdbc/HiveConnection.java
+@@ -642,6 +642,9 @@ public int getHoldability() throws SQLException {
+    */
+ 
+   public DatabaseMetaData getMetaData() throws SQLException {
++    if (isClosed) {
++      throw new SQLException("Connection is closed");
++    }
+     return new HiveDatabaseMetaData(this, client, sessHandle);
+   }
+ 
+diff --git a/src/jdbc/src/java/org/apache/hive/jdbc/HiveDatabaseMetaData.java b/src/jdbc/src/java/org/apache/hive/jdbc/HiveDatabaseMetaData.java
+index c447d44..5087ded 100644
+--- a/src/jdbc/src/java/org/apache/hive/jdbc/HiveDatabaseMetaData.java
++++ b/src/jdbc/src/java/org/apache/hive/jdbc/HiveDatabaseMetaData.java
+@@ -65,6 +65,9 @@
+   //  The maximum column length = MFieldSchema.FNAME in metastore/src/model/package.jdo
+   private static final int maxColumnNameLength = 128;
+ 
++  //  Cached values, to save on round trips to database.
++  private String dbVersion = null;
++
+   /**
+    *
+    */
+@@ -254,11 +257,11 @@ public ResultSet getCrossReference(String primaryCatalog,
+   }
+ 
+   public int getDatabaseMajorVersion() throws SQLException {
+-    throw new SQLException("Method not supported");
++    return Utils.getVersionPart(getDatabaseProductVersion(), 1);
+   }
+ 
+   public int getDatabaseMinorVersion() throws SQLException {
+-    throw new SQLException("Method not supported");
++    return Utils.getVersionPart(getDatabaseProductVersion(), 2);
+   }
+ 
+   public String getDatabaseProductName() throws SQLException {
+@@ -266,6 +269,9 @@ public String getDatabaseProductName() throws SQLException {
+   }
+ 
+   public String getDatabaseProductVersion() throws SQLException {
++    if (dbVersion != null) { //lazy-caching of the version.
++      return dbVersion;
++    }
+ 
+     TGetInfoReq req = new TGetInfoReq(sessHandle, GetInfoType.CLI_DBMS_VER.toTGetInfoType());
+     TGetInfoResp resp;
+@@ -276,7 +282,8 @@ public String getDatabaseProductVersion() throws SQLException {
+     }
+     Utils.verifySuccess(resp.getStatus());
+ 
+-    return resp.getInfoValue().getStringValue();
++    this.dbVersion = resp.getInfoValue().getStringValue();
++    return dbVersion;
+   }
+ 
+   public int getDefaultTransactionIsolation() throws SQLException {
+diff --git a/src/jdbc/src/java/org/apache/hive/jdbc/Utils.java b/src/jdbc/src/java/org/apache/hive/jdbc/Utils.java
+index f5933ed..7d7d015 100644
+--- a/src/jdbc/src/java/org/apache/hive/jdbc/Utils.java
++++ b/src/jdbc/src/java/org/apache/hive/jdbc/Utils.java
+@@ -272,4 +272,30 @@ public static JdbcConnectionParams parseURL(String uri) throws IllegalArgumentEx
+ 
+     return connParams;
+   }
++
++  /**
++   * Takes a version string delmited by '.' and '-' characters
++   * and returns a partial version.
++   *
++   * @param fullVersion
++   *          version string.
++   * @param tokenPosition
++   *          position of version string to get starting at 1. eg, for a X.x.xxx
++   *          string, 1 will return the major version, 2 will return minor
++   *          version.
++   * @return version part, or -1 if version string was malformed.
++   */
++  static int getVersionPart(String fullVersion, int position) {
++    int version = -1;
++    try {
++      String[] tokens = fullVersion.split("[\\.-]"); //$NON-NLS-1$
++
++      if (tokens != null && tokens.length > 1 && tokens[position] != null) {
++        version = Integer.parseInt(tokens[position]);
++      }
++    } catch (Exception e) {
++      version = -1;
++    }
++    return version;
++  }
+ }
+-- 
+1.7.0.4
+

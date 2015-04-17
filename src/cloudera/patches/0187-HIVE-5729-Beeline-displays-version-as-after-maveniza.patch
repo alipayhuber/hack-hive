@@ -1,0 +1,31 @@
+From ac12259d9946cf839e4d6ad79f4cea7b2287bea7 Mon Sep 17 00:00:00 2001
+From: Brock Noland <brock@apache.org>
+Date: Fri, 15 Nov 2013 20:49:09 +0000
+Subject: [PATCH 187/375] HIVE-5729 - Beeline displays version as ???? after mavenization (Navis via Brock Noland)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1542393 13f79535-47bb-0310-9956-ffa450edef68
+---
+ pom.xml |    7 +++++++
+ 1 files changed, 7 insertions(+), 0 deletions(-)
+
+diff --git a/src/pom.xml b/src/pom.xml
+index e7e1827..1d2c81a 100644
+--- a/src/pom.xml
++++ b/src/pom.xml
+@@ -603,6 +603,13 @@
+           <groupId>org.apache.maven.plugins</groupId>
+           <artifactId>maven-jar-plugin</artifactId>
+           <version>${maven.jar.plugin.version}</version>
++          <configuration>
++            <archive>
++              <manifest>
++                <addDefaultImplementationEntries>true</addDefaultImplementationEntries>
++              </manifest>
++            </archive>
++          </configuration>
+         </plugin>
+         <plugin>
+           <groupId>org.apache.maven.plugins</groupId>
+-- 
+1.7.0.4
+

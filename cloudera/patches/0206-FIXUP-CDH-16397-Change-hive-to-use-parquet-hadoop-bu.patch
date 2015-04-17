@@ -1,0 +1,39 @@
+From b3e633afb32bab1d7a2f4d39d8c7eb762f87bb58 Mon Sep 17 00:00:00 2001
+From: Brock Noland <brock@cloudera.com>
+Date: Fri, 20 Dec 2013 12:57:37 -0600
+Subject: [PATCH 206/375] FIXUP: CDH-16397 - Change hive to use parquet-hadoop-bundle - CDH-16069 - Rebase and backport HIVE-5783: Native Parquet Support in Hive
+
+---
+ pom.xml    |    2 +-
+ ql/pom.xml |    2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/src/pom.xml b/src/pom.xml
+index 9ec27a5..77dd50a 100644
+--- a/src/pom.xml
++++ b/src/pom.xml
+@@ -523,7 +523,7 @@
+       </dependency>
+       <dependency>
+         <groupId>com.twitter</groupId>
+-        <artifactId>parquet-hive-bundle</artifactId>
++        <artifactId>parquet-hadoop-bundle</artifactId>
+         <version>${parquet.version}</version>
+       </dependency>
+     </dependencies>
+diff --git a/src/ql/pom.xml b/src/ql/pom.xml
+index 1f99498..aec0282 100644
+--- a/src/ql/pom.xml
++++ b/src/ql/pom.xml
+@@ -68,7 +68,7 @@
+     </dependency>
+     <dependency>
+       <groupId>com.twitter</groupId>
+-      <artifactId>parquet-hive-bundle</artifactId>
++      <artifactId>parquet-hadoop-bundle</artifactId>
+       <version>${parquet.version}</version>
+     </dependency>
+     <dependency>
+-- 
+1.7.0.4
+

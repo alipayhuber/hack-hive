@@ -1,0 +1,57 @@
+From 0bad3891774750dc62d4138208a7d3f587522bd2 Mon Sep 17 00:00:00 2001
+From: Szehon Ho <szehon@cloudera.com>
+Date: Mon, 20 Jan 2014 16:55:22 -0800
+Subject: [PATCH 239/375] PROPOSED CDH-16177: HIVE-6209: 'LOAD DATA INPATH ... OVERWRITE ..' doesn't overwrite current data
+
+---
+ .../org/apache/hadoop/hive/ql/metadata/Hive.java   |   13 ++++++++-----
+ 1 files changed, 8 insertions(+), 5 deletions(-)
+
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/metadata/Hive.java b/src/ql/src/java/org/apache/hadoop/hive/ql/metadata/Hive.java
+index b721245..ed419fb 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/metadata/Hive.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/metadata/Hive.java
+@@ -2199,7 +2199,7 @@ static protected boolean renameFile(HiveConf conf, Path srcf, Path destf, FileSy
+         }
+       }
+       success = fs.rename(srcf, destf);
+-      LOG.debug((replace ? "Replacing src:" : "Renaming src:") + srcf.toString()
++      LOG.info((replace ? "Replacing src:" : "Renaming src:") + srcf.toString()
+           + ";dest: " + destf.toString()  + ";Status:" + success);
+     } catch (IOException ioe) {
+       throw new HiveException("Unable to move source" + srcf + " to destination " + destf, ioe);
+@@ -2301,10 +2301,7 @@ static protected void replaceFiles(Path srcf, Path destf, Path oldPath, HiveConf
+       }
+       List<List<Path[]>> result = checkPaths(conf, fs, srcs, destf, true);
+ 
+-      // point of no return -- delete oldPath only if it is not same as destf,
+-      // otherwise, the oldPath/destf will be cleaned later just before move
+-      if (oldPath != null && (!destf.getFileSystem(conf).equals(oldPath.getFileSystem(conf))
+-          || !destf.equals(oldPath))) {
++      if (oldPath != null) {
+         try {
+           FileSystem fs2 = oldPath.getFileSystem(conf);
+           if (fs2.exists(oldPath)) {
+@@ -2325,6 +2322,9 @@ static protected void replaceFiles(Path srcf, Path destf, Path oldPath, HiveConf
+         Path destfp = destf.getParent();
+         if (!fs.exists(destfp)) {
+           boolean success = fs.mkdirs(destfp);
++          if (!success) {
++            LOG.warn("Error creating directory " + destf.toString());
++          }
+           if (inheritPerms && success) {
+             fs.setPermission(destfp, fs.getFileStatus(destfp.getParent()).getPermission());
+           }
+@@ -2338,6 +2338,9 @@ static protected void replaceFiles(Path srcf, Path destf, Path oldPath, HiveConf
+       } else { // srcf is a file or pattern containing wildcards
+         if (!fs.exists(destf)) {
+           boolean success = fs.mkdirs(destf);
++          if (!success) {
++            LOG.warn("Error creating directory " + destf.toString());
++          }
+           if (inheritPerms && success) {
+             fs.setPermission(destf, fs.getFileStatus(destf.getParent()).getPermission());
+           }
+-- 
+1.7.0.4
+

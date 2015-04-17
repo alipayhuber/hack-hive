@@ -1,0 +1,42 @@
+From 31c5f8b50fce54f587a5b940b5e2d4becd3553cc Mon Sep 17 00:00:00 2001
+From: Jianyong Dai <daijy@apache.org>
+Date: Wed, 30 Oct 2013 17:15:02 +0000
+Subject: [PATCH 133/375] HIVE-5696: WebHCat e2e tests/jobsubmission.conf file is malformed and loosing tests ( Eugene Koifman via Daniel Dai )
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1537184 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../test/e2e/templeton/tests/jobsubmission.conf    |   11 ++---------
+ 1 files changed, 2 insertions(+), 9 deletions(-)
+
+diff --git a/src/hcatalog/src/test/e2e/templeton/tests/jobsubmission.conf b/src/hcatalog/src/test/e2e/templeton/tests/jobsubmission.conf
+index 240b01e..c985e86 100644
+--- a/src/hcatalog/src/test/e2e/templeton/tests/jobsubmission.conf
++++ b/src/hcatalog/src/test/e2e/templeton/tests/jobsubmission.conf
+@@ -438,10 +438,6 @@ $cfg =
+      'check_job_exit_value' => 1,
+      'check_call_back' => 1,
+     },
+-
+-   ]
+-  },
+-
+     {
+                                 #test add jar
+      'num' => 11,
+@@ -487,11 +483,8 @@ $cfg =
+      'check_job_exit_value' => 0,
+      'check_call_back' => 1,
+     },
+-
+-
+-
+-
+-
++   ]
++  },
+  ]
+ },
+   ;
+-- 
+1.7.0.4
+

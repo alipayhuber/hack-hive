@@ -1,0 +1,175 @@
+From 218f81efe4c552d6e61d89474ff868a6e2d6ea24 Mon Sep 17 00:00:00 2001
+From: Xuefu Zhang <xuefu@apache.org>
+Date: Thu, 7 Nov 2013 15:24:17 +0000
+Subject: [PATCH 148/375] CDH-15792: HIVE-5726: The DecimalTypeInfo instance associated with a decimal constant is not in line with the precision/scale of the constant (reviewed by Brock)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1539682 13f79535-47bb-0310-9956-ffa450edef68
+
+Conflicts:
+	ql/src/test/results/clientpositive/literal_decimal.q.out
+---
+ .../hadoop/hive/common/type/HiveDecimal.java       |    8 +++++-
+ .../hadoop/hive/common/type/TestHiveDecimal.java   |    7 +++++
+ .../hadoop/hive/ql/parse/TypeCheckProcFactory.java |   13 ++++++++-
+ ql/src/test/queries/clientpositive/ctas_hadoop20.q |   11 ++------
+ .../results/clientpositive/ctas_hadoop20.q.out     |   26 ++++++++++++++++++++
+ .../results/clientpositive/literal_decimal.q.out   |   14 +++++-----
+ 6 files changed, 61 insertions(+), 18 deletions(-)
+
+diff --git a/src/common/src/java/org/apache/hadoop/hive/common/type/HiveDecimal.java b/src/common/src/java/org/apache/hadoop/hive/common/type/HiveDecimal.java
+index 606f6d4..a38442d 100644
+--- a/src/common/src/java/org/apache/hadoop/hive/common/type/HiveDecimal.java
++++ b/src/common/src/java/org/apache/hadoop/hive/common/type/HiveDecimal.java
+@@ -222,7 +222,13 @@ private static BigDecimal normalize(BigDecimal bd, boolean allowRounding) {
+ 
+     int maxScale = Math.min(MAX_SCALE, Math.min(MAX_PRECISION - intDigits, bd.scale()));
+     if (bd.scale() > maxScale ) {
+-      bd = allowRounding ? bd.setScale(maxScale, RoundingMode.HALF_UP) : null;
++      if (allowRounding) {
++        bd = bd.setScale(maxScale, RoundingMode.HALF_UP);
++        // Trimming is again necessary, because rounding may introduce new trailing 0's.
++        bd = trim(bd);
++      } else {
++        bd = null;
++      }
+     }
+ 
+     return bd;
+diff --git a/src/common/src/test/org/apache/hadoop/hive/common/type/TestHiveDecimal.java b/src/common/src/test/org/apache/hadoop/hive/common/type/TestHiveDecimal.java
+index 4bffaf6..9292392 100644
+--- a/src/common/src/test/org/apache/hadoop/hive/common/type/TestHiveDecimal.java
++++ b/src/common/src/test/org/apache/hadoop/hive/common/type/TestHiveDecimal.java
+@@ -56,6 +56,13 @@ public void testPrecisionScaleEnforcement() {
+   }
+ 
+   @Test
++  public void testTrailingZeroRemovalAfterEnforcement() {
++    String decStr = "8.0900000000000000000000000000000123456";
++    HiveDecimal dec = HiveDecimal.create(decStr);
++    Assert.assertEquals("8.09", dec.toString());
++  }
++
++  @Test
+   public void testMultiply() {
+     HiveDecimal dec1 = HiveDecimal.create("0.1786135888657847525803");
+     HiveDecimal dec2 = HiveDecimal.create("3.123456789");
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/TypeCheckProcFactory.java b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/TypeCheckProcFactory.java
+index 42ba344..7678517 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/TypeCheckProcFactory.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/TypeCheckProcFactory.java
+@@ -32,6 +32,7 @@
+ import org.apache.commons.lang.StringUtils;
+ import org.apache.commons.logging.Log;
+ import org.apache.commons.logging.LogFactory;
++import org.apache.hadoop.hive.common.type.HiveDecimal;
+ import org.apache.hadoop.hive.ql.ErrorMsg;
+ import org.apache.hadoop.hive.ql.exec.ColumnInfo;
+ import org.apache.hadoop.hive.ql.exec.FunctionInfo;
+@@ -266,8 +267,16 @@ public Object process(Node nd, Stack<Node> stack, NodeProcessorCtx procCtx,
+                 0, expr.getText().length() - 1));
+         } else if (expr.getText().endsWith("BD")) {
+           // Literal decimal
+-          return new ExprNodeConstantDesc(TypeInfoFactory.decimalTypeInfo,
+-                expr.getText().substring(0, expr.getText().length() - 2));
++          String strVal = expr.getText().substring(0, expr.getText().length() - 2);
++          HiveDecimal hd = HiveDecimal.create(strVal);
++          int prec = 1;
++          int scale = 0;
++          if (hd != null) {
++            prec = hd.precision();
++            scale = hd.scale();
++          }
++          DecimalTypeInfo typeInfo = TypeInfoFactory.getDecimalTypeInfo(prec, scale);
++          return new ExprNodeConstantDesc(typeInfo, strVal);
+         } else {
+           v = Double.valueOf(expr.getText());
+           v = Long.valueOf(expr.getText());
+diff --git a/src/ql/src/test/queries/clientpositive/ctas_hadoop20.q b/src/ql/src/test/queries/clientpositive/ctas_hadoop20.q
+index 4961b97..f39689d 100644
+--- a/src/ql/src/test/queries/clientpositive/ctas_hadoop20.q
++++ b/src/ql/src/test/queries/clientpositive/ctas_hadoop20.q
+@@ -58,11 +58,6 @@ create table nzhang_ctas6 (key string, `to` string);
+ insert overwrite table nzhang_ctas6 select key, value from src limit 10;
+ create table nzhang_ctas7 as select key, `to` from nzhang_ctas6;
+ 
+-
+-
+-
+-
+-
+-
+-
+-
++create table nzhang_ctas8 as select 3.14BD from nzhang_ctas6 limit 1;
++desc nzhang_ctas8;
++drop table nzhang_ctas8;
+diff --git a/src/ql/src/test/results/clientpositive/ctas_hadoop20.q.out b/src/ql/src/test/results/clientpositive/ctas_hadoop20.q.out
+index 9c9e809..17dfcad 100644
+--- a/src/ql/src/test/results/clientpositive/ctas_hadoop20.q.out
++++ b/src/ql/src/test/results/clientpositive/ctas_hadoop20.q.out
+@@ -972,3 +972,29 @@ POSTHOOK: Input: default@nzhang_ctas6
+ POSTHOOK: Output: default@nzhang_ctas7
+ POSTHOOK: Lineage: nzhang_ctas6.key SIMPLE [(src)src.FieldSchema(name:key, type:string, comment:default), ]
+ POSTHOOK: Lineage: nzhang_ctas6.to SIMPLE [(src)src.FieldSchema(name:value, type:string, comment:default), ]
++PREHOOK: query: create table nzhang_ctas8 as select 3.14BD from nzhang_ctas6 limit 1
++PREHOOK: type: CREATETABLE_AS_SELECT
++PREHOOK: Input: default@nzhang_ctas6
++POSTHOOK: query: create table nzhang_ctas8 as select 3.14BD from nzhang_ctas6 limit 1
++POSTHOOK: type: CREATETABLE_AS_SELECT
++POSTHOOK: Input: default@nzhang_ctas6
++POSTHOOK: Output: default@nzhang_ctas8
++POSTHOOK: Lineage: nzhang_ctas6.key SIMPLE [(src)src.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: nzhang_ctas6.to SIMPLE [(src)src.FieldSchema(name:value, type:string, comment:default), ]
++PREHOOK: query: desc nzhang_ctas8
++PREHOOK: type: DESCTABLE
++POSTHOOK: query: desc nzhang_ctas8
++POSTHOOK: type: DESCTABLE
++POSTHOOK: Lineage: nzhang_ctas6.key SIMPLE [(src)src.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: nzhang_ctas6.to SIMPLE [(src)src.FieldSchema(name:value, type:string, comment:default), ]
++_c0                 	decimal(3,2)        	None                
++PREHOOK: query: drop table nzhang_ctas8
++PREHOOK: type: DROPTABLE
++PREHOOK: Input: default@nzhang_ctas8
++PREHOOK: Output: default@nzhang_ctas8
++POSTHOOK: query: drop table nzhang_ctas8
++POSTHOOK: type: DROPTABLE
++POSTHOOK: Input: default@nzhang_ctas8
++POSTHOOK: Output: default@nzhang_ctas8
++POSTHOOK: Lineage: nzhang_ctas6.key SIMPLE [(src)src.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: nzhang_ctas6.to SIMPLE [(src)src.FieldSchema(name:value, type:string, comment:default), ]
+diff --git a/src/ql/src/test/results/clientpositive/literal_decimal.q.out b/src/ql/src/test/results/clientpositive/literal_decimal.q.out
+index 0ba5043..802a061 100644
+--- a/src/ql/src/test/results/clientpositive/literal_decimal.q.out
++++ b/src/ql/src/test/results/clientpositive/literal_decimal.q.out
+@@ -21,21 +21,21 @@ STAGE PLANS:
+                     expr: (- 1)
+                     type: decimal(65,30)
+                     expr: 0
+-                    type: decimal(65,30)
++                    type: decimal(1,0)
+                     expr: 1
+-                    type: decimal(65,30)
++                    type: decimal(1,0)
+                     expr: 3.14
+-                    type: decimal(65,30)
++                    type: decimal(3,2)
+                     expr: (- 3.14)
+                     type: decimal(65,30)
+                     expr: 99999999999999999
+-                    type: decimal(65,30)
++                    type: decimal(17,0)
+                     expr: 99999999999999999.9999999999999
+-                    type: decimal(65,30)
++                    type: decimal(30,13)
+                     expr: 1E-99
+-                    type: decimal(65,30)
++                    type: decimal(1,0)
+                     expr: 1E99
+-                    type: decimal(65,30)
++                    type: decimal(1,0)
+               outputColumnNames: _col0, _col1, _col2, _col3, _col4, _col5, _col6, _col7, _col8
+               Limit
+                 File Output Operator
+-- 
+1.7.0.4
+

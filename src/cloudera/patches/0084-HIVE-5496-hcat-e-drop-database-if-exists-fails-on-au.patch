@@ -1,0 +1,30 @@
+From 294c742966d2cd6ab87b0c056d4f5b913af075f6 Mon Sep 17 00:00:00 2001
+From: Ashutosh Chauhan <hashutosh@apache.org>
+Date: Sun, 13 Oct 2013 16:24:23 +0000
+Subject: [PATCH 084/375] HIVE-5496 : hcat -e drop database if exists fails on authorizing non-existent null db (Sushanth Sowmyan via Ashutosh Chauhan)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1531706 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../cli/SemanticAnalysis/HCatSemanticAnalyzer.java |    6 +++++-
+ 1 files changed, 5 insertions(+), 1 deletions(-)
+
+diff --git a/src/hcatalog/core/src/main/java/org/apache/hive/hcatalog/cli/SemanticAnalysis/HCatSemanticAnalyzer.java b/src/hcatalog/core/src/main/java/org/apache/hive/hcatalog/cli/SemanticAnalysis/HCatSemanticAnalyzer.java
+index 9ef87af..97973db 100644
+--- a/src/hcatalog/core/src/main/java/org/apache/hive/hcatalog/cli/SemanticAnalysis/HCatSemanticAnalyzer.java
++++ b/src/hcatalog/core/src/main/java/org/apache/hive/hcatalog/cli/SemanticAnalysis/HCatSemanticAnalyzer.java
+@@ -271,7 +271,11 @@ protected void authorizeDDLWork(HiveSemanticAnalyzerHookContext cntxt, Hive hive
+     DropDatabaseDesc dropDb = work.getDropDatabaseDesc();
+     if (dropDb != null) {
+       Database db = cntxt.getHive().getDatabase(dropDb.getDatabaseName());
+-      authorize(db, Privilege.DROP);
++      if (db != null){
++        // if above returned a null, then the db does not exist - probably a
++        // "drop database if exists" clause - don't try to authorize then.
++        authorize(db, Privilege.DROP);
++      }
+     }
+ 
+     DescDatabaseDesc descDb = work.getDescDatabaseDesc();
+-- 
+1.7.0.4
+

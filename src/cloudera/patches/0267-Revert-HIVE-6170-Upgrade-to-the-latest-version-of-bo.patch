@@ -1,0 +1,26 @@
+From 0ec8b93b089ac2e5b54c8720ae9dfe859c723987 Mon Sep 17 00:00:00 2001
+From: Szehon Ho <szehon@cloudera.com>
+Date: Mon, 3 Feb 2014 15:37:20 -0800
+Subject: [PATCH 267/375] Revert "HIVE-6170 : Upgrade to the latest version of bonecp (Hari via Ashutosh Chauhan)"
+
+This reverts commit edb6f200e30f285324a67f0427886599115e4aea.
+---
+ pom.xml |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+
+diff --git a/src/pom.xml b/src/pom.xml
+index bc24ebc..1ba194b 100644
+--- a/src/pom.xml
++++ b/src/pom.xml
+@@ -86,7 +86,7 @@
+     <ant.version>1.9.1</ant.version>
+     <antlr.version>3.4</antlr.version>
+     <avro.version>${cdh.avro.version}</avro.version>
+-    <bonecp.version>0.8.0.RELEASE</bonecp.version>
++    <bonecp.version>0.7.1.RELEASE</bonecp.version>
+     <datanucleus-api-jdo.version>3.2.1</datanucleus-api-jdo.version>
+     <datanucleus-core.version>3.2.2</datanucleus-core.version>
+     <datanucleus-rdbms.version>3.2.1</datanucleus-rdbms.version>
+-- 
+1.7.0.4
+

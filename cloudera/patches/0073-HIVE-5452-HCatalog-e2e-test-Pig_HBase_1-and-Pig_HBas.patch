@@ -1,0 +1,48 @@
+From 5f0dd188336ae6d586c95f08d915f552e5959da3 Mon Sep 17 00:00:00 2001
+From: Thejas Madhavan Nair <thejas@apache.org>
+Date: Tue, 8 Oct 2013 02:25:34 +0000
+Subject: [PATCH 073/375] HIVE-5452 : HCatalog e2e test Pig_HBase_1 and Pig_HBase_2 are failing with ClassCastException (Deepesh Khandelwal via Thejas Nair)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1530135 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../src/test/e2e/hcatalog/drivers/TestDriverPig.pm |    3 ++-
+ hcatalog/src/test/e2e/hcatalog/tests/pig.conf      |    2 ++
+ 2 files changed, 4 insertions(+), 1 deletions(-)
+
+diff --git a/src/hcatalog/src/test/e2e/hcatalog/drivers/TestDriverPig.pm b/src/hcatalog/src/test/e2e/hcatalog/drivers/TestDriverPig.pm
+index fa321ca..150de0d 100644
+--- a/src/hcatalog/src/test/e2e/hcatalog/drivers/TestDriverPig.pm
++++ b/src/hcatalog/src/test/e2e/hcatalog/drivers/TestDriverPig.pm
+@@ -184,7 +184,8 @@ sub runTest
+ 	               $testCmd->{'group'} .  "_" .  $testCmd->{'num'} . ".$i.out";
+                    $tableName = $results[$i];
+ 	           $modifiedTestCmd{'num'} = $testCmd->{'num'} . "_" . $i . "_benchmark";
+-                   $modifiedTestCmd{'pig'} = "a = load '$tableName' using org.apache.hive.hcatalog.pig.HCatLoader(); store a into ':OUTPATH:';";
++                   $tableLoader = (defined $testCmd->{'result_table_loader'} ? $testCmd->{'result_table_loader'} : "org.apache.hive.hcatalog.pig.HCatLoader()");
++                   $modifiedTestCmd{'pig'} = "a = load '$tableName' using $tableLoader; store a into ':OUTPATH:';";
+                    my $r = $self->runPig(\%modifiedTestCmd, $log, 1, 1);
+ 	           $outputs[$i] = $r->{'output'};
+                } else {
+diff --git a/src/hcatalog/src/test/e2e/hcatalog/tests/pig.conf b/src/hcatalog/src/test/e2e/hcatalog/tests/pig.conf
+index 8fbe2a8..859e868 100644
+--- a/src/hcatalog/src/test/e2e/hcatalog/tests/pig.conf
++++ b/src/hcatalog/src/test/e2e/hcatalog/tests/pig.conf
+@@ -330,6 +330,7 @@ exec
+ e = load 'pig_hbase_1' using org.apache.hcatalog.pig.HCatLoader();
+ store e into ':OUTPATH:';\,
+                                 ,'result_table' => ['pig_hbase_1','?']
++                                ,'result_table_loader' => 'org.apache.hcatalog.pig.HCatLoader()'
+ 				,'sql'   => [ 'select name, avg(cast(age as decimal(10,5))), avg(gpa) from studenttab10k group by name;', 'select name, avg(cast(age as decimal(10,5))), avg(gpa) from studenttab10k group by name;' ]
+                                 ,'floatpostprocess' => 1
+                                 ,'delimiter' => '	'
+@@ -350,6 +351,7 @@ d = foreach c generate name as key, (chararray)age, (chararray)gpa as gpa;
+ store d into 'pig_hbase_2_1' using org.apache.hcatalog.pig.HCatStorer();
+ store d into 'pig_hbase_2_2' using org.apache.hcatalog.pig.HCatStorer();\,
+                                 ,'result_table' => ['pig_hbase_2_1','pig_hbase_2_2']
++                                ,'result_table_loader' => 'org.apache.hcatalog.pig.HCatLoader()'
+ 				,'sql'   => [ 'select name, avg(cast(age as decimal(10,5))), avg(gpa) from studenttab10k group by name;', 'select name, avg(cast(age as decimal(10,5))), avg(gpa) from studenttab10k group by name;']
+                                 ,'floatpostprocess' => 1
+                                 ,'delimiter' => '	'
+-- 
+1.7.0.4
+

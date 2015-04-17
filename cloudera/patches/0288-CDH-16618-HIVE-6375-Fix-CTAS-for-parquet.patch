@@ -1,0 +1,365 @@
+From 8e3ca14ff6f82729f20f97a2f522e1019dc1ba99 Mon Sep 17 00:00:00 2001
+From: Szehon Ho <szehon@cloudera.com>
+Date: Tue, 25 Feb 2014 18:02:26 -0800
+Subject: [PATCH 288/375] CDH-16618: HIVE-6375: Fix CTAS for parquet
+
+---
+ .../hadoop/hive/ql/parse/SemanticAnalyzer.java     |   11 +-
+ ql/src/test/queries/clientpositive/parquet_ctas.q  |   24 +++
+ ql/src/test/results/clientpositive/ctas.q.out      |    2 +-
+ .../results/clientpositive/ctas_hadoop20.q.out     |    2 +-
+ ql/src/test/results/clientpositive/merge3.q.out    |   14 +-
+ .../test/results/clientpositive/parquet_ctas.q.out |  184 ++++++++++++++++++++
+ 6 files changed, 222 insertions(+), 15 deletions(-)
+ create mode 100644 ql/src/test/queries/clientpositive/parquet_ctas.q
+ create mode 100644 ql/src/test/results/clientpositive/parquet_ctas.q.out
+
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/SemanticAnalyzer.java b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/SemanticAnalyzer.java
+index ace0d34..550e124 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/SemanticAnalyzer.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/SemanticAnalyzer.java
+@@ -5175,14 +5175,13 @@ private Operator genFileSinkPlan(String dest, QB qb, Operator input)
+           colInfo.setAlias(nm[1]);
+         }
+ 
++        String colName = colInfo.getInternalName();  //default column name
+         if (field_schemas != null) {
+           FieldSchema col = new FieldSchema();
+-          if ("".equals(nm[0]) || nm[1] == null) {
+-            // ast expression is not a valid column name for table
+-            col.setName(colInfo.getInternalName());
+-          } else {
+-            col.setName(unescapeIdentifier(colInfo.getAlias()).toLowerCase()); // remove ``
++          if (!("".equals(nm[0])) && nm[1] != null) {
++            colName = unescapeIdentifier(colInfo.getAlias()).toLowerCase(); // remove ``
+           }
++          col.setName(colName);;
+           col.setType(colInfo.getType().getTypeName());
+           field_schemas.add(col);
+         }
+@@ -5193,7 +5192,7 @@ private Operator genFileSinkPlan(String dest, QB qb, Operator input)
+         }
+ 
+         first = false;
+-        cols = cols.concat(colInfo.getInternalName());
++        cols = cols.concat(colName);
+ 
+         // Replace VOID type with string when the output is a temp table or
+         // local files.
+diff --git a/src/ql/src/test/queries/clientpositive/parquet_ctas.q b/src/ql/src/test/queries/clientpositive/parquet_ctas.q
+new file mode 100644
+index 0000000..652aef1
+--- /dev/null
++++ b/src/ql/src/test/queries/clientpositive/parquet_ctas.q
+@@ -0,0 +1,24 @@
++drop table staging;
++drop table parquet_ctas;
++drop table parquet_ctas_advanced;
++drop table parquet_ctas_alias;
++drop table parquet_ctas_mixed;
++
++create table staging (key int, value string) stored as textfile;
++insert into table staging select * from src order by key limit 10;
++
++create table parquet_ctas stored as parquet as select * from staging;
++describe parquet_ctas;
++select * from parquet_ctas;
++
++create table parquet_ctas_advanced stored as parquet as select key+1,concat(value,"value") from staging;
++describe parquet_ctas_advanced;
++select * from parquet_ctas_advanced;
++
++create table parquet_ctas_alias stored as parquet as select key+1 as mykey,concat(value,"value") as myvalue from staging;
++describe parquet_ctas_alias;
++select * from parquet_ctas_alias;
++
++create table parquet_ctas_mixed stored as parquet as select key,key+1,concat(value,"value") as myvalue from staging;
++describe parquet_ctas_mixed;
++select * from parquet_ctas_mixed;
+\ No newline at end of file
+diff --git a/src/ql/src/test/results/clientpositive/ctas.q.out b/src/ql/src/test/results/clientpositive/ctas.q.out
+index f046662..1b41266 100644
+--- a/src/ql/src/test/results/clientpositive/ctas.q.out
++++ b/src/ql/src/test/results/clientpositive/ctas.q.out
+@@ -902,7 +902,7 @@ STAGE PLANS:
+                   input format: org.apache.hadoop.mapred.TextInputFormat
+                   output format: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
+                   properties:
+-                    columns _col0,_col1
++                    columns key,value
+                     columns.types string:string
+                     field.delim ,
+                     line.delim 
+diff --git a/src/ql/src/test/results/clientpositive/ctas_hadoop20.q.out b/src/ql/src/test/results/clientpositive/ctas_hadoop20.q.out
+index 17dfcad..daaed89 100644
+--- a/src/ql/src/test/results/clientpositive/ctas_hadoop20.q.out
++++ b/src/ql/src/test/results/clientpositive/ctas_hadoop20.q.out
+@@ -902,7 +902,7 @@ STAGE PLANS:
+                   input format: org.apache.hadoop.mapred.TextInputFormat
+                   output format: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
+                   properties:
+-                    columns _col0,_col1
++                    columns key,value
+                     columns.types string:string
+                     field.delim ,
+                     line.delim 
+diff --git a/src/ql/src/test/results/clientpositive/merge3.q.out b/src/ql/src/test/results/clientpositive/merge3.q.out
+index 9435e7e..5266e3a 100644
+--- a/src/ql/src/test/results/clientpositive/merge3.q.out
++++ b/src/ql/src/test/results/clientpositive/merge3.q.out
+@@ -92,7 +92,7 @@ STAGE PLANS:
+                     input format: org.apache.hadoop.mapred.TextInputFormat
+                     output format: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
+                     properties:
+-                      columns _col0,_col1
++                      columns key,value
+                       columns.types string:string
+                       name default.merge_src2
+                       serialization.format 1
+@@ -195,7 +195,7 @@ STAGE PLANS:
+                   input format: org.apache.hadoop.mapred.TextInputFormat
+                   output format: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
+                   properties:
+-                    columns _col0,_col1
++                    columns key,value
+                     columns.types string:string
+                     name default.merge_src2
+                     serialization.format 1
+@@ -214,7 +214,7 @@ STAGE PLANS:
+             input format: org.apache.hadoop.mapred.TextInputFormat
+             output format: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
+             properties:
+-              columns _col0,_col1
++              columns key,value
+               columns.types string:string
+               name default.merge_src2
+               serialization.format 1
+@@ -224,7 +224,7 @@ STAGE PLANS:
+               input format: org.apache.hadoop.mapred.TextInputFormat
+               output format: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
+               properties:
+-                columns _col0,_col1
++                columns key,value
+                 columns.types string:string
+                 name default.merge_src2
+                 serialization.format 1
+@@ -250,7 +250,7 @@ STAGE PLANS:
+                   input format: org.apache.hadoop.mapred.TextInputFormat
+                   output format: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
+                   properties:
+-                    columns _col0,_col1
++                    columns key,value
+                     columns.types string:string
+                     name default.merge_src2
+                     serialization.format 1
+@@ -269,7 +269,7 @@ STAGE PLANS:
+             input format: org.apache.hadoop.mapred.TextInputFormat
+             output format: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
+             properties:
+-              columns _col0,_col1
++              columns key,value
+               columns.types string:string
+               name default.merge_src2
+               serialization.format 1
+@@ -279,7 +279,7 @@ STAGE PLANS:
+               input format: org.apache.hadoop.mapred.TextInputFormat
+               output format: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
+               properties:
+-                columns _col0,_col1
++                columns key,value
+                 columns.types string:string
+                 name default.merge_src2
+                 serialization.format 1
+diff --git a/src/ql/src/test/results/clientpositive/parquet_ctas.q.out b/src/ql/src/test/results/clientpositive/parquet_ctas.q.out
+new file mode 100644
+index 0000000..ac6624c
+--- /dev/null
++++ b/src/ql/src/test/results/clientpositive/parquet_ctas.q.out
+@@ -0,0 +1,184 @@
++PREHOOK: query: drop table staging
++PREHOOK: type: DROPTABLE
++POSTHOOK: query: drop table staging
++POSTHOOK: type: DROPTABLE
++PREHOOK: query: drop table parquet_ctas
++PREHOOK: type: DROPTABLE
++POSTHOOK: query: drop table parquet_ctas
++POSTHOOK: type: DROPTABLE
++PREHOOK: query: drop table parquet_ctas_advanced
++PREHOOK: type: DROPTABLE
++POSTHOOK: query: drop table parquet_ctas_advanced
++POSTHOOK: type: DROPTABLE
++PREHOOK: query: drop table parquet_ctas_alias
++PREHOOK: type: DROPTABLE
++POSTHOOK: query: drop table parquet_ctas_alias
++POSTHOOK: type: DROPTABLE
++PREHOOK: query: drop table parquet_ctas_mixed
++PREHOOK: type: DROPTABLE
++POSTHOOK: query: drop table parquet_ctas_mixed
++POSTHOOK: type: DROPTABLE
++PREHOOK: query: create table staging (key int, value string) stored as textfile
++PREHOOK: type: CREATETABLE
++POSTHOOK: query: create table staging (key int, value string) stored as textfile
++POSTHOOK: type: CREATETABLE
++POSTHOOK: Output: default@staging
++PREHOOK: query: insert into table staging select * from src order by key limit 10
++PREHOOK: type: QUERY
++PREHOOK: Input: default@src
++PREHOOK: Output: default@staging
++POSTHOOK: query: insert into table staging select * from src order by key limit 10
++POSTHOOK: type: QUERY
++POSTHOOK: Input: default@src
++POSTHOOK: Output: default@staging
++POSTHOOK: Lineage: staging.key EXPRESSION [(src)src.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: staging.value SIMPLE [(src)src.FieldSchema(name:value, type:string, comment:default), ]
++PREHOOK: query: create table parquet_ctas stored as parquet as select * from staging
++PREHOOK: type: CREATETABLE_AS_SELECT
++PREHOOK: Input: default@staging
++POSTHOOK: query: create table parquet_ctas stored as parquet as select * from staging
++POSTHOOK: type: CREATETABLE_AS_SELECT
++POSTHOOK: Input: default@staging
++POSTHOOK: Output: default@parquet_ctas
++POSTHOOK: Lineage: staging.key EXPRESSION [(src)src.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: staging.value SIMPLE [(src)src.FieldSchema(name:value, type:string, comment:default), ]
++PREHOOK: query: describe parquet_ctas
++PREHOOK: type: DESCTABLE
++POSTHOOK: query: describe parquet_ctas
++POSTHOOK: type: DESCTABLE
++POSTHOOK: Lineage: staging.key EXPRESSION [(src)src.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: staging.value SIMPLE [(src)src.FieldSchema(name:value, type:string, comment:default), ]
++key                 	int                 	from deserializer   
++value               	string              	from deserializer   
++PREHOOK: query: select * from parquet_ctas
++PREHOOK: type: QUERY
++PREHOOK: Input: default@parquet_ctas
++#### A masked pattern was here ####
++POSTHOOK: query: select * from parquet_ctas
++POSTHOOK: type: QUERY
++POSTHOOK: Input: default@parquet_ctas
++#### A masked pattern was here ####
++POSTHOOK: Lineage: staging.key EXPRESSION [(src)src.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: staging.value SIMPLE [(src)src.FieldSchema(name:value, type:string, comment:default), ]
++0	val_0
++0	val_0
++0	val_0
++10	val_10
++100	val_100
++100	val_100
++103	val_103
++103	val_103
++104	val_104
++104	val_104
++PREHOOK: query: create table parquet_ctas_advanced stored as parquet as select key+1,concat(value,"value") from staging
++PREHOOK: type: CREATETABLE_AS_SELECT
++PREHOOK: Input: default@staging
++POSTHOOK: query: create table parquet_ctas_advanced stored as parquet as select key+1,concat(value,"value") from staging
++POSTHOOK: type: CREATETABLE_AS_SELECT
++POSTHOOK: Input: default@staging
++POSTHOOK: Output: default@parquet_ctas_advanced
++POSTHOOK: Lineage: staging.key EXPRESSION [(src)src.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: staging.value SIMPLE [(src)src.FieldSchema(name:value, type:string, comment:default), ]
++PREHOOK: query: describe parquet_ctas_advanced
++PREHOOK: type: DESCTABLE
++POSTHOOK: query: describe parquet_ctas_advanced
++POSTHOOK: type: DESCTABLE
++POSTHOOK: Lineage: staging.key EXPRESSION [(src)src.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: staging.value SIMPLE [(src)src.FieldSchema(name:value, type:string, comment:default), ]
++_c0                 	int                 	from deserializer   
++_c1                 	string              	from deserializer   
++PREHOOK: query: select * from parquet_ctas_advanced
++PREHOOK: type: QUERY
++PREHOOK: Input: default@parquet_ctas_advanced
++#### A masked pattern was here ####
++POSTHOOK: query: select * from parquet_ctas_advanced
++POSTHOOK: type: QUERY
++POSTHOOK: Input: default@parquet_ctas_advanced
++#### A masked pattern was here ####
++POSTHOOK: Lineage: staging.key EXPRESSION [(src)src.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: staging.value SIMPLE [(src)src.FieldSchema(name:value, type:string, comment:default), ]
++1	val_0value
++1	val_0value
++1	val_0value
++11	val_10value
++101	val_100value
++101	val_100value
++104	val_103value
++104	val_103value
++105	val_104value
++105	val_104value
++PREHOOK: query: create table parquet_ctas_alias stored as parquet as select key+1 as mykey,concat(value,"value") as myvalue from staging
++PREHOOK: type: CREATETABLE_AS_SELECT
++PREHOOK: Input: default@staging
++POSTHOOK: query: create table parquet_ctas_alias stored as parquet as select key+1 as mykey,concat(value,"value") as myvalue from staging
++POSTHOOK: type: CREATETABLE_AS_SELECT
++POSTHOOK: Input: default@staging
++POSTHOOK: Output: default@parquet_ctas_alias
++POSTHOOK: Lineage: staging.key EXPRESSION [(src)src.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: staging.value SIMPLE [(src)src.FieldSchema(name:value, type:string, comment:default), ]
++PREHOOK: query: describe parquet_ctas_alias
++PREHOOK: type: DESCTABLE
++POSTHOOK: query: describe parquet_ctas_alias
++POSTHOOK: type: DESCTABLE
++POSTHOOK: Lineage: staging.key EXPRESSION [(src)src.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: staging.value SIMPLE [(src)src.FieldSchema(name:value, type:string, comment:default), ]
++mykey               	int                 	from deserializer   
++myvalue             	string              	from deserializer   
++PREHOOK: query: select * from parquet_ctas_alias
++PREHOOK: type: QUERY
++PREHOOK: Input: default@parquet_ctas_alias
++#### A masked pattern was here ####
++POSTHOOK: query: select * from parquet_ctas_alias
++POSTHOOK: type: QUERY
++POSTHOOK: Input: default@parquet_ctas_alias
++#### A masked pattern was here ####
++POSTHOOK: Lineage: staging.key EXPRESSION [(src)src.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: staging.value SIMPLE [(src)src.FieldSchema(name:value, type:string, comment:default), ]
++1	val_0value
++1	val_0value
++1	val_0value
++11	val_10value
++101	val_100value
++101	val_100value
++104	val_103value
++104	val_103value
++105	val_104value
++105	val_104value
++PREHOOK: query: create table parquet_ctas_mixed stored as parquet as select key,key+1,concat(value,"value") as myvalue from staging
++PREHOOK: type: CREATETABLE_AS_SELECT
++PREHOOK: Input: default@staging
++POSTHOOK: query: create table parquet_ctas_mixed stored as parquet as select key,key+1,concat(value,"value") as myvalue from staging
++POSTHOOK: type: CREATETABLE_AS_SELECT
++POSTHOOK: Input: default@staging
++POSTHOOK: Output: default@parquet_ctas_mixed
++POSTHOOK: Lineage: staging.key EXPRESSION [(src)src.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: staging.value SIMPLE [(src)src.FieldSchema(name:value, type:string, comment:default), ]
++PREHOOK: query: describe parquet_ctas_mixed
++PREHOOK: type: DESCTABLE
++POSTHOOK: query: describe parquet_ctas_mixed
++POSTHOOK: type: DESCTABLE
++POSTHOOK: Lineage: staging.key EXPRESSION [(src)src.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: staging.value SIMPLE [(src)src.FieldSchema(name:value, type:string, comment:default), ]
++key                 	int                 	from deserializer   
++_c1                 	int                 	from deserializer   
++myvalue             	string              	from deserializer   
++PREHOOK: query: select * from parquet_ctas_mixed
++PREHOOK: type: QUERY
++PREHOOK: Input: default@parquet_ctas_mixed
++#### A masked pattern was here ####
++POSTHOOK: query: select * from parquet_ctas_mixed
++POSTHOOK: type: QUERY
++POSTHOOK: Input: default@parquet_ctas_mixed
++#### A masked pattern was here ####
++POSTHOOK: Lineage: staging.key EXPRESSION [(src)src.FieldSchema(name:key, type:string, comment:default), ]
++POSTHOOK: Lineage: staging.value SIMPLE [(src)src.FieldSchema(name:value, type:string, comment:default), ]
++0	1	val_0value
++0	1	val_0value
++0	1	val_0value
++10	11	val_10value
++100	101	val_100value
++100	101	val_100value
++103	104	val_103value
++103	104	val_103value
++104	105	val_104value
++104	105	val_104value
+-- 
+1.7.0.4
+

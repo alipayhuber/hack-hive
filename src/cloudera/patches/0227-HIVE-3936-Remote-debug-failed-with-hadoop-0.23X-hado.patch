@@ -1,0 +1,25 @@
+From a232f51ac51b792b479bdc607d9e3905ab2324fc Mon Sep 17 00:00:00 2001
+From: Brock Noland <brock@apache.org>
+Date: Mon, 6 Jan 2014 14:17:02 +0000
+Subject: [PATCH 227/375] HIVE-3936 - Remote debug failed with hadoop 0.23X, hadoop 2.X (Swarnim Kulkarni via Brock)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1555794 13f79535-47bb-0310-9956-ffa450edef68
+---
+ bin/hive |    1 -
+ 1 files changed, 0 insertions(+), 1 deletions(-)
+
+diff --git a/src/bin/hive b/src/bin/hive
+index d26d867..a9feb65 100755
+--- a/src/bin/hive
++++ b/src/bin/hive
+@@ -218,7 +218,6 @@ if [ "$DEBUG" ]; then
+   else
+     get_debug_params "$DEBUG"
+     export HADOOP_CLIENT_OPTS="$HADOOP_CLIENT_OPTS $HIVE_MAIN_CLIENT_DEBUG_OPTS"
+-    export HADOOP_OPTS="$HADOOP_OPTS $HADOOP_CLIENT_OPTS"
+   fi
+ fi
+ 
+-- 
+1.7.0.4
+

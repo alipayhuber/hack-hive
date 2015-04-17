@@ -1,0 +1,41 @@
+From c7d691b021083854aad54d73457dcb32279c1919 Mon Sep 17 00:00:00 2001
+From: Thejas Madhavan Nair <thejas@apache.org>
+Date: Tue, 29 Oct 2013 18:47:17 +0000
+Subject: [PATCH 131/375] HIVE-5668: path normalization in MapOperator is expensive (Thejas Nair reviewed by Gunther Hagleitner)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1536845 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../apache/hadoop/hive/ql/exec/MapOperator.java    |   10 +++++++++-
+ 1 files changed, 9 insertions(+), 1 deletions(-)
+
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/MapOperator.java b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/MapOperator.java
+index ca0873a..9facb27 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/MapOperator.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/MapOperator.java
+@@ -82,6 +82,7 @@
+ 
+   private transient MapOpCtx current;
+   private transient List<Operator<? extends OperatorDesc>> extraChildrenToClose = null;
++  private final Map<String, Path> normalizedPaths = new HashMap<String, Path>();
+ 
+   private static class MapInputPath {
+     String path;
+@@ -463,7 +464,14 @@ public void cleanUpInputFileChangedOp() throws HiveException {
+   }
+ 
+   private Path normalizePath(String onefile) {
+-    return new Path(onefile);
++    //creating Path is expensive, so cache the corresponding
++    //Path object in normalizedPaths
++    Path path = normalizedPaths.get(onefile);
++    if(path == null){
++      path = new Path(onefile);
++      normalizedPaths.put(onefile, path);
++    }
++    return path;
+   }
+ 
+   public void process(Writable value) throws HiveException {
+-- 
+1.7.0.4
+

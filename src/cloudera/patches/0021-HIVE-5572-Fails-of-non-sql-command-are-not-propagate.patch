@@ -1,0 +1,62 @@
+From 7baeb3a36b5d519f71afbe229bb9c1103f742f1d Mon Sep 17 00:00:00 2001
+From: Navis Ryu <navis@apache.org>
+Date: Mon, 21 Oct 2013 06:34:28 +0000
+Subject: [PATCH 021/375] HIVE-5572 : Fails of non-sql command are not propagated to jdbc2 client (Navis reviewed by Brock Noland)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1534034 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../java/org/apache/hadoop/hive/conf/HiveConf.java |    3 ++-
+ .../cli/operation/HiveCommandOperation.java        |    9 +++++++--
+ 2 files changed, 9 insertions(+), 3 deletions(-)
+
+diff --git a/src/common/src/java/org/apache/hadoop/hive/conf/HiveConf.java b/src/common/src/java/org/apache/hadoop/hive/conf/HiveConf.java
+index 8c42bd7..58e79f2 100644
+--- a/src/common/src/java/org/apache/hadoop/hive/conf/HiveConf.java
++++ b/src/common/src/java/org/apache/hadoop/hive/conf/HiveConf.java
+@@ -962,7 +962,7 @@ private static synchronized InputStream getConfVarInputStream() {
+ 
+   public void verifyAndSet(String name, String value) throws IllegalArgumentException {
+     if (restrictList.contains(name)) {
+-      throw new IllegalArgumentException("Cann't modify " + name + " at runtime");
++      throw new IllegalArgumentException("Cannot modify " + name + " at runtime");
+     }
+     set(name, value);
+   }
+@@ -1106,6 +1106,7 @@ public HiveConf(HiveConf other) {
+     hiveJar = other.hiveJar;
+     auxJars = other.auxJars;
+     origProp = (Properties)other.origProp.clone();
++    restrictList.addAll(other.restrictList);
+   }
+ 
+   public Properties getAllProperties() {
+diff --git a/src/service/src/java/org/apache/hive/service/cli/operation/HiveCommandOperation.java b/src/service/src/java/org/apache/hive/service/cli/operation/HiveCommandOperation.java
+index 0a8825e..dc796eb 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/operation/HiveCommandOperation.java
++++ b/src/service/src/java/org/apache/hive/service/cli/operation/HiveCommandOperation.java
+@@ -106,8 +106,10 @@ public void run() throws HiveSQLException {
+ 
+       response = getCommandProcessor().run(commandArgs);
+       int returnCode = response.getResponseCode();
+-      String sqlState = response.getSQLState();
+-      String errorMessage = response.getErrorMessage();
++      if (returnCode != 0) {
++        throw new HiveSQLException("Error while processing statement: "
++            + response.getErrorMessage(), response.getSQLState(), response.getResponseCode());
++      }
+       Schema schema = response.getSchema();
+       if (schema != null) {
+         setHasResultSet(true);
+@@ -116,6 +118,9 @@ public void run() throws HiveSQLException {
+         setHasResultSet(false);
+         resultSchema = new TableSchema();
+       }
++    } catch (HiveSQLException e) {
++      setState(OperationState.ERROR);
++      throw e;
+     } catch (Exception e) {
+       setState(OperationState.ERROR);
+       throw new HiveSQLException("Error running query: " + e.toString(), e);
+-- 
+1.7.0.4
+

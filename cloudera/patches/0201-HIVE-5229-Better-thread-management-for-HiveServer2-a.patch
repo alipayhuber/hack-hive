@@ -1,0 +1,181 @@
+From 14572ae40617fd3ca3e1ac52df498a962a0fc496 Mon Sep 17 00:00:00 2001
+From: Thejas Madhavan Nair <thejas@apache.org>
+Date: Sat, 9 Nov 2013 07:23:45 +0000
+Subject: [PATCH 201/375] HIVE-5229 : Better thread management for HiveServer2 async threads (Vaibhav Gumashta via Thejas Nair)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1540267 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../java/org/apache/hadoop/hive/conf/HiveConf.java |    8 ++++-
+ conf/hive-default.xml.template                     |   18 ++++++++++-
+ .../hive/service/cli/operation/SQLOperation.java   |    3 +-
+ .../hive/service/cli/session/SessionManager.java   |   31 +++++++++++--------
+ 4 files changed, 43 insertions(+), 17 deletions(-)
+
+diff --git a/src/common/src/java/org/apache/hadoop/hive/conf/HiveConf.java b/src/common/src/java/org/apache/hadoop/hive/conf/HiveConf.java
+index 492dbf3..bb0d6df 100644
+--- a/src/common/src/java/org/apache/hadoop/hive/conf/HiveConf.java
++++ b/src/common/src/java/org/apache/hadoop/hive/conf/HiveConf.java
+@@ -752,9 +752,15 @@
+ 
+     // Configuration for async thread pool in SessionManager
+     // Number of async threads
+-    HIVE_SERVER2_ASYNC_EXEC_THREADS("hive.server2.async.exec.threads", 50),
++    HIVE_SERVER2_ASYNC_EXEC_THREADS("hive.server2.async.exec.threads", 100),
+     // Number of seconds HiveServer2 shutdown will wait for async threads to terminate
+     HIVE_SERVER2_ASYNC_EXEC_SHUTDOWN_TIMEOUT("hive.server2.async.exec.shutdown.timeout", 10L),
++    // Size of the wait queue for async thread pool in HiveServer2.
++    // After hitting this limit, the async thread pool will reject new requests.
++    HIVE_SERVER2_ASYNC_EXEC_WAIT_QUEUE_SIZE("hive.server2.async.exec.wait.queue.size", 100),
++    // Number of seconds that an idle HiveServer2 async thread (from the thread pool)
++    // will wait for a new task to arrive before terminating
++    HIVE_SERVER2_ASYNC_EXEC_KEEPALIVE_TIME("hive.server2.async.exec.keepalive.time", 10),
+ 
+ 
+     // HiveServer2 auth configuration
+diff --git a/src/conf/hive-default.xml.template b/src/conf/hive-default.xml.template
+index 6811de2..e8ea2f8 100644
+--- a/src/conf/hive-default.xml.template
++++ b/src/conf/hive-default.xml.template
+@@ -1913,18 +1913,32 @@
+ 
+ <property>
+   <name>hive.server2.async.exec.threads</name>
+-  <value>50</value>
++  <value>100</value>
+   <description>Number of threads in the async thread pool for HiveServer2</description>
+ </property>
+ 
+ <property>
+   <name>hive.server2.async.exec.shutdown.timeout</name>
+   <value>10</value>
+-  <description>Time (in seconds) for which HiveServer2 shutdown will wait for async 
++  <description>Time (in seconds) for which HiveServer2 shutdown will wait for async
+   threads to terminate</description>
+ </property>
+ 
+ <property>
++  <name>hive.server2.async.exec.keepalive.time</name>
++  <value>10</value>
++  <description>Time (in seconds) that an idle HiveServer2 async thread (from the thread pool) will wait
++  for a new task to arrive before terminating</description>
++</property>
++
++<property>
++  <name>hive.server2.async.exec.wait.queue.size</name>
++  <value>100</value>
++  <description>Size of the wait queue for async thread pool in HiveServer2.
++  After hitting this limit, the async thread pool will reject new requests.</description>
++</property>
++
++<property>
+   <name>hive.server2.thrift.port</name>
+   <value>10000</value>
+   <description>Port number of HiveServer2 Thrift interface.
+diff --git a/src/service/src/java/org/apache/hive/service/cli/operation/SQLOperation.java b/src/service/src/java/org/apache/hive/service/cli/operation/SQLOperation.java
+index ff83151..c7f37e5 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/operation/SQLOperation.java
++++ b/src/service/src/java/org/apache/hive/service/cli/operation/SQLOperation.java
+@@ -183,7 +183,8 @@ public void run() {
+           getParentSession().getSessionManager().submitBackgroundOperation(backgroundOperation);
+       } catch (RejectedExecutionException rejected) {
+         setState(OperationState.ERROR);
+-        throw new HiveSQLException(rejected);
++        throw new HiveSQLException("All the asynchronous threads are currently busy, " +
++            "please retry the operation", rejected);
+       }
+     }
+   }
+diff --git a/src/service/src/java/org/apache/hive/service/cli/session/SessionManager.java b/src/service/src/java/org/apache/hive/service/cli/session/SessionManager.java
+index b91ea98..b3bbd01 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/session/SessionManager.java
++++ b/src/service/src/java/org/apache/hive/service/cli/session/SessionManager.java
+@@ -21,16 +21,16 @@
+ import java.util.HashMap;
+ import java.util.List;
+ import java.util.Map;
+-import java.util.concurrent.ExecutorService;
+-import java.util.concurrent.Executors;
+ import java.util.concurrent.Future;
++import java.util.concurrent.LinkedBlockingQueue;
++import java.util.concurrent.ThreadPoolExecutor;
+ import java.util.concurrent.TimeUnit;
+ 
+ import org.apache.commons.logging.Log;
+ import org.apache.commons.logging.LogFactory;
+ import org.apache.hadoop.hive.conf.HiveConf;
+-import org.apache.hadoop.hive.ql.hooks.HookUtils;
+ import org.apache.hadoop.hive.conf.HiveConf.ConfVars;
++import org.apache.hadoop.hive.ql.hooks.HookUtils;
+ import org.apache.hive.service.CompositeService;
+ import org.apache.hive.service.cli.HiveSQLException;
+ import org.apache.hive.service.cli.SessionHandle;
+@@ -51,7 +51,7 @@
+   private OperationManager operationManager = new OperationManager();
+   private LogManager logManager = new LogManager();
+   private static final Object sessionMapLock = new Object();
+-  private ExecutorService backgroundOperationPool;
++  private ThreadPoolExecutor backgroundOperationPool;
+ 
+   public SessionManager() {
+     super("SessionManager");
+@@ -62,8 +62,17 @@ public synchronized void init(HiveConf hiveConf) {
+     this.hiveConf = hiveConf;
+     operationManager = new OperationManager();
+     int backgroundPoolSize = hiveConf.getIntVar(ConfVars.HIVE_SERVER2_ASYNC_EXEC_THREADS);
+-    LOG.info("HiveServer2: Async execution pool size" + backgroundPoolSize);
+-    backgroundOperationPool = Executors.newFixedThreadPool(backgroundPoolSize);
++    LOG.info("HiveServer2: Async execution thread pool size: " + backgroundPoolSize);
++    int backgroundPoolQueueSize = hiveConf.getIntVar(ConfVars.HIVE_SERVER2_ASYNC_EXEC_WAIT_QUEUE_SIZE);
++    LOG.info("HiveServer2: Async execution wait queue size: " + backgroundPoolQueueSize);
++    int keepAliveTime = hiveConf.getIntVar(ConfVars.HIVE_SERVER2_ASYNC_EXEC_KEEPALIVE_TIME);
++    LOG.info("HiveServer2: Async execution thread keepalive time: " + keepAliveTime);
++    // Create a thread pool with #backgroundPoolSize threads
++    // Threads terminate when they are idle for more than the keepAliveTime
++    // An bounded blocking queue is used to queue incoming operations, if #operations > backgroundPoolSize
++    backgroundOperationPool = new ThreadPoolExecutor(backgroundPoolSize, backgroundPoolSize,
++        keepAliveTime, TimeUnit.SECONDS, new LinkedBlockingQueue<Runnable>(backgroundPoolQueueSize));
++    backgroundOperationPool.allowCoreThreadTimeOut(true);
+     addService(operationManager);
+     logManager = new LogManager();
+     logManager.setSessionManager(this);
+@@ -75,26 +84,23 @@ public synchronized void init(HiveConf hiveConf) {
+   @Override
+   public synchronized void start() {
+     super.start();
+-    // TODO
+   }
+ 
+   @Override
+   public synchronized void stop() {
+-    // TODO
+     super.stop();
+     if (backgroundOperationPool != null) {
+       backgroundOperationPool.shutdown();
+-      long timeout = hiveConf.getLongVar(ConfVars.HIVE_SERVER2_ASYNC_EXEC_SHUTDOWN_TIMEOUT);
++      int timeout = hiveConf.getIntVar(ConfVars.HIVE_SERVER2_ASYNC_EXEC_SHUTDOWN_TIMEOUT);
+       try {
+         backgroundOperationPool.awaitTermination(timeout, TimeUnit.SECONDS);
+-      } catch (InterruptedException exc) {
++      } catch (InterruptedException e) {
+         LOG.warn("HIVE_SERVER2_ASYNC_EXEC_SHUTDOWN_TIMEOUT = " + timeout +
+-        		" seconds has been exceeded. RUNNING background operations will be shut down", exc);
++            " seconds has been exceeded. RUNNING background operations will be shut down", e);
+       }
+     }
+   }
+ 
+-
+   public SessionHandle openSession(String username, String password, Map<String, String> sessionConf)
+           throws HiveSQLException {
+      return openSession(username, password, sessionConf, false, null);
+@@ -136,7 +142,6 @@ public void closeSession(SessionHandle sessionHandle) throws HiveSQLException {
+     session.close();
+   }
+ 
+-
+   public HiveSession getSession(SessionHandle sessionHandle) throws HiveSQLException {
+     HiveSession session;
+     synchronized(sessionMapLock) {
+-- 
+1.7.0.4
+

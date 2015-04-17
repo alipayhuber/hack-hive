@@ -1,0 +1,301 @@
+From 78e27f26550c5ebe570e7fff612396d5f7df9537 Mon Sep 17 00:00:00 2001
+From: Xuefu Zhang <xuefu@apache.org>
+Date: Sun, 17 Nov 2013 04:39:19 +0000
+Subject: [PATCH 149/375] CDH-15805: HIVE-5564: Need to accomodate table decimal columns that were defined prior to HIVE-3976 (Reviewed by Brock)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1542643 13f79535-47bb-0310-9956-ffa450edef68
+
+Conflicts:
+	ql/src/test/queries/clientpositive/decimal_1.q
+	ql/src/test/results/clientpositive/decimal_1.q.out
+	serde/src/java/org/apache/hadoop/hive/serde2/typeinfo/TypeInfoUtils.java
+
+Conflict 1: Test altered in this change was modified upstream to speed it up, but that was not backported.
+Conflict 2: There was a case for parsing char types in TypeInfoUtils that was altered in this change, which was only added upstream.
+---
+ .../org/apache/hadoop/hive/ql/exec/DDLTask.java    |   20 ++++++++++
+ ql/src/test/queries/clientpositive/decimal_1.q     |   11 ++++-
+ ql/src/test/results/clientpositive/decimal_1.q.out |   41 +++++++++++++++++---
+ .../hadoop/hive/serde2/typeinfo/TypeInfoUtils.java |   31 +++++++--------
+ 4 files changed, 78 insertions(+), 25 deletions(-)
+
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/DDLTask.java b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/DDLTask.java
+index 9a17c3c..2de4a41 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/DDLTask.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/DDLTask.java
+@@ -54,6 +54,7 @@
+ import org.apache.hadoop.fs.FileSystem;
+ import org.apache.hadoop.fs.FsShell;
+ import org.apache.hadoop.fs.Path;
++import org.apache.hadoop.hive.common.type.HiveDecimal;
+ import org.apache.hadoop.hive.conf.HiveConf;
+ import org.apache.hadoop.hive.conf.HiveConf.ConfVars;
+ import org.apache.hadoop.hive.metastore.MetaStoreUtils;
+@@ -161,6 +162,7 @@
+ import org.apache.hadoop.hive.serde2.columnar.ColumnarSerDe;
+ import org.apache.hadoop.hive.serde2.dynamic_type.DynamicSerDe;
+ import org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe;
++import org.apache.hadoop.hive.serde2.typeinfo.DecimalTypeInfo;
+ import org.apache.hadoop.hive.shims.HadoopShims;
+ import org.apache.hadoop.hive.shims.ShimLoader;
+ import org.apache.hadoop.io.IOUtils;
+@@ -2840,6 +2842,8 @@ private int describeTable(Hive db, DescTableDesc descTbl) throws HiveException {
+         cols = Hive.getFieldsFromDeserializer(colPath, tbl.getDeserializer());
+       }
+ 
++      fixDecimalColumnTypeName(cols);
++
+       formatter.describeTable(outStream, colPath, tableName, tbl, part, cols,
+                               descTbl.isFormatted(), descTbl.isExt(), descTbl.isPretty());
+ 
+@@ -2856,6 +2860,22 @@ private int describeTable(Hive db, DescTableDesc descTbl) throws HiveException {
+     return 0;
+   }
+ 
++  /**
++   * Fix the type name of a column of type decimal w/o precision/scale specified. This makes
++   * the describe table show "decimal(10,0)" instead of "decimal" even if the type stored
++   * in metastore is "decimal", which is possible with previous hive.
++   *
++   * @param cols columns that to be fixed as such
++   */
++  private static void fixDecimalColumnTypeName(List<FieldSchema> cols) {
++    for (FieldSchema col : cols) {
++      if (serdeConstants.DECIMAL_TYPE_NAME.equals(col.getType())) {
++        col.setType(DecimalTypeInfo.getQualifiedName(HiveDecimal.DEFAULT_PRECISION,
++            HiveDecimal.DEFAULT_SCALE));
++      }
++    }
++  }
++
+   public static void writeGrantInfo(DataOutput outStream,
+       PrincipalType principalType, String principalName, String dbName,
+       String tableName, String partName, String columnName,
+diff --git a/src/ql/src/test/queries/clientpositive/decimal_1.q b/src/ql/src/test/queries/clientpositive/decimal_1.q
+index d865af4..d40fe27 100644
+--- a/src/ql/src/test/queries/clientpositive/decimal_1.q
++++ b/src/ql/src/test/queries/clientpositive/decimal_1.q
+@@ -1,10 +1,15 @@
+-drop table decimal_1;
++set hive.fetch.task.conversion=more;
++
++drop table if exists decimal_1;
+ 
+-create table decimal_1 (t decimal(4,2));
++create table decimal_1 (t decimal(4,2), u decimal(5), v decimal);
+ alter table decimal_1 set serde 'org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe';
+ 
++desc decimal_1;
++
+ insert overwrite table decimal_1
+-  select cast('17.29' as decimal(4,2)) from src limit 1;
++  select cast('17.29' as decimal(4,2)), 3.1415926BD, 3115926.54321BD from src limit 1;
++
+ select cast(t as boolean) from decimal_1 limit 1;
+ select cast(t as tinyint) from decimal_1 limit 1;
+ select cast(t as smallint) from decimal_1 limit 1;
+diff --git a/src/ql/src/test/results/clientpositive/decimal_1.q.out b/src/ql/src/test/results/clientpositive/decimal_1.q.out
+index c0a4348..ade6d69 100644
+--- a/src/ql/src/test/results/clientpositive/decimal_1.q.out
++++ b/src/ql/src/test/results/clientpositive/decimal_1.q.out
+@@ -1,10 +1,10 @@
+-PREHOOK: query: drop table decimal_1
++PREHOOK: query: drop table if exists decimal_1
+ PREHOOK: type: DROPTABLE
+-POSTHOOK: query: drop table decimal_1
++POSTHOOK: query: drop table if exists decimal_1
+ POSTHOOK: type: DROPTABLE
+-PREHOOK: query: create table decimal_1 (t decimal(4,2))
++PREHOOK: query: create table decimal_1 (t decimal(4,2), u decimal(5), v decimal)
+ PREHOOK: type: CREATETABLE
+-POSTHOOK: query: create table decimal_1 (t decimal(4,2))
++POSTHOOK: query: create table decimal_1 (t decimal(4,2), u decimal(5), v decimal)
+ POSTHOOK: type: CREATETABLE
+ POSTHOOK: Output: default@decimal_1
+ PREHOOK: query: alter table decimal_1 set serde 'org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe'
+@@ -15,17 +15,26 @@ POSTHOOK: query: alter table decimal_1 set serde 'org.apache.hadoop.hive.serde2.
+ POSTHOOK: type: ALTERTABLE_SERIALIZER
+ POSTHOOK: Input: default@decimal_1
+ POSTHOOK: Output: default@decimal_1
++PREHOOK: query: desc decimal_1
++PREHOOK: type: DESCTABLE
++POSTHOOK: query: desc decimal_1
++POSTHOOK: type: DESCTABLE
++t                   	decimal(4,2)        	from deserializer   
++u                   	decimal(5,0)        	from deserializer   
++v                   	decimal(10,0)       	from deserializer   
+ PREHOOK: query: insert overwrite table decimal_1
+-  select cast('17.29' as decimal(4,2)) from src limit 1
++  select cast('17.29' as decimal(4,2)), 3.1415926BD, 3115926.54321BD from src limit 1
+ PREHOOK: type: QUERY
+ PREHOOK: Input: default@src
+ PREHOOK: Output: default@decimal_1
+ POSTHOOK: query: insert overwrite table decimal_1
+-  select cast('17.29' as decimal(4,2)) from src limit 1
++  select cast('17.29' as decimal(4,2)), 3.1415926BD, 3115926.54321BD from src limit 1
+ POSTHOOK: type: QUERY
+ POSTHOOK: Input: default@src
+ POSTHOOK: Output: default@decimal_1
+ POSTHOOK: Lineage: decimal_1.t EXPRESSION []
++POSTHOOK: Lineage: decimal_1.u EXPRESSION []
++POSTHOOK: Lineage: decimal_1.v EXPRESSION []
+ PREHOOK: query: select cast(t as boolean) from decimal_1 limit 1
+ PREHOOK: type: QUERY
+ PREHOOK: Input: default@decimal_1
+@@ -35,6 +44,8 @@ POSTHOOK: type: QUERY
+ POSTHOOK: Input: default@decimal_1
+ #### A masked pattern was here ####
+ POSTHOOK: Lineage: decimal_1.t EXPRESSION []
++POSTHOOK: Lineage: decimal_1.u EXPRESSION []
++POSTHOOK: Lineage: decimal_1.v EXPRESSION []
+ true
+ PREHOOK: query: select cast(t as tinyint) from decimal_1 limit 1
+ PREHOOK: type: QUERY
+@@ -45,6 +56,8 @@ POSTHOOK: type: QUERY
+ POSTHOOK: Input: default@decimal_1
+ #### A masked pattern was here ####
+ POSTHOOK: Lineage: decimal_1.t EXPRESSION []
++POSTHOOK: Lineage: decimal_1.u EXPRESSION []
++POSTHOOK: Lineage: decimal_1.v EXPRESSION []
+ 17
+ PREHOOK: query: select cast(t as smallint) from decimal_1 limit 1
+ PREHOOK: type: QUERY
+@@ -55,6 +68,8 @@ POSTHOOK: type: QUERY
+ POSTHOOK: Input: default@decimal_1
+ #### A masked pattern was here ####
+ POSTHOOK: Lineage: decimal_1.t EXPRESSION []
++POSTHOOK: Lineage: decimal_1.u EXPRESSION []
++POSTHOOK: Lineage: decimal_1.v EXPRESSION []
+ 17
+ PREHOOK: query: select cast(t as int) from decimal_1 limit 1
+ PREHOOK: type: QUERY
+@@ -65,6 +80,8 @@ POSTHOOK: type: QUERY
+ POSTHOOK: Input: default@decimal_1
+ #### A masked pattern was here ####
+ POSTHOOK: Lineage: decimal_1.t EXPRESSION []
++POSTHOOK: Lineage: decimal_1.u EXPRESSION []
++POSTHOOK: Lineage: decimal_1.v EXPRESSION []
+ 17
+ PREHOOK: query: select cast(t as bigint) from decimal_1 limit 1
+ PREHOOK: type: QUERY
+@@ -75,6 +92,8 @@ POSTHOOK: type: QUERY
+ POSTHOOK: Input: default@decimal_1
+ #### A masked pattern was here ####
+ POSTHOOK: Lineage: decimal_1.t EXPRESSION []
++POSTHOOK: Lineage: decimal_1.u EXPRESSION []
++POSTHOOK: Lineage: decimal_1.v EXPRESSION []
+ 17
+ PREHOOK: query: select cast(t as float) from decimal_1 limit 1
+ PREHOOK: type: QUERY
+@@ -85,6 +104,8 @@ POSTHOOK: type: QUERY
+ POSTHOOK: Input: default@decimal_1
+ #### A masked pattern was here ####
+ POSTHOOK: Lineage: decimal_1.t EXPRESSION []
++POSTHOOK: Lineage: decimal_1.u EXPRESSION []
++POSTHOOK: Lineage: decimal_1.v EXPRESSION []
+ 17.29
+ PREHOOK: query: select cast(t as double) from decimal_1 limit 1
+ PREHOOK: type: QUERY
+@@ -95,6 +116,8 @@ POSTHOOK: type: QUERY
+ POSTHOOK: Input: default@decimal_1
+ #### A masked pattern was here ####
+ POSTHOOK: Lineage: decimal_1.t EXPRESSION []
++POSTHOOK: Lineage: decimal_1.u EXPRESSION []
++POSTHOOK: Lineage: decimal_1.v EXPRESSION []
+ 17.29
+ PREHOOK: query: select cast(t as string) from decimal_1 limit 1
+ PREHOOK: type: QUERY
+@@ -105,6 +128,8 @@ POSTHOOK: type: QUERY
+ POSTHOOK: Input: default@decimal_1
+ #### A masked pattern was here ####
+ POSTHOOK: Lineage: decimal_1.t EXPRESSION []
++POSTHOOK: Lineage: decimal_1.u EXPRESSION []
++POSTHOOK: Lineage: decimal_1.v EXPRESSION []
+ 17.29
+ PREHOOK: query: select cast(t as timestamp) from decimal_1 limit 1
+ PREHOOK: type: QUERY
+@@ -115,6 +140,8 @@ POSTHOOK: type: QUERY
+ POSTHOOK: Input: default@decimal_1
+ #### A masked pattern was here ####
+ POSTHOOK: Lineage: decimal_1.t EXPRESSION []
++POSTHOOK: Lineage: decimal_1.u EXPRESSION []
++POSTHOOK: Lineage: decimal_1.v EXPRESSION []
+ 1969-12-31 16:00:17.29
+ PREHOOK: query: drop table decimal_1
+ PREHOOK: type: DROPTABLE
+@@ -125,3 +152,5 @@ POSTHOOK: type: DROPTABLE
+ POSTHOOK: Input: default@decimal_1
+ POSTHOOK: Output: default@decimal_1
+ POSTHOOK: Lineage: decimal_1.t EXPRESSION []
++POSTHOOK: Lineage: decimal_1.u EXPRESSION []
++POSTHOOK: Lineage: decimal_1.v EXPRESSION []
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/typeinfo/TypeInfoUtils.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/typeinfo/TypeInfoUtils.java
+index 48aa52c..ed1dcd9 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/typeinfo/TypeInfoUtils.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/typeinfo/TypeInfoUtils.java
+@@ -29,6 +29,7 @@
+ import java.util.Map;
+ import java.util.concurrent.ConcurrentHashMap;
+ 
++import org.apache.hadoop.hive.common.type.HiveDecimal;
+ import org.apache.hadoop.hive.common.type.HiveVarchar;
+ import org.apache.hadoop.hive.serde.serdeConstants;
+ import org.apache.hadoop.hive.serde2.objectinspector.ListObjectInspector;
+@@ -394,7 +395,6 @@ private TypeInfo parseType() {
+       PrimitiveTypeEntry typeEntry =
+           PrimitiveObjectInspectorUtils.getTypeEntryFromTypeName(t.text);
+       if (typeEntry != null && typeEntry.primitiveCategory != PrimitiveCategory.UNKNOWN ) {
+-        String qualifiedTypeName = typeEntry.typeName;
+         String[] params = parseParams();
+         switch (typeEntry.primitiveCategory) {
+         case VARCHAR:
+@@ -405,32 +405,31 @@ private TypeInfo parseType() {
+           if (params.length == 1) {
+             int length = Integer.valueOf(params[0]);
+             VarcharUtils.validateParameter(length);
+-            qualifiedTypeName = BaseCharTypeInfo.getQualifiedName(typeEntry.typeName, length);
++            return TypeInfoFactory.getVarcharTypeInfo(length);
+           } else if (params.length > 1) {
+             throw new IllegalArgumentException("Type varchar only takes one parameter, but " +
+                 params.length + " is seen");
+           }
+-
+-          break;
+         case DECIMAL:
++          int precision = HiveDecimal.DEFAULT_PRECISION;
++          int scale = HiveDecimal.DEFAULT_SCALE;
+           if (params == null || params.length == 0) {
+-            throw new IllegalArgumentException( "Decimal type is specified without length: " + typeInfoString);
+-          }
+-
+-          if (params.length == 2) {
+-            int precision = Integer.valueOf(params[0]);
+-            int scale = Integer.valueOf(params[1]);
++            // It's possible that old metadata still refers to "decimal" as a column type w/o
++            // precision/scale. In this case, the default (10,0) is assumed. Thus, do nothing here.
++          } else if (params.length == 2) {
++            // New metadata always have two parameters.
++            precision = Integer.valueOf(params[0]);
++            scale = Integer.valueOf(params[1]);
+             HiveDecimalUtils.validateParameter(precision, scale);
+-            qualifiedTypeName = DecimalTypeInfo.getQualifiedName(precision, scale);
+-          } else if (params.length > 1) {
+-            throw new IllegalArgumentException("Type varchar only takes one parameter, but " +
++          } else if (params.length > 2) {
++            throw new IllegalArgumentException("Type decimal only takes two parameter, but " +
+                 params.length + " is seen");
+           }
+ 
+-          break;
++          return TypeInfoFactory.getDecimalTypeInfo(precision, scale);
++        default:
++          return TypeInfoFactory.getPrimitiveTypeInfo(typeEntry.typeName);
+         }
+-
+-        return TypeInfoFactory.getPrimitiveTypeInfo(qualifiedTypeName);
+       }
+ 
+       // Is this a list type?
+-- 
+1.7.0.4
+

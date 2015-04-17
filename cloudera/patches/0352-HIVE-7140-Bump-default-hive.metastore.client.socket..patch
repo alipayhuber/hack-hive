@@ -1,0 +1,26 @@
+From 36b34260a2457e8bc3bbd1048b04ddcb0154972a Mon Sep 17 00:00:00 2001
+From: Brock Noland <brock@apache.org>
+Date: Sun, 8 Jun 2014 21:22:44 +0000
+Subject: [PATCH 352/375] HIVE-7140 - Bump default hive.metastore.client.socket.timeout to 5 minutes (Brock review by Xuefu)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1601262 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../java/org/apache/hadoop/hive/conf/HiveConf.java |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+
+diff --git a/src/common/src/java/org/apache/hadoop/hive/conf/HiveConf.java b/src/common/src/java/org/apache/hadoop/hive/conf/HiveConf.java
+index d62f355..4ef4544 100644
+--- a/src/common/src/java/org/apache/hadoop/hive/conf/HiveConf.java
++++ b/src/common/src/java/org/apache/hadoop/hive/conf/HiveConf.java
+@@ -256,7 +256,7 @@
+     // Number of seconds the client should wait between connection attempts
+     METASTORE_CLIENT_CONNECT_RETRY_DELAY("hive.metastore.client.connect.retry.delay", 1),
+     // Socket timeout for the client connection (in seconds)
+-    METASTORE_CLIENT_SOCKET_TIMEOUT("hive.metastore.client.socket.timeout", 20),
++    METASTORE_CLIENT_SOCKET_TIMEOUT("hive.metastore.client.socket.timeout", 600),
+     METASTOREPWD("javax.jdo.option.ConnectionPassword", "mine"),
+     // Class name of JDO connection url hook
+     METASTORECONNECTURLHOOK("hive.metastore.ds.connection.url.hook", ""),
+-- 
+1.7.0.4
+

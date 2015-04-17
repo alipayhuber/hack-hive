@@ -1,0 +1,27 @@
+From bd2ffc45d86469ec8456d313955b26a09de85c74 Mon Sep 17 00:00:00 2001
+From: Brock Noland <brock@apache.org>
+Date: Fri, 8 Nov 2013 06:22:43 +0000
+Subject: [PATCH 147/375] HIVE-5780 - Add the missing declaration of HIVE_CLI_SERVICE_PROTOCOL_V4 in TCLIService.thrift (Prasad Mujumdar via Brock Noland)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1539928 13f79535-47bb-0310-9956-ffa450edef68
+---
+ service/if/TCLIService.thrift |    3 +++
+ 1 files changed, 3 insertions(+), 0 deletions(-)
+
+diff --git a/src/service/if/TCLIService.thrift b/src/service/if/TCLIService.thrift
+index 81da066..1f49445 100644
+--- a/src/service/if/TCLIService.thrift
++++ b/src/service/if/TCLIService.thrift
+@@ -45,6 +45,9 @@ enum TProtocolVersion {
+ 
+   // V3 add varchar type, primitive type qualifiers
+   HIVE_CLI_SERVICE_PROTOCOL_V3
++
++  // V4 add support for decimial datatype
++  HIVE_CLI_SERVICE_PROTOCOL_V4
+ }
+ 
+ enum TTypeId {
+-- 
+1.7.0.4
+

@@ -1,0 +1,196 @@
+From 0791b0abe682d6a9b194ed576009a1d4480e1cad Mon Sep 17 00:00:00 2001
+From: Ashutosh Chauhan <hashutosh@apache.org>
+Date: Fri, 27 Sep 2013 17:53:25 +0000
+Subject: [PATCH 060/375] HIVE-5231 : Remove TestSerDe.jar from data/files (Hari Sankar via Ashutosh Chauhan)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1527004 13f79535-47bb-0310-9956-ffa450edef68
+---
+ build-common.xml                                   |   10 +++++++---
+ data/files/TestSerDe.jar                           |  Bin 3838 -> 0 bytes
+ ql/src/test/queries/clientnegative/deletejar.q     |    4 ++--
+ .../test/queries/clientnegative/invalid_columns.q  |    2 +-
+ ql/src/test/queries/clientpositive/alter1.q        |    4 ++--
+ ql/src/test/queries/clientpositive/input16.q       |    2 +-
+ ql/src/test/queries/clientpositive/input16_cc.q    |    2 +-
+ 7 files changed, 14 insertions(+), 10 deletions(-)
+ delete mode 100644 data/files/TestSerDe.jar
+
+diff --git a/src/build-common.xml b/src/build-common.xml
+index c6de54e..043fe57 100644
+--- a/src/build-common.xml
++++ b/src/build-common.xml
+@@ -294,7 +294,6 @@
+      encoding="${build.encoding}"
+      srcdir="${test.src.dir}"
+      includes="org/apache/**/hive/**/*.java"
+-     excludes="**/TestSerDe.java"
+      destdir="${test.build.classes}"
+      debug="${javac.debug}"
+      optimize="${javac.optimize}"
+@@ -329,8 +328,13 @@
+     </jar>
+     <delete file="${test.build.dir}/test-serdes.jar"/>
+     <jar jarfile="${test.build.dir}/test-serdes.jar">
+-        <fileset dir="${test.build.classes}" includes="**/serde2/*.class"/>
+-    </jar>  
++        <fileset dir="${test.build.classes}" includes="**/serde2/*.class" excludes="**/serde2/TestSerDe.class"/>
++    </jar>  	
++    <delete file="${test.build.dir}/TestSerDe.jar"/>
++    <jar jarfile="${test.build.dir}/TestSerDe.jar">
++        <fileset dir="${test.build.classes}" includes="**/serde2/TestSerDe.class"/>
++    </jar>
++    <delete file="${test.build.classes}/org/apache/hadoop/hive/serde2/TestSerDe.class"/> 
+   </target>
+ 
+   <target name="test-conditions">
+diff --git a/src/data/files/TestSerDe.jar b/src/data/files/TestSerDe.jar
+deleted file mode 100644
+index f29def6f8c97ebc4a9cc56b558509330764cfcfc..0000000000000000000000000000000000000000
+GIT binary patch
+literal 0
+HcmV?d00001
+
+literal 3838
+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
+
+diff --git a/src/ql/src/test/queries/clientnegative/deletejar.q b/src/ql/src/test/queries/clientnegative/deletejar.q
+index 7b0c923..f9acaed 100644
+--- a/src/ql/src/test/queries/clientnegative/deletejar.q
++++ b/src/ql/src/test/queries/clientnegative/deletejar.q
+@@ -1,4 +1,4 @@
+ 
+-ADD JAR ../data/files/TestSerDe.jar;
+-DELETE JAR ../data/files/TestSerDe.jar;
++ADD JAR ../build/ql/test/TestSerDe.jar;
++DELETE JAR ../build/ql/test/TestSerDe.jar;
+ CREATE TABLE DELETEJAR(KEY STRING, VALUE STRING) ROW FORMAT SERDE 'org.apache.hadoop.hive.serde2.TestSerDe' STORED AS TEXTFILE;
+diff --git a/src/ql/src/test/queries/clientnegative/invalid_columns.q b/src/ql/src/test/queries/clientnegative/invalid_columns.q
+index 14b3409..f705666 100644
+--- a/src/ql/src/test/queries/clientnegative/invalid_columns.q
++++ b/src/ql/src/test/queries/clientnegative/invalid_columns.q
+@@ -1,4 +1,4 @@
+-ADD JAR ../data/files/TestSerDe.jar;
++ADD JAR ../build/ql/test/TestSerDe.jar;
+ CREATE TABLE DELETEJAR(KEY STRING, VALUE STRING) ROW FORMAT SERDE 'org.apache.hadoop.hive.serde2.TestSerDe' 
+ STORED AS TEXTFILE
+ TBLPROPERTIES('columns'='valid_colname,invalid.colname');
+diff --git a/src/ql/src/test/queries/clientpositive/alter1.q b/src/ql/src/test/queries/clientpositive/alter1.q
+index 5fd1945..fb8a792 100644
+--- a/src/ql/src/test/queries/clientpositive/alter1.q
++++ b/src/ql/src/test/queries/clientpositive/alter1.q
+@@ -15,7 +15,7 @@ describe extended alter1;
+ alter table alter1 set serdeproperties('s1'='10', 's2' ='20');
+ describe extended alter1;
+ 
+-add jar ../data/files/TestSerDe.jar;
++add jar ../build/ql/test/TestSerDe.jar;
+ alter table alter1 set serde 'org.apache.hadoop.hive.serde2.TestSerDe' with serdeproperties('s1'='9');
+ describe extended alter1;
+ 
+@@ -56,7 +56,7 @@ DESCRIBE EXTENDED alter1;
+ ALTER TABLE alter1 SET SERDEPROPERTIES('s1'='10', 's2' ='20');
+ DESCRIBE EXTENDED alter1;
+ 
+-add jar ../data/files/TestSerDe.jar;
++add jar ../build/ql/test/TestSerDe.jar;
+ ALTER TABLE alter1 SET SERDE 'org.apache.hadoop.hive.serde2.TestSerDe' WITH SERDEPROPERTIES ('s1'='9');
+ DESCRIBE EXTENDED alter1;
+ 
+diff --git a/src/ql/src/test/queries/clientpositive/input16.q b/src/ql/src/test/queries/clientpositive/input16.q
+index 82e6d81..7604f02 100644
+--- a/src/ql/src/test/queries/clientpositive/input16.q
++++ b/src/ql/src/test/queries/clientpositive/input16.q
+@@ -1,6 +1,6 @@
+ -- TestSerDe is a user defined serde where the default delimiter is Ctrl-B
+ DROP TABLE INPUT16;
+-ADD JAR ../data/files/TestSerDe.jar;
++ADD JAR ../build/ql/test/TestSerDe.jar;
+ CREATE TABLE INPUT16(KEY STRING, VALUE STRING) ROW FORMAT SERDE 'org.apache.hadoop.hive.serde2.TestSerDe' STORED AS TEXTFILE;
+ LOAD DATA LOCAL INPATH '../data/files/kv1_cb.txt' INTO TABLE INPUT16;
+ SELECT INPUT16.VALUE, INPUT16.KEY FROM INPUT16;
+diff --git a/src/ql/src/test/queries/clientpositive/input16_cc.q b/src/ql/src/test/queries/clientpositive/input16_cc.q
+index 5dab410..fc4a7c4 100644
+--- a/src/ql/src/test/queries/clientpositive/input16_cc.q
++++ b/src/ql/src/test/queries/clientpositive/input16_cc.q
+@@ -4,7 +4,7 @@ set hive.input.format=org.apache.hadoop.hive.ql.io.HiveInputFormat;
+ -- the user is overwriting it with ctrlC
+ 
+ DROP TABLE INPUT16_CC;
+-ADD JAR ../data/files/TestSerDe.jar;
++ADD JAR ../build/ql/test/TestSerDe.jar;
+ CREATE TABLE INPUT16_CC(KEY STRING, VALUE STRING) ROW FORMAT SERDE 'org.apache.hadoop.hive.serde2.TestSerDe'  with serdeproperties ('testserde.default.serialization.format'='\003', 'dummy.prop.not.used'='dummyy.val') STORED AS TEXTFILE;
+ LOAD DATA LOCAL INPATH '../data/files/kv1_cc.txt' INTO TABLE INPUT16_CC;
+ SELECT INPUT16_CC.VALUE, INPUT16_CC.KEY FROM INPUT16_CC;
+-- 
+1.7.0.4
+

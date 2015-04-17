@@ -1,0 +1,316 @@
+From 69c3c8f874ee0322f6bb259394342202a2e03206 Mon Sep 17 00:00:00 2001
+From: Brock Noland <brock@apache.org>
+Date: Mon, 24 Mar 2014 15:36:53 -0700
+Subject: [PATCH 317/375] CDH-17598 - Backport HIVE-5930 - SQL std auth - implement set roles, show current roles
+
+---
+ .../java/org/apache/hadoop/hive/cli/CliDriver.java |    2 +-
+ .../hadoop/hive/ql/parse/DDLSemanticAnalyzer.java  |   22 ++++++++++++++++++++
+ .../org/apache/hadoop/hive/ql/parse/HiveParser.g   |   17 +++++++++++++++
+ .../hive/ql/parse/SemanticAnalyzerFactory.java     |    2 +
+ .../HiveAuthorizationTaskFactory.java              |    6 +++++
+ .../HiveAuthorizationTaskFactoryImpl.java          |   14 ++++++++++++
+ .../apache/hadoop/hive/ql/plan/RoleDDLDesc.java    |    4 ++-
+ .../ql/processors/CommandProcessorFactory.java     |   14 ++++++------
+ .../hadoop/hive/ql/processors/HiveCommand.java     |   17 ++++++++++----
+ .../ql/processors/TestCommandProcessorFactory.java |   11 +++++----
+ .../cli/operation/ExecuteStatementOperation.java   |    3 +-
+ 11 files changed, 91 insertions(+), 21 deletions(-)
+
+diff --git a/src/cli/src/java/org/apache/hadoop/hive/cli/CliDriver.java b/src/cli/src/java/org/apache/hadoop/hive/cli/CliDriver.java
+index 4fcca8c..2fb5af5 100644
+--- a/src/cli/src/java/org/apache/hadoop/hive/cli/CliDriver.java
++++ b/src/cli/src/java/org/apache/hadoop/hive/cli/CliDriver.java
+@@ -216,7 +216,7 @@ public int processCmd(String cmd) {
+       }
+     } else { // local mode
+       try {
+-        CommandProcessor proc = CommandProcessorFactory.get(tokens[0], (HiveConf) conf);
++        CommandProcessor proc = CommandProcessorFactory.get(tokens, (HiveConf) conf);
+         ret = processLocalCmd(cmd, proc, ss);
+       } catch (SQLException e) {
+         console.printError("Failed processing command " + tokens[0] + " " + e.getLocalizedMessage(),
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/DDLSemanticAnalyzer.java b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/DDLSemanticAnalyzer.java
+index 042b707..1cda1e4 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/DDLSemanticAnalyzer.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/DDLSemanticAnalyzer.java
+@@ -439,11 +439,33 @@ public void analyzeInternal(ASTNode ast) throws SemanticException {
+    case HiveParser.TOK_EXCHANGEPARTITION:
+       analyzeExchangePartition(ast);
+       break;
++   case HiveParser.TOK_SHOW_SET_ROLE:
++     analyzeSetShowRole(ast);
++     break;
+     default:
+       throw new SemanticException("Unsupported command.");
+     }
+   }
+ 
++  private void analyzeSetShowRole(ASTNode ast) throws SemanticException {
++    switch (ast.getChildCount()) {
++      case 0:
++        ctx.setResFile(new Path(ctx.getLocalTmpFileURI()));
++        rootTasks.add(hiveAuthorizationTaskFactory.createShowCurrentRoleTask(
++        getInputs(), getOutputs(), ctx.getResFile()));
++        setFetchTask(createFetchTask(RoleDDLDesc.getSchema()));
++        break;
++      case 1:
++        rootTasks.add(hiveAuthorizationTaskFactory.createSetRoleTask(
++        BaseSemanticAnalyzer.unescapeIdentifier(ast.getChild(0).getText()),
++        getInputs(), getOutputs()));
++        break;
++      default:
++        throw new SemanticException("Internal error. ASTNode expected to have 0 or 1 child. "
++        + ast.dump());
++    }
++  }
++
+   private void analyzeGrantRevokeRole(boolean grant, ASTNode ast) throws SemanticException {
+     Task<? extends Serializable> task;
+     if(grant) {
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/HiveParser.g b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/HiveParser.g
+index 8ddc576..d2cdcbd 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/HiveParser.g
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/HiveParser.g
+@@ -275,6 +275,7 @@ TOK_GRANT_ROLE;
+ TOK_REVOKE_ROLE;
+ TOK_SHOW_ROLE_GRANT;
+ TOK_SHOW_ROLES;
++TOK_SHOW_SET_ROLE;
+ TOK_SHOWINDEXES;
+ TOK_INDEXCOMMENT;
+ TOK_DESCDATABASE;
+@@ -633,6 +634,8 @@ ddlStatement
+     | showRoles
+     | grantRole
+     | revokeRole
++    | setRole
++    | showCurrentRole
+     ;
+ 
+ ifExists
+@@ -1320,6 +1323,20 @@ showRoles
+     -> ^(TOK_SHOW_ROLES)
+     ;
+ 
++showCurrentRole
++@init {msgs.push("show current role");}
++@after {msgs.pop();}
++    : KW_SHOW KW_CURRENT KW_ROLES
++    -> ^(TOK_SHOW_SET_ROLE)
++    ;
++
++setRole
++@init {msgs.push("set role");}
++@after {msgs.pop();}
++    : KW_SET KW_ROLE roleName=identifier
++    -> ^(TOK_SHOW_SET_ROLE $roleName)
++    ;
++
+ showGrants
+ @init {msgs.push("show grants");}
+ @after {msgs.pop();}
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/SemanticAnalyzerFactory.java b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/SemanticAnalyzerFactory.java
+index a658d2e..700f7f8 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/SemanticAnalyzerFactory.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/SemanticAnalyzerFactory.java
+@@ -93,6 +93,7 @@
+     commandType.put(HiveParser.TOK_GRANT_ROLE, HiveOperation.GRANT_ROLE);
+     commandType.put(HiveParser.TOK_REVOKE_ROLE, HiveOperation.REVOKE_ROLE);
+     commandType.put(HiveParser.TOK_SHOW_ROLES, HiveOperation.SHOW_ROLES);
++    commandType.put(HiveParser.TOK_SHOW_SET_ROLE, HiveOperation.SHOW_ROLES);
+     commandType.put(HiveParser.TOK_SHOW_ROLE_GRANT, HiveOperation.SHOW_ROLE_GRANT);
+     commandType.put(HiveParser.TOK_ALTERDATABASE_PROPERTIES, HiveOperation.ALTERDATABASE);
+     commandType.put(HiveParser.TOK_DESCDATABASE, HiveOperation.DESCDATABASE);
+@@ -208,6 +209,7 @@ public static BaseSemanticAnalyzer get(HiveConf conf, ASTNode tree)
+       case HiveParser.TOK_ALTERTABLE_SKEWED:
+       case HiveParser.TOK_TRUNCATETABLE:
+       case HiveParser.TOK_EXCHANGEPARTITION:
++      case HiveParser.TOK_SHOW_SET_ROLE:
+         return new DDLSemanticAnalyzer(conf);
+       case HiveParser.TOK_ALTERTABLE_PARTITION:
+         HiveOperation commandType = null;
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/authorization/HiveAuthorizationTaskFactory.java b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/authorization/HiveAuthorizationTaskFactory.java
+index 1416c2e..bd6ef24 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/authorization/HiveAuthorizationTaskFactory.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/authorization/HiveAuthorizationTaskFactory.java
+@@ -56,4 +56,10 @@
+ 
+   public Task<? extends Serializable> createRevokeTask(ASTNode node, HashSet<ReadEntity> inputs,
+       HashSet<WriteEntity> outputs) throws SemanticException;
++
++  public Task<? extends Serializable> createSetRoleTask(String roleName,
++      HashSet<ReadEntity> inputs, HashSet<WriteEntity> outputs) throws SemanticException;
++
++  public Task<? extends Serializable> createShowCurrentRoleTask(HashSet<ReadEntity> inputs,
++      HashSet<WriteEntity> outputs, Path resFile) throws SemanticException;
+ }
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/authorization/HiveAuthorizationTaskFactoryImpl.java b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/authorization/HiveAuthorizationTaskFactoryImpl.java
+index 060478d..c336435 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/parse/authorization/HiveAuthorizationTaskFactoryImpl.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/parse/authorization/HiveAuthorizationTaskFactoryImpl.java
+@@ -328,4 +328,18 @@ private Partition getPartition(Table table, Map<String, String> partSpec)
+   private String toMessage(ErrorMsg message, Object detail) {
+     return detail == null ? message.getMsg() : message.getMsg(detail.toString());
+   }
++
++  @Override
++  public Task<? extends Serializable> createSetRoleTask(String roleName,
++      HashSet<ReadEntity> inputs, HashSet<WriteEntity> outputs)
++      throws SemanticException {
++    throw new SemanticException("SET ROLE is only supported by Sentry. Please enable Sentry.");
++  }
++
++  @Override
++  public Task<? extends Serializable> createShowCurrentRoleTask(
++      HashSet<ReadEntity> inputs, HashSet<WriteEntity> outputs, Path resFile)
++      throws SemanticException {
++    throw new SemanticException("SHOW CURRENT ROLES is only supported by Sentry. Please enable Sentry.");
++  }
+ }
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/plan/RoleDDLDesc.java b/src/ql/src/java/org/apache/hadoop/hive/ql/plan/RoleDDLDesc.java
+index de323a9..fec421d 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/plan/RoleDDLDesc.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/plan/RoleDDLDesc.java
+@@ -49,7 +49,9 @@ public static String getSchema() {
+   }
+ 
+   public static enum RoleOperation {
+-    DROP_ROLE("drop_role"), CREATE_ROLE("create_role"), SHOW_ROLE_GRANT("show_role_grant"), SHOW_ROLES("show_roles");
++    DROP_ROLE("drop_role"), CREATE_ROLE("create_role"), SHOW_ROLE_GRANT("show_role_grant"),
++    SHOW_ROLES("show_roles"), SET_ROLE("set_role"), SHOW_CURRENT_ROLE("show_current_role");
++
+     private String operationName;
+ 
+     private RoleOperation() {
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/processors/CommandProcessorFactory.java b/src/ql/src/java/org/apache/hadoop/hive/ql/processors/CommandProcessorFactory.java
+index 7722ec6..9a6d5ca 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/processors/CommandProcessorFactory.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/processors/CommandProcessorFactory.java
+@@ -44,13 +44,13 @@ private CommandProcessorFactory() {
+ 
+   public static CommandProcessor get(String cmd)
+       throws SQLException {
+-    return get(cmd, null);
++    return get(new String[]{cmd}, null);
+   }
+ 
+-  public static CommandProcessor getForHiveCommand(String cmd, HiveConf conf)
++  public static CommandProcessor getForHiveCommand(String[] cmd, HiveConf conf)
+       throws SQLException {
+     HiveCommand hiveCommand = HiveCommand.find(cmd);
+-    if (hiveCommand == null || isBlank(cmd)) {
++    if (hiveCommand == null || isBlank(cmd[0])) {
+       return null;
+     }
+     if (conf == null) {
+@@ -60,8 +60,8 @@ public static CommandProcessor getForHiveCommand(String cmd, HiveConf conf)
+     for (String availableCommand : conf.getVar(HiveConf.ConfVars.HIVE_SECURITY_COMMAND_WHITELIST).split(",")) {
+       availableCommands.add(availableCommand.toLowerCase().trim());
+     }
+-    if (!availableCommands.contains(cmd.trim().toLowerCase())) {
+-      throw new SQLException("Insufficient privileges to execute " + cmd, "42000");
++    if (!availableCommands.contains(cmd[0].trim().toLowerCase())) {
++      throw new SQLException("Insufficient privileges to execute " + cmd[0], "42000");
+     }
+     switch (hiveCommand) {
+       case SET:
+@@ -80,13 +80,13 @@ public static CommandProcessor getForHiveCommand(String cmd, HiveConf conf)
+     }
+   }
+ 
+-  public static CommandProcessor get(String cmd, HiveConf conf)
++  public static CommandProcessor get(String[] cmd, HiveConf conf)
+       throws SQLException {
+     CommandProcessor result = getForHiveCommand(cmd, conf);
+     if (result != null) {
+       return result;
+     }
+-    if (isBlank(cmd)) {
++    if (isBlank(cmd[0])) {
+       return null;
+     } else {
+       if (conf == null) {
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/processors/HiveCommand.java b/src/ql/src/java/org/apache/hadoop/hive/ql/processors/HiveCommand.java
+index 1abe733..3559b91 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/processors/HiveCommand.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/processors/HiveCommand.java
+@@ -37,11 +37,18 @@
+       COMMANDS.add(command.name());
+     }
+   }
+-  public static HiveCommand find(String command) {
+-    if (command != null) {
+-      command = command.trim().toUpperCase();
+-      if (COMMANDS.contains(command)) {
+-        return HiveCommand.valueOf(command);
++  public static HiveCommand find(String[] command) {
++    if (null == command){
++      return null;
++    }
++    String cmd = command[0];
++    if (cmd != null) {
++      cmd = cmd.trim().toUpperCase();
++      if (command.length > 1 && "role".equalsIgnoreCase(command[1])) {
++        // special handling for set role r1 statement
++        return null;
++      } else if (COMMANDS.contains(cmd)) {
++        return HiveCommand.valueOf(cmd);
+       }
+     }
+     return null;
+diff --git a/src/ql/src/test/org/apache/hadoop/hive/ql/processors/TestCommandProcessorFactory.java b/src/ql/src/test/org/apache/hadoop/hive/ql/processors/TestCommandProcessorFactory.java
+index 732897f..ac5053a 100644
+--- a/src/ql/src/test/org/apache/hadoop/hive/ql/processors/TestCommandProcessorFactory.java
++++ b/src/ql/src/test/org/apache/hadoop/hive/ql/processors/TestCommandProcessorFactory.java
+@@ -39,25 +39,26 @@ public void setUp() throws Exception {
+   @Test
+   public void testInvalidCommands() throws Exception {
+     Assert.assertNull("Null should have returned null", CommandProcessorFactory.getForHiveCommand(null, conf));
+-    Assert.assertNull("Blank should have returned null", CommandProcessorFactory.getForHiveCommand(" ", conf));
+-    Assert.assertNull("SQL should have returned null", CommandProcessorFactory.getForHiveCommand("SELECT * FROM TABLE", conf));
++    Assert.assertNull("Blank should have returned null", CommandProcessorFactory.getForHiveCommand(new String[]{" "}, conf));
++    Assert.assertNull("set role should have returned null", CommandProcessorFactory.getForHiveCommand(new String[]{"set role"}, conf));
++    Assert.assertNull("SQL should have returned null", CommandProcessorFactory.getForHiveCommand(new String[]{"SELECT * FROM TABLE"}, conf));
+   }
+   @Test
+   public void testAvailableCommands() throws Exception {
+     SessionState.start(conf);
+     for (HiveCommand command : HiveCommand.values()) {
+       String cmd = command.name();
+-      Assert.assertNotNull("Cmd " + cmd + " not return null", CommandProcessorFactory.getForHiveCommand(cmd, conf));
++      Assert.assertNotNull("Cmd " + cmd + " not return null", CommandProcessorFactory.getForHiveCommand(new String[]{cmd}, conf));
+     }
+     for (HiveCommand command : HiveCommand.values()) {
+       String cmd = command.name().toLowerCase();
+-      Assert.assertNotNull("Cmd " + cmd + " not return null", CommandProcessorFactory.getForHiveCommand(cmd, conf));
++      Assert.assertNotNull("Cmd " + cmd + " not return null", CommandProcessorFactory.getForHiveCommand(new String[]{cmd}, conf));
+     }
+     conf.set(HiveConf.ConfVars.HIVE_SECURITY_COMMAND_WHITELIST.toString(), "");
+     for (HiveCommand command : HiveCommand.values()) {
+       String cmd = command.name();
+       try {
+-        CommandProcessorFactory.getForHiveCommand(cmd, conf);
++        CommandProcessorFactory.getForHiveCommand(new String[]{cmd}, conf);
+         Assert.fail("Expected SQLException for " + cmd + " as available commands is empty");
+       } catch (SQLException e) {
+         Assert.assertEquals("Insufficient privileges to execute " + cmd, e.getMessage());
+diff --git a/src/service/src/java/org/apache/hive/service/cli/operation/ExecuteStatementOperation.java b/src/service/src/java/org/apache/hive/service/cli/operation/ExecuteStatementOperation.java
+index d00db1c..e973f83 100644
+--- a/src/service/src/java/org/apache/hive/service/cli/operation/ExecuteStatementOperation.java
++++ b/src/service/src/java/org/apache/hive/service/cli/operation/ExecuteStatementOperation.java
+@@ -51,10 +51,9 @@ public static ExecuteStatementOperation newExecuteStatementOperation(
+       HiveSession parentSession, String statement, Map<String, String> confOverlay, boolean runAsync)
+       throws HiveSQLException {
+     String[] tokens = statement.trim().split("\\s+");
+-    String command = tokens[0].toLowerCase();
+     CommandProcessor processor = null;
+     try {
+-      processor = CommandProcessorFactory.getForHiveCommand(tokens[0], parentSession.getHiveConf());
++      processor = CommandProcessorFactory.getForHiveCommand(tokens, parentSession.getHiveConf());
+     } catch (SQLException e) {
+       throw new HiveSQLException(e.getMessage(), e.getSQLState(), e);
+     }
+-- 
+1.7.0.4
+

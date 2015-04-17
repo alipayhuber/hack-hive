@@ -1,0 +1,178 @@
+From a8938c5e791042abe4ad293f80028383aa45b1ec Mon Sep 17 00:00:00 2001
+From: Xuefu Zhang <xzhang@xzlt.(none)>
+Date: Wed, 5 Feb 2014 13:53:47 -0800
+Subject: [PATCH 270/375] CDH-17218: Backport HIVE-6173: Beeline doesn't accept --hiveconf option as Hive CLI does
+
+---
+ .../src/java/org/apache/hive/beeline/BeeLine.java  |   11 ++++++++++
+ .../java/org/apache/hive/beeline/BeeLineOpts.java  |    8 +++++++
+ .../apache/hive/beeline/DatabaseConnection.java    |    7 ++++++
+ beeline/src/main/resources/BeeLine.properties      |    1 +
+ .../apache/hive/beeline/TestBeeLineWithArgs.java   |   22 ++++++++++++++++++-
+ .../java/org/apache/hive/jdbc/HiveConnection.java  |    3 ++
+ 6 files changed, 50 insertions(+), 2 deletions(-)
+
+diff --git a/src/beeline/src/java/org/apache/hive/beeline/BeeLine.java b/src/beeline/src/java/org/apache/hive/beeline/BeeLine.java
+index 5c017fd..33bea5b 100644
+--- a/src/beeline/src/java/org/apache/hive/beeline/BeeLine.java
++++ b/src/beeline/src/java/org/apache/hive/beeline/BeeLine.java
+@@ -126,6 +126,7 @@
+   private static final int ERRNO_OTHER = 2;
+ 
+   private static final String HIVE_VAR_PREFIX = "--hivevar";
++  private static final String HIVE_CONF_PREFIX = "--hiveconf";
+ 
+   private final Map<Object, Object> formats = map(new Object[] {
+       "vertical", new VerticalOutputFormat(this),
+@@ -517,6 +518,16 @@ boolean initArgs(String[] args) {
+         continue;
+       }
+ 
++      // Parse hive conf variables
++      if (args[i].equals(HIVE_CONF_PREFIX)) {
++        String[] parts = split(args[++i], "=");
++        if (parts.length != 2) {
++          return false;
++        }
++        getOpts().getHiveConfVariables().put(parts[0], parts[1]);
++        continue;
++      }
++
+       // -- arguments are treated as properties
+       if (args[i].startsWith("--")) {
+         String[] parts = split(args[i].substring(2), "=");
+diff --git a/src/beeline/src/java/org/apache/hive/beeline/BeeLineOpts.java b/src/beeline/src/java/org/apache/hive/beeline/BeeLineOpts.java
+index a524e6f..0391a18 100644
+--- a/src/beeline/src/java/org/apache/hive/beeline/BeeLineOpts.java
++++ b/src/beeline/src/java/org/apache/hive/beeline/BeeLineOpts.java
+@@ -86,6 +86,7 @@
+ 
+ 
+   private Map<String, String> hiveVariables = new HashMap<String, String>();
++  private Map<String, String> hiveConfVariables = new HashMap<String, String>();
+ 
+   public BeeLineOpts(BeeLine beeLine, Properties props) {
+     this.beeLine = beeLine;
+@@ -244,6 +245,13 @@ public void setFastConnect(boolean fastConnect) {
+     this.fastConnect = fastConnect;
+   }
+ 
++  public Map<String, String> getHiveConfVariables() {
++    return hiveConfVariables;
++  }
++
++  public void setHiveConfVariables(Map<String, String> hiveConfVariables) {
++    this.hiveConfVariables = hiveConfVariables;
++  }
+ 
+   public boolean getFastConnect() {
+     return fastConnect;
+diff --git a/src/beeline/src/java/org/apache/hive/beeline/DatabaseConnection.java b/src/beeline/src/java/org/apache/hive/beeline/DatabaseConnection.java
+index 9fdc238..6e46ad3 100644
+--- a/src/beeline/src/java/org/apache/hive/beeline/DatabaseConnection.java
++++ b/src/beeline/src/java/org/apache/hive/beeline/DatabaseConnection.java
+@@ -40,6 +40,7 @@
+ 
+ class DatabaseConnection {
+   private static final String HIVE_VAR_PREFIX = "hivevar:";
++  private static final String HIVE_CONF_PREFIX = "hiveconf:";
+ 
+   private final BeeLine beeLine;
+   private Connection connection;
+@@ -132,6 +133,12 @@ boolean connect() throws SQLException {
+     for (Map.Entry<String, String> var : hiveVars.entrySet()) {
+       props.put(HIVE_VAR_PREFIX + var.getKey(), var.getValue());
+     }
++
++    Map<String, String> hiveConfVars = beeLine.getOpts().getHiveConfVariables();
++    for (Map.Entry<String, String> var : hiveConfVars.entrySet()) {
++      props.put(HIVE_CONF_PREFIX + var.getKey(), var.getValue());
++    }
++
+     setConnection(DriverManager.getConnection(getUrl(), props));
+     setDatabaseMetaData(getConnection().getMetaData());
+ 
+diff --git a/src/beeline/src/main/resources/BeeLine.properties b/src/beeline/src/main/resources/BeeLine.properties
+index 9947007..fe0d288 100644
+--- a/src/beeline/src/main/resources/BeeLine.properties
++++ b/src/beeline/src/main/resources/BeeLine.properties
+@@ -143,6 +143,7 @@ cmd-usage: Usage: java org.apache.hive.cli.beeline.BeeLine \n \
+ \  -d <driver class>               the driver class to use\n \
+ \  -e <query>                      query that should be executed\n \
+ \  -f <file>                       script file that should be executed\n \
++\  --hiveconf property=value       Use value for given property\n \
+ \  --hivevar name=value            hive variable name and value\n \
+ \                                  This is Hive specific settings in which variables\n \
+ \                                  can be set at session level and referenced in Hive\n \
+diff --git a/src/itests/hive-unit/src/test/java/org/apache/hive/beeline/TestBeeLineWithArgs.java b/src/itests/hive-unit/src/test/java/org/apache/hive/beeline/TestBeeLineWithArgs.java
+index fb386cb..ac96213 100644
+--- a/src/itests/hive-unit/src/test/java/org/apache/hive/beeline/TestBeeLineWithArgs.java
++++ b/src/itests/hive-unit/src/test/java/org/apache/hive/beeline/TestBeeLineWithArgs.java
+@@ -198,9 +198,20 @@ public void testBeelineHiveVariable() throws Throwable {
+     testScriptFile(TEST_NAME, SCRIPT_TEXT, EXPECTED_PATTERN, true, argList);
+   }
+ 
++  @Test
++  public void testBeelineHiveConfVariable() throws Throwable {
++    List<String> argList = getBaseArgs(JDBC_URL);
++    argList.add("--hiveconf");
++    argList.add("hive.table.name=dummy");
++    final String TEST_NAME = "testBeelineHiveConfVariable";
++    final String SCRIPT_TEXT = "create table ${hiveconf:hive.table.name} (d int);\nshow tables;\n";
++    final String EXPECTED_PATTERN = "dummy";
++    testScriptFile(TEST_NAME, SCRIPT_TEXT, EXPECTED_PATTERN, true, argList);
++  }
++
+   /**
+    * Test Beeline -hivevar option. User can specify --hivevar name=value on Beeline command line.
+-   * This test defines multiple variables using repeated --hivevar flags.
++   * This test defines multiple variables using repeated --hivevar or --hiveconf flags.
+    * @throws Throwable
+    */
+   @Test
+@@ -208,13 +219,20 @@ public void testBeelineMultiHiveVariable() throws Throwable {
+     List<String> argList = getBaseArgs(JDBC_URL);
+     argList.add("--hivevar");
+     argList.add("TABLE_NAME=dummy2");
++
++    argList.add("--hiveconf");
++    argList.add("COLUMN_NAME=d");
++
+     argList.add("--hivevar");
+     argList.add("COMMAND=create");
+     argList.add("--hivevar");
+     argList.add("OBJECT=table");
+ 
++    argList.add("--hiveconf");
++    argList.add("COLUMN_TYPE=int");
++
+     final String TEST_NAME = "testHiveCommandLineHiveVariable";
+-    final String SCRIPT_TEXT = "${COMMAND} ${OBJECT} ${TABLE_NAME} (d int);\nshow tables;\n";
++    final String SCRIPT_TEXT = "${COMMAND} ${OBJECT} ${TABLE_NAME} (${hiveconf:COLUMN_NAME} ${hiveconf:COLUMN_TYPE});\nshow tables;\n";
+     final String EXPECTED_PATTERN = "dummy2";
+     testScriptFile(TEST_NAME, SCRIPT_TEXT, EXPECTED_PATTERN, true, argList);
+   }
+diff --git a/src/jdbc/src/java/org/apache/hive/jdbc/HiveConnection.java b/src/jdbc/src/java/org/apache/hive/jdbc/HiveConnection.java
+index ac641b0..3676332 100644
+--- a/src/jdbc/src/java/org/apache/hive/jdbc/HiveConnection.java
++++ b/src/jdbc/src/java/org/apache/hive/jdbc/HiveConnection.java
+@@ -94,6 +94,7 @@
+   private static final String HIVE_SSL_TRUST_STORE = "sslTrustStore";
+   private static final String HIVE_SSL_TRUST_STORE_PASSWORD = "trustStorePassword";
+   private static final String HIVE_VAR_PREFIX = "hivevar:";
++  private static final String HIVE_CONF_PREFIX = "hiveconf:";
+ 
+   private final String jdbcURI;
+   private final String host;
+@@ -137,6 +138,8 @@ public HiveConnection(String uri, Properties info) throws SQLException {
+         String key = (String) kv.getKey();
+         if (key.startsWith(HIVE_VAR_PREFIX)) {
+           hiveVarMap.put(key.substring(HIVE_VAR_PREFIX.length()), info.getProperty(key));
++        } else if (key.startsWith(HIVE_CONF_PREFIX)) {
++          hiveConfMap.put(key.substring(HIVE_CONF_PREFIX.length()), info.getProperty(key));
+         }
+       }
+     }
+-- 
+1.7.0.4
+

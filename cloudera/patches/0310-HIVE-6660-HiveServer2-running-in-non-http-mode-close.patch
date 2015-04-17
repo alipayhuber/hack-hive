@@ -1,0 +1,26 @@
+From ba85b5bd291433fbc2cb8120bb92d58fcf9fbec7 Mon Sep 17 00:00:00 2001
+From: Prasad Suresh Mujumdar <prasadm@apache.org>
+Date: Tue, 18 Mar 2014 06:24:20 +0000
+Subject: [PATCH 310/375] HIVE-6660: HiveServer2 running in non-http mode closes server socket for an SSL connection after the 1st request (Prasad Mujumdar, reviewed by Thejas Nair, Vaibhav Gumashta)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1578753 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../apache/hive/service/auth/HiveAuthFactory.java  |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+
+diff --git a/src/service/src/java/org/apache/hive/service/auth/HiveAuthFactory.java b/src/service/src/java/org/apache/hive/service/auth/HiveAuthFactory.java
+index 6759903..6627bb9 100644
+--- a/src/service/src/java/org/apache/hive/service/auth/HiveAuthFactory.java
++++ b/src/service/src/java/org/apache/hive/service/auth/HiveAuthFactory.java
+@@ -217,7 +217,7 @@ public static TServerSocket getServerSSLSocket(String hiveHost, int portNum,
+     } else {
+       serverAddress = InetAddress.getByName(hiveHost);
+     }
+-    return TSSLTransportFactory.getServerSocket(portNum, 10000, serverAddress, params);
++    return TSSLTransportFactory.getServerSocket(portNum, 0, serverAddress, params);
+   }
+ 
+   // retrieve delegation token for the given user
+-- 
+1.7.0.4
+

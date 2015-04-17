@@ -1,0 +1,76 @@
+From a8a4c4b50f75b80d65a630860adc4b37a8fb441a Mon Sep 17 00:00:00 2001
+From: Xuefu Zhang <xuefu@apache.org>
+Date: Wed, 2 Apr 2014 21:55:44 +0000
+Subject: [PATCH 322/375] HIVE-6783: Incompatible schema for maps between parquet-hive and parquet-pig (Tongjie via Xuefu)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1584201 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../ql/io/parquet/convert/HiveSchemaConverter.java |    4 +-
+ .../ql/io/parquet/TestHiveSchemaConverter.java     |   24 ++++++++++++++++++++
+ 2 files changed, 26 insertions(+), 2 deletions(-)
+
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/io/parquet/convert/HiveSchemaConverter.java b/src/ql/src/java/org/apache/hadoop/hive/ql/io/parquet/convert/HiveSchemaConverter.java
+index b5e9c8b..d96d5bc 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/io/parquet/convert/HiveSchemaConverter.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/io/parquet/convert/HiveSchemaConverter.java
+@@ -23,6 +23,7 @@
+ import org.apache.hadoop.hive.serde2.typeinfo.TypeInfo;
+ import org.apache.hadoop.hive.serde2.typeinfo.TypeInfoFactory;
+ 
++import parquet.schema.ConversionPatterns;
+ import parquet.schema.GroupType;
+ import parquet.schema.MessageType;
+ import parquet.schema.OriginalType;
+@@ -118,8 +119,7 @@ private static GroupType convertMapType(final String name, final MapTypeInfo typ
+         typeInfo.getMapKeyTypeInfo(), Repetition.REQUIRED);
+     final Type valueType = convertType(ParquetHiveSerDe.MAP_VALUE.toString(),
+         typeInfo.getMapValueTypeInfo());
+-    return listWrapper(name, OriginalType.MAP_KEY_VALUE,
+-        new GroupType(Repetition.REPEATED, ParquetHiveSerDe.MAP.toString(), keyType, valueType));
++    return ConversionPatterns.mapType(Repetition.OPTIONAL, name, keyType, valueType);
+   }
+ 
+   private static GroupType listWrapper(final String name, final OriginalType originalType,
+diff --git a/src/ql/src/test/org/apache/hadoop/hive/ql/io/parquet/TestHiveSchemaConverter.java b/src/ql/src/test/org/apache/hadoop/hive/ql/io/parquet/TestHiveSchemaConverter.java
+index 0b25f6e..89d95df 100644
+--- a/src/ql/src/test/org/apache/hadoop/hive/ql/io/parquet/TestHiveSchemaConverter.java
++++ b/src/ql/src/test/org/apache/hadoop/hive/ql/io/parquet/TestHiveSchemaConverter.java
+@@ -26,6 +26,8 @@
+ 
+ import parquet.schema.MessageType;
+ import parquet.schema.MessageTypeParser;
++import parquet.schema.OriginalType;
++import parquet.schema.Type.Repetition;
+ 
+ public class TestHiveSchemaConverter {
+ 
+@@ -111,4 +113,26 @@ public void testMap() throws Exception {
+             + "  }\n"
+             + "}\n");
+   }
++
++  @Test
++  public void testMapOriginalType() throws Exception {
++    final String hiveColumnTypes = "map<string,string>";
++    final String hiveColumnNames = "mapCol";
++    final List<String> columnNames = createHiveColumnsFrom(hiveColumnNames);
++    final List<TypeInfo> columnTypes = createHiveTypeInfoFrom(hiveColumnTypes);
++    final MessageType messageTypeFound = HiveSchemaConverter.convert(columnNames, columnTypes);
++    // this messageType only has one optional field, whose name is mapCol, original Type is MAP
++    assertEquals(1, messageTypeFound.getFieldCount());
++    parquet.schema.Type topLevel = messageTypeFound.getFields().get(0);
++    assertEquals("mapCol",topLevel.getName());
++    assertEquals(OriginalType.MAP, topLevel.getOriginalType());
++    assertEquals(Repetition.OPTIONAL, topLevel.getRepetition());
++
++    assertEquals(1, topLevel.asGroupType().getFieldCount());
++    parquet.schema.Type secondLevel = topLevel.asGroupType().getFields().get(0);
++    //there is one repeated field for mapCol, the field name is "map" and its original Type is MAP_KEY_VALUE;
++    assertEquals("map", secondLevel.getName());
++    assertEquals(OriginalType.MAP_KEY_VALUE, secondLevel.getOriginalType());
++    assertEquals(Repetition.REPEATED, secondLevel.getRepetition());
++  }
+ }
+-- 
+1.7.0.4
+

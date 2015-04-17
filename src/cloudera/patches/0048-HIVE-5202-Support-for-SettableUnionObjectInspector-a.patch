@@ -1,0 +1,844 @@
+From c21d5288346d128223bbbf0303a0061bc1054508 Mon Sep 17 00:00:00 2001
+From: Ashutosh Chauhan <hashutosh@apache.org>
+Date: Tue, 24 Sep 2013 07:00:04 +0000
+Subject: [PATCH 048/375] HIVE-5202 : Support for SettableUnionObjectInspector and implement isSettable/hasAllFieldsSettable APIs for all data types. (Hari Sankar via Ashutosh Chauhan)
+
+git-svn-id: https://svn.apache.org/repos/asf/hive/trunk@1525804 13f79535-47bb-0310-9956-ffa450edef68
+---
+ .../apache/hadoop/hive/ql/exec/FetchOperator.java  |   10 +-
+ .../apache/hadoop/hive/ql/exec/MapOperator.java    |    4 +-
+ .../CustomNonSettableUnionObjectInspector1.java    |   82 +++++++++++
+ .../apache/hadoop/hive/serde2/CustomSerDe4.java    |   66 +++++++++
+ .../apache/hadoop/hive/serde2/CustomSerDe5.java    |   63 +++++++++
+ .../clientpositive/partition_wise_fileformat18.q   |   19 +++
+ .../partition_wise_fileformat18.q.out              |   79 +++++++++++
+ .../objectinspector/ObjectInspectorConverters.java |  121 +++++++++++++++-
+ .../objectinspector/ObjectInspectorUtils.java      |  146 ++++++++++++++++++++
+ .../SettableUnionObjectInspector.java              |   16 ++
+ .../StandardUnionObjectInspector.java              |   16 ++-
+ 11 files changed, 610 insertions(+), 12 deletions(-)
+ create mode 100644 ql/src/test/org/apache/hadoop/hive/serde2/CustomNonSettableUnionObjectInspector1.java
+ create mode 100644 ql/src/test/org/apache/hadoop/hive/serde2/CustomSerDe4.java
+ create mode 100644 ql/src/test/org/apache/hadoop/hive/serde2/CustomSerDe5.java
+ create mode 100644 ql/src/test/queries/clientpositive/partition_wise_fileformat18.q
+ create mode 100644 ql/src/test/results/clientpositive/partition_wise_fileformat18.q.out
+ create mode 100644 serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/SettableUnionObjectInspector.java
+
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/FetchOperator.java b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/FetchOperator.java
+index d2265e2..b7d45c5 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/FetchOperator.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/FetchOperator.java
+@@ -353,6 +353,11 @@ private void getNextPath() throws Exception {
+     }
+   }
+ 
++  /**
++   * A cache of Object Inspector Settable Properties.
++   */
++  private static Map<ObjectInspector, Boolean> oiSettableProperties = new HashMap<ObjectInspector, Boolean>();
++
+   private RecordReader<WritableComparable, Writable> getRecordReader() throws Exception {
+     if (currPath == null) {
+       getNextPath();
+@@ -402,7 +407,8 @@ private void getNextPath() throws Exception {
+ 
+       ObjectInspector outputOI = ObjectInspectorConverters.getConvertedOI(
+           serde.getObjectInspector(),
+-          partitionedTableOI == null ? tblSerde.getObjectInspector() : partitionedTableOI, true);
++          partitionedTableOI == null ? tblSerde.getObjectInspector() : partitionedTableOI,
++          oiSettableProperties);
+ 
+       partTblObjectInspectorConverter = ObjectInspectorConverters.getConverter(
+           serde.getObjectInspector(), outputOI);
+@@ -628,7 +634,7 @@ public ObjectInspector getOutputObjectInspector() throws HiveException {
+         partSerde.initialize(job, listPart.getOverlayedProperties());
+ 
+         partitionedTableOI = ObjectInspectorConverters.getConvertedOI(
+-            partSerde.getObjectInspector(), tableOI, true);
++            partSerde.getObjectInspector(), tableOI, oiSettableProperties);
+         if (!partitionedTableOI.equals(tableOI)) {
+           break;
+         }
+diff --git a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/MapOperator.java b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/MapOperator.java
+index 529b125..0be7d06 100644
+--- a/src/ql/src/java/org/apache/hadoop/hive/ql/exec/MapOperator.java
++++ b/src/ql/src/java/org/apache/hadoop/hive/ql/exec/MapOperator.java
+@@ -277,6 +277,8 @@ private MapOpCtx initObjectInspector(Configuration hconf, MapInputPath ctx,
+         new HashMap<TableDesc, StructObjectInspector>();
+     Set<TableDesc> identityConverterTableDesc = new HashSet<TableDesc>();
+     try {
++      Map<ObjectInspector, Boolean> oiSettableProperties = new HashMap<ObjectInspector, Boolean>();
++
+       for (String onefile : conf.getPathToAliases().keySet()) {
+         PartitionDesc pd = conf.getPathToPartitionInfo().get(onefile);
+         TableDesc tableDesc = pd.getTableDesc();
+@@ -310,7 +312,7 @@ private MapOpCtx initObjectInspector(Configuration hconf, MapInputPath ctx,
+           tblRawRowObjectInspector =
+               (StructObjectInspector) ObjectInspectorConverters.getConvertedOI(
+                   partRawRowObjectInspector,
+-                  tblDeserializer.getObjectInspector(), true);
++                  tblDeserializer.getObjectInspector(), oiSettableProperties);
+ 
+           if (identityConverterTableDesc.contains(tableDesc)) {
+             if (!partRawRowObjectInspector.equals(tblRawRowObjectInspector)) {
+diff --git a/src/ql/src/test/org/apache/hadoop/hive/serde2/CustomNonSettableUnionObjectInspector1.java b/src/ql/src/test/org/apache/hadoop/hive/serde2/CustomNonSettableUnionObjectInspector1.java
+new file mode 100644
+index 0000000..8e9ce78
+--- /dev/null
++++ b/src/ql/src/test/org/apache/hadoop/hive/serde2/CustomNonSettableUnionObjectInspector1.java
+@@ -0,0 +1,82 @@
++package org.apache.hadoop.hive.serde2;
++
++import java.util.List;
++
++import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspector;
++import org.apache.hadoop.hive.serde2.objectinspector.UnionObject;
++import org.apache.hadoop.hive.serde2.objectinspector.UnionObjectInspector;
++
++public class CustomNonSettableUnionObjectInspector1 implements UnionObjectInspector{
++
++  private final List<ObjectInspector> children;
++
++  public CustomNonSettableUnionObjectInspector1(List<ObjectInspector> children) {
++    this.children = children;
++  }
++
++  public static class StandardUnion implements UnionObject {
++    protected byte tag;
++    protected Object object;
++
++    public StandardUnion() {
++    }
++
++    public StandardUnion(byte tag, Object object) {
++      this.tag = tag;
++      this.object = object;
++    }
++
++    @Override
++    public Object getObject() {
++      return object;
++    }
++
++    @Override
++    public byte getTag() {
++      return tag;
++    }
++
++    @Override
++    public String toString() {
++      return tag + ":" + object;
++    }
++  }
++
++  /**
++   * Return the tag of the object.
++   */
++  public byte getTag(Object o) {
++    if (o == null) {
++      return -1;
++    }
++    return ((UnionObject) o).getTag();
++  }
++
++  /**
++   * Return the field based on the tag value associated with the Object.
++   */
++  public Object getField(Object o) {
++    if (o == null) {
++      return null;
++    }
++    return ((UnionObject) o).getObject();
++  }
++
++  public Category getCategory() {
++    return Category.UNION;
++  }
++
++  public String getTypeName() {
++    return null;
++  }
++
++  @Override
++  public String toString() {
++    return null;
++  }
++
++  @Override
++  public List<ObjectInspector> getObjectInspectors() {
++    return children;
++  }
++}
+diff --git a/src/ql/src/test/org/apache/hadoop/hive/serde2/CustomSerDe4.java b/src/ql/src/test/org/apache/hadoop/hive/serde2/CustomSerDe4.java
+new file mode 100644
+index 0000000..281d959
+--- /dev/null
++++ b/src/ql/src/test/org/apache/hadoop/hive/serde2/CustomSerDe4.java
+@@ -0,0 +1,66 @@
++package org.apache.hadoop.hive.serde2;
++
++import java.util.ArrayList;
++import java.util.Arrays;
++import java.util.List;
++import java.util.Properties;
++
++import org.apache.hadoop.conf.Configuration;
++import org.apache.hadoop.hive.serde.serdeConstants;
++import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspector;
++import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspectorFactory;
++import org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorFactory;
++import org.apache.hadoop.hive.serde2.typeinfo.TypeInfo;
++import org.apache.hadoop.hive.serde2.typeinfo.TypeInfoFactory;
++import org.apache.hadoop.hive.serde2.typeinfo.TypeInfoUtils;
++
++public class CustomSerDe4 extends CustomSerDe2 {
++
++    @Override
++    public void initialize(Configuration conf, Properties tbl)
++        throws SerDeException {
++
++      // Read the configuration parameters
++      String columnNameProperty = tbl.getProperty(serdeConstants.LIST_COLUMNS);
++      String columnTypeProperty = tbl.getProperty(serdeConstants.LIST_COLUMN_TYPES);
++
++      // The input column can either be a string or a list of integer values.
++      List<String> columnNames = Arrays.asList(columnNameProperty.split(","));
++      List<TypeInfo> columnTypes = TypeInfoUtils
++          .getTypeInfosFromTypeString(columnTypeProperty);
++      assert columnNames.size() == columnTypes.size();
++      numColumns = columnNames.size();
++
++      // No exception for type checking for simplicity
++      // Constructing the row ObjectInspector:
++      // The row consists of string columns, double columns, some union<int, double> columns only.
++      List<ObjectInspector> columnOIs = new ArrayList<ObjectInspector>(
++          columnNames.size());
++      for (int c = 0; c < numColumns; c++) {
++        if (columnTypes.get(c).equals(TypeInfoFactory.stringTypeInfo)) {
++          columnOIs.add(PrimitiveObjectInspectorFactory.javaStringObjectInspector);
++        }
++        else if (columnTypes.get(c).equals(TypeInfoFactory.doubleTypeInfo)) {
++          columnOIs.add(PrimitiveObjectInspectorFactory.javaDoubleObjectInspector);
++        }
++        else {
++
++          // Blindly add this as a union type containing int and double!
++          // Should be sufficient for the test case.
++         List<ObjectInspector> unionOI =  new ArrayList<ObjectInspector>();
++         unionOI.add(PrimitiveObjectInspectorFactory.javaIntObjectInspector);
++         unionOI.add(PrimitiveObjectInspectorFactory.javaDoubleObjectInspector);
++          columnOIs.add(ObjectInspectorFactory.getStandardUnionObjectInspector(unionOI));
++        }
++      }
++      // StandardList uses ArrayList to store the row.
++      rowOI = ObjectInspectorFactory.getStandardStructObjectInspector(columnNames, columnOIs);
++
++      // Constructing the row object, etc, which will be reused for all rows.
++      row = new ArrayList<String>(numColumns);
++      for (int c = 0; c < numColumns; c++) {
++        row.add(null);
++      }
++    }
++
++}
+diff --git a/src/ql/src/test/org/apache/hadoop/hive/serde2/CustomSerDe5.java b/src/ql/src/test/org/apache/hadoop/hive/serde2/CustomSerDe5.java
+new file mode 100644
+index 0000000..169c8ab
+--- /dev/null
++++ b/src/ql/src/test/org/apache/hadoop/hive/serde2/CustomSerDe5.java
+@@ -0,0 +1,63 @@
++package org.apache.hadoop.hive.serde2;
++
++import java.util.ArrayList;
++import java.util.Arrays;
++import java.util.List;
++import java.util.Properties;
++
++import org.apache.hadoop.conf.Configuration;
++import org.apache.hadoop.hive.serde.serdeConstants;
++import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspector;
++import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspectorFactory;
++import org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorFactory;
++import org.apache.hadoop.hive.serde2.typeinfo.TypeInfo;
++import org.apache.hadoop.hive.serde2.typeinfo.TypeInfoFactory;
++import org.apache.hadoop.hive.serde2.typeinfo.TypeInfoUtils;
++
++public class CustomSerDe5 extends CustomSerDe4 {
++  @Override
++    public void initialize(Configuration conf, Properties tbl)
++        throws SerDeException {
++      // Read the configuration parameters
++      String columnNameProperty = tbl.getProperty(serdeConstants.LIST_COLUMNS);
++      String columnTypeProperty = tbl.getProperty(serdeConstants.LIST_COLUMN_TYPES);
++
++      // The input column can either be a string or a list of integer values.
++      List<String> columnNames = Arrays.asList(columnNameProperty.split(","));
++      List<TypeInfo> columnTypes = TypeInfoUtils
++          .getTypeInfosFromTypeString(columnTypeProperty);
++      assert columnNames.size() == columnTypes.size();
++      numColumns = columnNames.size();
++
++      // No exception for type checking for simplicity
++      // Constructing the row ObjectInspector:
++      // The row consists of string columns, double columns, some union<int, double> columns only.
++      List<ObjectInspector> columnOIs = new ArrayList<ObjectInspector>(
++          columnNames.size());
++      for (int c = 0; c < numColumns; c++) {
++        if (columnTypes.get(c).equals(TypeInfoFactory.stringTypeInfo)) {
++          columnOIs.add(PrimitiveObjectInspectorFactory.javaStringObjectInspector);
++        }
++        else if (columnTypes.get(c).equals(TypeInfoFactory.doubleTypeInfo)) {
++          columnOIs.add(PrimitiveObjectInspectorFactory.javaDoubleObjectInspector);
++        }
++        else {
++
++          // Blindly add this as a union type containing int and double!
++          // Should be sufficient for the test case.
++         List<ObjectInspector> unionOI =  new ArrayList<ObjectInspector>();
++         unionOI.add(PrimitiveObjectInspectorFactory.javaIntObjectInspector);
++         unionOI.add(PrimitiveObjectInspectorFactory.javaDoubleObjectInspector);
++          columnOIs.add(new CustomNonSettableUnionObjectInspector1(unionOI));
++        }
++      }
++      // StandardList uses ArrayList to store the row.
++      rowOI = ObjectInspectorFactory.getStandardStructObjectInspector(columnNames, columnOIs);
++
++      // Constructing the row object, etc, which will be reused for all rows.
++      row = new ArrayList<String>(numColumns);
++      for (int c = 0; c < numColumns; c++) {
++        row.add(null);
++      }
++    }
++}
+diff --git a/src/ql/src/test/queries/clientpositive/partition_wise_fileformat18.q b/src/ql/src/test/queries/clientpositive/partition_wise_fileformat18.q
+new file mode 100644
+index 0000000..70a2b37
+--- /dev/null
++++ b/src/ql/src/test/queries/clientpositive/partition_wise_fileformat18.q
+@@ -0,0 +1,19 @@
++-- HIVE-5202 : Tests for SettableUnionObjectInspectors
++-- CustomSerDe(4,5) are used here. 
++-- The final results should be all NULL columns deserialized using 
++-- CustomSerDe(4, 5) irrespective of the inserted values
++
++DROP TABLE PW18;
++ADD JAR ../build/ql/test/test-serdes.jar;
++CREATE TABLE PW18(USER STRING, COMPLEXDT UNIONTYPE<INT, DOUBLE>) PARTITIONED BY (YEAR STRING) ROW FORMAT SERDE 'org.apache.hadoop.hive.serde2.CustomSerDe5';
++LOAD DATA LOCAL INPATH '../data/files/pw17.txt' INTO TABLE PW18 PARTITION (YEAR='1');
++ALTER TABLE PW18 PARTITION(YEAR='1') SET SERDE 'org.apache.hadoop.hive.serde2.CustomSerDe4';
++-- Without the fix HIVE-5202, will throw unsupported data type exception.
++SELECT * FROM PW18;
++
++-- Test for non-parititioned table. 
++DROP TABLE PW18_2;
++CREATE TABLE PW18_2(USER STRING, COMPLEXDT UNIONTYPE<INT, DOUBLE>) ROW FORMAT SERDE 'org.apache.hadoop.hive.serde2.CustomSerDe5';
++LOAD DATA LOCAL INPATH '../data/files/pw17.txt' INTO TABLE PW18_2;
++-- Without the fix HIVE-5202, will throw unsupported data type exception
++SELECT COUNT(*) FROM PW18_2;
+diff --git a/src/ql/src/test/results/clientpositive/partition_wise_fileformat18.q.out b/src/ql/src/test/results/clientpositive/partition_wise_fileformat18.q.out
+new file mode 100644
+index 0000000..72dd6c5
+--- /dev/null
++++ b/src/ql/src/test/results/clientpositive/partition_wise_fileformat18.q.out
+@@ -0,0 +1,79 @@
++PREHOOK: query: -- HIVE-5202 : Tests for SettableUnionObjectInspectors
++-- CustomSerDe(4,5) are used here. 
++-- The final results should be all NULL columns deserialized using 
++-- CustomSerDe(4, 5) irrespective of the inserted values
++
++DROP TABLE PW18
++PREHOOK: type: DROPTABLE
++POSTHOOK: query: -- HIVE-5202 : Tests for SettableUnionObjectInspectors
++-- CustomSerDe(4,5) are used here. 
++-- The final results should be all NULL columns deserialized using 
++-- CustomSerDe(4, 5) irrespective of the inserted values
++
++DROP TABLE PW18
++POSTHOOK: type: DROPTABLE
++PREHOOK: query: CREATE TABLE PW18(USER STRING, COMPLEXDT UNIONTYPE<INT, DOUBLE>) PARTITIONED BY (YEAR STRING) ROW FORMAT SERDE 'org.apache.hadoop.hive.serde2.CustomSerDe5'
++PREHOOK: type: CREATETABLE
++POSTHOOK: query: CREATE TABLE PW18(USER STRING, COMPLEXDT UNIONTYPE<INT, DOUBLE>) PARTITIONED BY (YEAR STRING) ROW FORMAT SERDE 'org.apache.hadoop.hive.serde2.CustomSerDe5'
++POSTHOOK: type: CREATETABLE
++POSTHOOK: Output: default@PW18
++PREHOOK: query: LOAD DATA LOCAL INPATH '../data/files/pw17.txt' INTO TABLE PW18 PARTITION (YEAR='1')
++PREHOOK: type: LOAD
++PREHOOK: Output: default@pw18
++POSTHOOK: query: LOAD DATA LOCAL INPATH '../data/files/pw17.txt' INTO TABLE PW18 PARTITION (YEAR='1')
++POSTHOOK: type: LOAD
++POSTHOOK: Output: default@pw18
++POSTHOOK: Output: default@pw18@year=1
++PREHOOK: query: ALTER TABLE PW18 PARTITION(YEAR='1') SET SERDE 'org.apache.hadoop.hive.serde2.CustomSerDe4'
++PREHOOK: type: ALTERPARTITION_SERIALIZER
++PREHOOK: Input: default@pw18
++PREHOOK: Output: default@pw18@year=1
++POSTHOOK: query: ALTER TABLE PW18 PARTITION(YEAR='1') SET SERDE 'org.apache.hadoop.hive.serde2.CustomSerDe4'
++POSTHOOK: type: ALTERPARTITION_SERIALIZER
++POSTHOOK: Input: default@pw18
++POSTHOOK: Input: default@pw18@year=1
++POSTHOOK: Output: default@pw18@year=1
++PREHOOK: query: -- Without the fix HIVE-5202, will throw unsupported data type exception.
++SELECT * FROM PW18
++PREHOOK: type: QUERY
++PREHOOK: Input: default@pw18
++PREHOOK: Input: default@pw18@year=1
++#### A masked pattern was here ####
++POSTHOOK: query: -- Without the fix HIVE-5202, will throw unsupported data type exception.
++SELECT * FROM PW18
++POSTHOOK: type: QUERY
++POSTHOOK: Input: default@pw18
++POSTHOOK: Input: default@pw18@year=1
++#### A masked pattern was here ####
++NULL	NULL	1
++NULL	NULL	1
++NULL	NULL	1
++NULL	NULL	1
++PREHOOK: query: -- Test for non-parititioned table. 
++DROP TABLE PW18_2
++PREHOOK: type: DROPTABLE
++POSTHOOK: query: -- Test for non-parititioned table. 
++DROP TABLE PW18_2
++POSTHOOK: type: DROPTABLE
++PREHOOK: query: CREATE TABLE PW18_2(USER STRING, COMPLEXDT UNIONTYPE<INT, DOUBLE>) ROW FORMAT SERDE 'org.apache.hadoop.hive.serde2.CustomSerDe5'
++PREHOOK: type: CREATETABLE
++POSTHOOK: query: CREATE TABLE PW18_2(USER STRING, COMPLEXDT UNIONTYPE<INT, DOUBLE>) ROW FORMAT SERDE 'org.apache.hadoop.hive.serde2.CustomSerDe5'
++POSTHOOK: type: CREATETABLE
++POSTHOOK: Output: default@PW18_2
++PREHOOK: query: LOAD DATA LOCAL INPATH '../data/files/pw17.txt' INTO TABLE PW18_2
++PREHOOK: type: LOAD
++PREHOOK: Output: default@pw18_2
++POSTHOOK: query: LOAD DATA LOCAL INPATH '../data/files/pw17.txt' INTO TABLE PW18_2
++POSTHOOK: type: LOAD
++POSTHOOK: Output: default@pw18_2
++PREHOOK: query: -- Without the fix HIVE-5202, will throw unsupported data type exception
++SELECT COUNT(*) FROM PW18_2
++PREHOOK: type: QUERY
++PREHOOK: Input: default@pw18_2
++#### A masked pattern was here ####
++POSTHOOK: query: -- Without the fix HIVE-5202, will throw unsupported data type exception
++SELECT COUNT(*) FROM PW18_2
++POSTHOOK: type: QUERY
++POSTHOOK: Input: default@pw18_2
++#### A masked pattern was here ####
++4
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/ObjectInspectorConverters.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/ObjectInspectorConverters.java
+index b2f43d6..eb307c6 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/ObjectInspectorConverters.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/ObjectInspectorConverters.java
+@@ -22,6 +22,7 @@
+ import java.util.List;
+ import java.util.Map;
+ 
++import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspector.Category;
+ import org.apache.hadoop.hive.serde2.objectinspector.primitive.JavaStringObjectInspector;
+ import org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorConverter;
+ import org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorFactory;
+@@ -142,7 +143,6 @@ public static Converter getConverter(ObjectInspector inputOI,
+     if (inputOI.equals(outputOI)) {
+       return new IdentityConverter();
+     }
+-    // TODO: Add support for UNION once SettableUnionObjectInspector is implemented.
+     switch (outputOI.getCategory()) {
+     case PRIMITIVE:
+       return getConverter((PrimitiveObjectInspector) inputOI, (PrimitiveObjectInspector) outputOI);
+@@ -155,6 +155,9 @@ public static Converter getConverter(ObjectInspector inputOI,
+     case MAP:
+       return new MapConverter(inputOI,
+           (SettableMapObjectInspector) outputOI);
++    case UNION:
++      return new UnionConverter(inputOI,
++          (SettableUnionObjectInspector) outputOI);
+     default:
+       throw new RuntimeException("Hive internal error: conversion of "
+           + inputOI.getTypeName() + " to " + outputOI.getTypeName()
+@@ -162,19 +165,49 @@ public static Converter getConverter(ObjectInspector inputOI,
+     }
+   }
+ 
++  /*
++   * getConvertedOI with caching to store settable properties of the object
++   * inspector. Caching might help when the object inspector
++   * contains complex nested data types. Caching is not explicitly required for
++   * the returned object inspector across multiple invocations since the
++   * ObjectInspectorFactory already takes care of it.
++   */
+   public static ObjectInspector getConvertedOI(
++      ObjectInspector inputOI, ObjectInspector outputOI,
++      Map<ObjectInspector, Boolean> oiSettableProperties
++      ) {
++    return getConvertedOI(inputOI, outputOI, oiSettableProperties, true);
++  }
++
++  /*
++   * getConvertedOI without any caching.
++   */
++  public static ObjectInspector getConvertedOI(
++      ObjectInspector inputOI,
++      ObjectInspector outputOI
++      ) {
++    return getConvertedOI(inputOI, outputOI, null, true);
++  }
++
++  /*
++   * Utility function to convert from one object inspector type to another.
++   */
++  private static ObjectInspector getConvertedOI(
+       ObjectInspector inputOI,
+       ObjectInspector outputOI,
++      Map<ObjectInspector, Boolean> oiSettableProperties,
+       boolean equalsCheck) {
++    ObjectInspector retOI = outputOI.getCategory() == Category.PRIMITIVE ? inputOI : outputOI;
+     // If the inputOI is the same as the outputOI, just return it
+-    if (equalsCheck && inputOI.equals(outputOI)) {
+-      return outputOI;
++    // If the retOI has all fields settable, return it
++    if ((equalsCheck && inputOI.equals(outputOI)) ||
++        ObjectInspectorUtils.hasAllFieldsSettable(retOI, oiSettableProperties) == true) {
++      return retOI;
+     }
+     // Return the settable equivalent object inspector for primitive categories
+     // For eg: for table T containing partitions p1 and p2 (possibly different
+     // from the table T), return the settable inspector for T. The inspector for
+     // T is settable recursively i.e all the nested fields are also settable.
+-    // TODO: Add support for UNION once SettableUnionObjectInspector is implemented.
+     switch (outputOI.getCategory()) {
+     case PRIMITIVE:
+       PrimitiveObjectInspector primOutputOI = (PrimitiveObjectInspector) outputOI;
+@@ -191,7 +224,7 @@ public static ObjectInspector getConvertedOI(
+       for (StructField listField : listFields) {
+         structFieldNames.add(listField.getFieldName());
+         structFieldObjectInspectors.add(getConvertedOI(listField.getFieldObjectInspector(),
+-            listField.getFieldObjectInspector(), false));
++            listField.getFieldObjectInspector(), oiSettableProperties, false));
+       }
+       return ObjectInspectorFactory.getStandardStructObjectInspector(
+           structFieldNames,
+@@ -200,14 +233,25 @@ public static ObjectInspector getConvertedOI(
+       ListObjectInspector listOutputOI = (ListObjectInspector) outputOI;
+       return ObjectInspectorFactory.getStandardListObjectInspector(
+           getConvertedOI(listOutputOI.getListElementObjectInspector(),
+-              listOutputOI.getListElementObjectInspector(), false));
++              listOutputOI.getListElementObjectInspector(), oiSettableProperties, false));
+     case MAP:
+       MapObjectInspector mapOutputOI = (MapObjectInspector) outputOI;
+       return ObjectInspectorFactory.getStandardMapObjectInspector(
+           getConvertedOI(mapOutputOI.getMapKeyObjectInspector(),
+-              mapOutputOI.getMapKeyObjectInspector(), false),
++              mapOutputOI.getMapKeyObjectInspector(), oiSettableProperties, false),
+           getConvertedOI(mapOutputOI.getMapValueObjectInspector(),
+-              mapOutputOI.getMapValueObjectInspector(), false));
++              mapOutputOI.getMapValueObjectInspector(), oiSettableProperties, false));
++    case UNION:
++      UnionObjectInspector unionOutputOI = (UnionObjectInspector) outputOI;
++      // create a standard settable union object inspector
++      List<ObjectInspector> unionListFields = unionOutputOI.getObjectInspectors();
++      List<ObjectInspector> unionFieldObjectInspectors = new ArrayList<ObjectInspector>(
++          unionListFields.size());
++      for (ObjectInspector listField : unionListFields) {
++        unionFieldObjectInspectors.add(getConvertedOI(listField, listField, oiSettableProperties,
++            false));
++      }
++      return ObjectInspectorFactory.getStandardUnionObjectInspector(unionFieldObjectInspectors);
+     default:
+       throw new RuntimeException("Hive internal error: conversion of "
+           + inputOI.getTypeName() + " to " + outputOI.getTypeName()
+@@ -337,6 +381,67 @@ public Object convert(Object input) {
+   }
+ 
+   /**
++   * A converter class for Union.
++   */
++  public static class UnionConverter implements Converter {
++
++    UnionObjectInspector inputOI;
++    SettableUnionObjectInspector outputOI;
++
++    List<? extends ObjectInspector> inputFields;
++    List<? extends ObjectInspector> outputFields;
++
++    ArrayList<Converter> fieldConverters;
++
++    Object output;
++
++    public UnionConverter(ObjectInspector inputOI,
++        SettableUnionObjectInspector outputOI) {
++      if (inputOI instanceof UnionObjectInspector) {
++        this.inputOI = (UnionObjectInspector)inputOI;
++        this.outputOI = outputOI;
++        inputFields = this.inputOI.getObjectInspectors();
++        outputFields = outputOI.getObjectInspectors();
++
++        // If the output has some extra fields, set them to NULL in convert().
++        int minFields = Math.min(inputFields.size(), outputFields.size());
++        fieldConverters = new ArrayList<Converter>(minFields);
++        for (int f = 0; f < minFields; f++) {
++          fieldConverters.add(getConverter(inputFields.get(f), outputFields.get(f)));
++        }
++
++        // Create an empty output object which will be populated when convert() is invoked.
++        output = outputOI.create();
++      } else if (!(inputOI instanceof VoidObjectInspector)) {
++        throw new RuntimeException("Hive internal error: conversion of " +
++            inputOI.getTypeName() + " to " + outputOI.getTypeName() +
++            "not supported yet.");
++      }
++    }
++
++    @Override
++    public Object convert(Object input) {
++      if (input == null) {
++        return null;
++      }
++
++      int minFields = Math.min(inputFields.size(), outputFields.size());
++      // Convert the fields
++      for (int f = 0; f < minFields; f++) {
++        Object outputFieldValue = fieldConverters.get(f).convert(inputOI);
++        outputOI.addField(output, (ObjectInspector)outputFieldValue);
++      }
++
++      // set the extra fields to null
++      for (int f = minFields; f < outputFields.size(); f++) {
++        outputOI.addField(output, null);
++      }
++
++      return output;
++    }
++  }
++
++  /**
+    * A converter class for Map.
+    */
+   public static class MapConverter implements Converter {
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/ObjectInspectorUtils.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/ObjectInspectorUtils.java
+index ec51dd5..404ce78 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/ObjectInspectorUtils.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/ObjectInspectorUtils.java
+@@ -46,11 +46,25 @@
+ import org.apache.hadoop.hive.serde2.objectinspector.primitive.HiveDecimalObjectInspector;
+ import org.apache.hadoop.hive.serde2.objectinspector.primitive.HiveVarcharObjectInspector;
+ import org.apache.hadoop.hive.serde2.objectinspector.primitive.IntObjectInspector;
++import org.apache.hadoop.hive.serde2.objectinspector.primitive.JavaStringObjectInspector;
+ import org.apache.hadoop.hive.serde2.objectinspector.primitive.LongObjectInspector;
+ import org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorFactory;
++import org.apache.hadoop.hive.serde2.objectinspector.primitive.SettableBinaryObjectInspector;
++import org.apache.hadoop.hive.serde2.objectinspector.primitive.SettableBooleanObjectInspector;
++import org.apache.hadoop.hive.serde2.objectinspector.primitive.SettableByteObjectInspector;
++import org.apache.hadoop.hive.serde2.objectinspector.primitive.SettableDateObjectInspector;
++import org.apache.hadoop.hive.serde2.objectinspector.primitive.SettableDoubleObjectInspector;
++import org.apache.hadoop.hive.serde2.objectinspector.primitive.SettableFloatObjectInspector;
++import org.apache.hadoop.hive.serde2.objectinspector.primitive.SettableHiveDecimalObjectInspector;
++import org.apache.hadoop.hive.serde2.objectinspector.primitive.SettableHiveVarcharObjectInspector;
++import org.apache.hadoop.hive.serde2.objectinspector.primitive.SettableIntObjectInspector;
++import org.apache.hadoop.hive.serde2.objectinspector.primitive.SettableLongObjectInspector;
++import org.apache.hadoop.hive.serde2.objectinspector.primitive.SettableShortObjectInspector;
++import org.apache.hadoop.hive.serde2.objectinspector.primitive.SettableTimestampObjectInspector;
+ import org.apache.hadoop.hive.serde2.objectinspector.primitive.ShortObjectInspector;
+ import org.apache.hadoop.hive.serde2.objectinspector.primitive.StringObjectInspector;
+ import org.apache.hadoop.hive.serde2.objectinspector.primitive.TimestampObjectInspector;
++import org.apache.hadoop.hive.serde2.objectinspector.primitive.WritableStringObjectInspector;
+ import org.apache.hadoop.hive.serde2.typeinfo.TypeInfoUtils;
+ import org.apache.hadoop.hive.shims.ShimLoader;
+ import org.apache.hadoop.io.BytesWritable;
+@@ -1003,6 +1017,138 @@ public static boolean isConstantObjectInspector(ObjectInspector oi) {
+     return (oi instanceof ConstantObjectInspector);
+   }
+ 
++  private static boolean setOISettablePropertiesMap(ObjectInspector oi,
++      Map<ObjectInspector, Boolean> oiSettableProperties, boolean value) {
++    // Cache if the client asks for it, else just return the value
++    if (!(oiSettableProperties == null)) {
++      oiSettableProperties.put(oi, value);
++    }
++    return value;
++  }
++
++  private static boolean isInstanceOfSettablePrimitiveOI(PrimitiveObjectInspector oi) {
++    switch (oi.getPrimitiveCategory()) {
++    case BOOLEAN:
++      return oi instanceof SettableBooleanObjectInspector;
++    case BYTE:
++      return oi instanceof SettableByteObjectInspector;
++    case SHORT:
++      return oi instanceof SettableShortObjectInspector;
++    case INT:
++      return oi instanceof SettableIntObjectInspector;
++    case LONG:
++      return oi instanceof SettableLongObjectInspector ;
++    case FLOAT:
++      return oi instanceof SettableFloatObjectInspector;
++    case DOUBLE:
++      return oi instanceof SettableDoubleObjectInspector;
++    case STRING:
++      return oi instanceof WritableStringObjectInspector ||
++          oi instanceof JavaStringObjectInspector;
++    case VARCHAR:
++      return oi instanceof SettableHiveVarcharObjectInspector;
++    case DATE:
++      return oi instanceof SettableDateObjectInspector;
++    case TIMESTAMP:
++      return oi instanceof SettableTimestampObjectInspector;
++    case BINARY:
++      return oi instanceof SettableBinaryObjectInspector;
++    case DECIMAL:
++      return oi instanceof SettableHiveDecimalObjectInspector;
++    default:
++      throw new RuntimeException("Hive internal error inside isAssignableFromSettablePrimitiveOI "
++                          + oi.getTypeName() + " not supported yet.");
++    }
++  }
++
++  private static boolean isInstanceOfSettableOI(ObjectInspector oi)
++  {
++    switch (oi.getCategory()) {
++      case PRIMITIVE:
++        return isInstanceOfSettablePrimitiveOI((PrimitiveObjectInspector)oi);
++      case STRUCT:
++        return oi instanceof SettableStructObjectInspector;
++      case LIST:
++        return oi instanceof SettableListObjectInspector;
++      case MAP:
++        return oi instanceof SettableMapObjectInspector;
++      case UNION:
++        return oi instanceof SettableUnionObjectInspector;
++      default:
++        throw new RuntimeException("Hive internal error inside isAssignableFromSettableOI : "
++            + oi.getTypeName() + " not supported yet.");
++    }
++  }
++
++  /*
++   * hasAllFieldsSettable without any caching.
++   */
++  public static Boolean hasAllFieldsSettable(ObjectInspector oi) {
++    return hasAllFieldsSettable(oi, null);
++  }
++
++  /**
++   *
++   * @param oi - Input object inspector
++   * @param oiSettableProperties - Lookup map to cache the result.(If no caching, pass null)
++   * @return - true if : (1) oi is an instance of settable<DataType>OI.
++   *                     (2) All the embedded object inspectors are instances of settable<DataType>OI.
++   *           If (1) or (2) is false, return false.
++   */
++  public static boolean hasAllFieldsSettable(ObjectInspector oi,
++      Map<ObjectInspector, Boolean> oiSettableProperties) {
++    // If the result is already present in the cache, return it.
++    if (!(oiSettableProperties == null) &&
++        oiSettableProperties.containsKey(oi)) {
++      return oiSettableProperties.get(oi).booleanValue();
++    }
++    // If the top-level object inspector is non-settable return false
++    if (!(isInstanceOfSettableOI(oi))) {
++      return setOISettablePropertiesMap(oi, oiSettableProperties, false);
++    }
++
++    Boolean returnValue = true;
++
++    switch (oi.getCategory()) {
++    case PRIMITIVE:
++      break;
++    case STRUCT:
++      StructObjectInspector structOutputOI = (StructObjectInspector) oi;
++      List<? extends StructField> listFields = structOutputOI.getAllStructFieldRefs();
++      for (StructField listField : listFields) {
++        if (!hasAllFieldsSettable(listField.getFieldObjectInspector(), oiSettableProperties)) {
++          returnValue = false;
++          break;
++        }
++      }
++      break;
++    case LIST:
++      ListObjectInspector listOutputOI = (ListObjectInspector) oi;
++      returnValue = hasAllFieldsSettable(listOutputOI.getListElementObjectInspector(),
++          oiSettableProperties);
++      break;
++    case MAP:
++      MapObjectInspector mapOutputOI = (MapObjectInspector) oi;
++      returnValue = hasAllFieldsSettable(mapOutputOI.getMapKeyObjectInspector(), oiSettableProperties) &&
++          hasAllFieldsSettable(mapOutputOI.getMapValueObjectInspector(), oiSettableProperties);
++      break;
++    case UNION:
++      UnionObjectInspector unionOutputOI = (UnionObjectInspector) oi;
++      List<ObjectInspector> unionListFields = unionOutputOI.getObjectInspectors();
++      for (ObjectInspector listField : unionListFields) {
++        if (!hasAllFieldsSettable(listField, oiSettableProperties)) {
++          returnValue = false;
++          break;
++        }
++      }
++      break;
++    default:
++      throw new RuntimeException("Hive internal error inside hasAllFieldsSettable : "
++          + oi.getTypeName() + " not supported yet.");
++    }
++    return setOISettablePropertiesMap(oi, oiSettableProperties, returnValue);
++  }
++
+   private ObjectInspectorUtils() {
+     // prevent instantiation
+   }
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/SettableUnionObjectInspector.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/SettableUnionObjectInspector.java
+new file mode 100644
+index 0000000..2536ab6
+--- /dev/null
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/SettableUnionObjectInspector.java
+@@ -0,0 +1,16 @@
++package org.apache.hadoop.hive.serde2.objectinspector;
++
++
++/**
++ * SettableUnionObjectInspector.
++ *
++ */
++public abstract class SettableUnionObjectInspector implements
++    UnionObjectInspector {
++
++  /* Create an empty object */
++  public abstract Object create();
++
++  /* Add fields to the object */
++  public abstract Object addField(Object union, ObjectInspector oi);
++}
+diff --git a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/StandardUnionObjectInspector.java b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/StandardUnionObjectInspector.java
+index 7bfc542..d1b11e8 100644
+--- a/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/StandardUnionObjectInspector.java
++++ b/src/serde/src/java/org/apache/hadoop/hive/serde2/objectinspector/StandardUnionObjectInspector.java
+@@ -18,6 +18,7 @@
+ 
+ package org.apache.hadoop.hive.serde2.objectinspector;
+ 
++import java.util.ArrayList;
+ import java.util.List;
+ 
+ /**
+@@ -30,7 +31,7 @@
+  * Always use the {@link ObjectInspectorFactory} to create new ObjectInspector
+  * objects, instead of directly creating an instance of this class.
+  */
+-public class StandardUnionObjectInspector implements UnionObjectInspector {
++public class StandardUnionObjectInspector extends SettableUnionObjectInspector {
+   private List<ObjectInspector> ois;
+ 
+   protected StandardUnionObjectInspector() {
+@@ -116,4 +117,17 @@ public String toString() {
+     return sb.toString();
+   }
+ 
++  @Override
++  public Object create() {
++    ArrayList<Object> a = new ArrayList<Object>();
++    return a;
++  }
++
++  @Override
++  public Object addField(Object union, ObjectInspector oi) {
++    ArrayList<Object> a = (ArrayList<Object>) union;
++    a.add(oi);
++    return a;
++  }
++
+ }
+-- 
+1.7.0.4
+
